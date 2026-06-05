@@ -17,7 +17,7 @@ router.get('/cuentas', verificarToken, (req, res) => {
 });
 
 router.post('/cuentas', verificarToken, (req, res) => {
-  if (!ESCRITURA_FINANZAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.finanzas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const { nombre, tipo, moneda, saldo_inicial } = req.body;
   if (!nombre?.trim()) return res.status(400).json({ error: 'Nombre requerido' });
   try {
@@ -31,7 +31,7 @@ router.post('/cuentas', verificarToken, (req, res) => {
 });
 
 router.put('/cuentas/:id', verificarToken, (req, res) => {
-  if (!ESCRITURA_FINANZAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.finanzas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const { nombre, tipo, moneda, saldo_inicial } = req.body;
   db.prepare('UPDATE cuentas_financieras SET nombre=?,tipo=?,moneda=?,saldo_inicial=? WHERE id=?')
     .run(nombre, tipo, moneda, parseFloat(saldo_inicial)||0, req.params.id);
@@ -47,7 +47,7 @@ router.get('/categorias', verificarToken, (req, res) => {
 });
 
 router.post('/categorias', verificarToken, (req, res) => {
-  if (!ESCRITURA_FINANZAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.finanzas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const { nombre, tipo, color } = req.body;
   try {
     const r = db.prepare('INSERT INTO categorias_financieras (nombre,tipo,color) VALUES (?,?,?)').run(nombre, tipo||'Egreso', color||'#6c7086');
@@ -59,7 +59,7 @@ router.post('/categorias', verificarToken, (req, res) => {
 });
 
 router.delete('/categorias/:id', verificarToken, (req, res) => {
-  if (!ESCRITURA_FINANZAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.finanzas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   db.prepare('DELETE FROM categorias_financieras WHERE id=?').run(req.params.id);
   res.json({ mensaje: 'Eliminada' });
 });
@@ -84,7 +84,7 @@ router.get('/movimientos', verificarToken, (req, res) => {
 });
 
 router.post('/movimientos', verificarToken, (req, res) => {
-  if (!ESCRITURA_FINANZAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.finanzas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const { fecha, tipo, categoria, descripcion, monto, moneda, tasa_cambio, cuenta_id, cuenta_nombre, referencia, forma_pago, estado, doc_tipo, doc_id, observaciones } = req.body;
   if (!fecha || !tipo || !descripcion?.trim()) return res.status(400).json({ error: 'Fecha, tipo y descripción son requeridos' });
   if (!parseFloat(monto) || parseFloat(monto) <= 0) return res.status(400).json({ error: 'Monto debe ser mayor a 0' });
@@ -96,7 +96,7 @@ router.post('/movimientos', verificarToken, (req, res) => {
 });
 
 router.put('/movimientos/:id', verificarToken, (req, res) => {
-  if (!ESCRITURA_FINANZAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.finanzas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const m = db.prepare('SELECT * FROM movimientos_caja WHERE id=?').get(req.params.id);
   if (!m) return res.status(404).json({ error: 'No encontrado' });
   if (m.estado === 'Anulado') return res.status(400).json({ error: 'No se puede editar un movimiento anulado' });
@@ -110,7 +110,7 @@ router.put('/movimientos/:id', verificarToken, (req, res) => {
 });
 
 router.post('/movimientos/:id/anular', verificarToken, (req, res) => {
-  if (!ESCRITURA_FINANZAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.finanzas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   db.prepare("UPDATE movimientos_caja SET estado='Anulado' WHERE id=?").run(req.params.id);
   res.json({ mensaje: 'Movimiento anulado' });
 });

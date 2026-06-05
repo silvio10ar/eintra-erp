@@ -16,7 +16,7 @@ router.get('/clientes', verificarToken, (req, res) => {
 });
 
 router.post('/clientes', verificarToken, body('nombre').trim().notEmpty(), (req, res) => {
-  if (!ESCRITURA_VENTAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.ventas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const errs = validationResult(req);
   if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
   const { nombre, cuit, contacto, telefono, email, direccion, localidad, cp, condicion_pago } = req.body;
@@ -31,7 +31,7 @@ router.post('/clientes', verificarToken, body('nombre').trim().notEmpty(), (req,
 });
 
 router.put('/clientes/:id', verificarToken, (req, res) => {
-  if (!ESCRITURA_VENTAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.ventas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const c = db.prepare('SELECT * FROM clientes WHERE id=?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'No encontrado' });
   const { nombre, cuit, contacto, telefono, email, direccion, localidad, cp, condicion_pago } = req.body;
@@ -77,7 +77,7 @@ router.get('/presupuestos/:id', verificarToken, (req, res) => {
 });
 
 router.post('/presupuestos', verificarToken, body('cli_nombre').trim().notEmpty(), (req, res) => {
-  if (!ESCRITURA_VENTAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.ventas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const errs = validationResult(req);
   if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
 
@@ -109,7 +109,7 @@ router.post('/presupuestos', verificarToken, body('cli_nombre').trim().notEmpty(
 });
 
 router.put('/presupuestos/:id', verificarToken, (req, res) => {
-  if (!ESCRITURA_VENTAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.ventas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const p = db.prepare('SELECT * FROM presupuestos WHERE id=?').get(req.params.id);
   if (!p) return res.status(404).json({ error: 'No encontrado' });
 
@@ -141,7 +141,7 @@ router.put('/presupuestos/:id', verificarToken, (req, res) => {
 });
 
 router.delete('/presupuestos/:id', verificarToken, (req, res) => {
-  if (!ESCRITURA_VENTAS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.ventas?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   db.prepare('DELETE FROM presupuesto_items WHERE presupuesto_id=?').run(req.params.id);
   db.prepare('DELETE FROM presupuestos WHERE id=?').run(req.params.id);
   res.json({ mensaje: 'Presupuesto eliminado' });

@@ -3,7 +3,7 @@ const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
-const { verificarToken } = require('../middleware/auth');
+const { verificarToken, getPermisosEfectivos } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -24,7 +24,8 @@ router.post('/login',
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '10h' }
     );
-    res.json({ token, usuario: { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol } });
+    const permisos = getPermisosEfectivos(u.id, u.rol);
+    res.json({ token, usuario: { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, permisos } });
   }
 );
 
@@ -60,6 +61,20 @@ router.post('/usuarios', verificarToken,
     }
   }
 );
+
+router.put('/usuarios/:id', verificarToken, (req, res) => {
+  if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
+  const { nombre, email, rol, activo } = req.body;
+  const sets = []; const vals = [];
+  if (nombre  !== undefined) { sets.push('nombre=?');  vals.push(nombre); }
+  if (email   !== undefined) { sets.push('email=?');   vals.push(email || null); }
+  if (rol     !== undefined) { sets.push('rol=?');     vals.push(rol); }
+  if (activo  !== undefined) { sets.push('activo=?');  vals.push(activo ? 1 : 0); }
+  if (!sets.length) return res.status(400).json({ error: 'Sin campos para actualizar' });
+  vals.push(req.params.id);
+  db.prepare(`UPDATE usuarios SET ${sets.join(',')} WHERE id=?`).run(...vals);
+  res.json({ ok: true });
+});
 
 router.put('/usuarios/:id/password', verificarToken,
   body('password').isLength({ min: 6 }),

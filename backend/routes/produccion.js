@@ -48,7 +48,7 @@ router.get('/:id', verificarToken, (req, res) => {
 router.post('/', verificarToken,
   body('descripcion').trim().notEmpty(),
   (req, res) => {
-    if (!ESCRITURA_PRODUCCION.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+    if (!req.permisos?.produccion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
     const errs = validationResult(req);
     if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
     const { descripcion, proyecto_id, proyecto_nombre, responsable, fecha_apertura, fecha_inicio, fecha_fin_est, estado, prioridad, observaciones } = req.body;
@@ -61,7 +61,7 @@ router.post('/', verificarToken,
 );
 
 router.put('/:id', verificarToken, (req, res) => {
-  if (!ESCRITURA_PRODUCCION.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.produccion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const ot = db.prepare('SELECT * FROM ordenes_trabajo WHERE id=?').get(req.params.id);
   if (!ot) return res.status(404).json({ error: 'No encontrada' });
   const { descripcion, proyecto_id, proyecto_nombre, responsable, fecha_apertura, fecha_inicio, fecha_fin_est, fecha_cierre, estado, prioridad, observaciones } = req.body;
@@ -75,7 +75,7 @@ router.put('/:id', verificarToken, (req, res) => {
 });
 
 router.delete('/:id', verificarToken, (req, res) => {
-  if (!ESCRITURA_PRODUCCION.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.produccion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   db.prepare('DELETE FROM ot_tareas WHERE ot_id=?').run(req.params.id);
   db.prepare('DELETE FROM ot_partes WHERE ot_id=?').run(req.params.id);
   db.prepare('DELETE FROM ordenes_trabajo WHERE id=?').run(req.params.id);
@@ -85,7 +85,7 @@ router.delete('/:id', verificarToken, (req, res) => {
 // ── Tareas ─────────────────────────────────────────────────────────────────────
 
 router.post('/:id/tareas', verificarToken, (req, res) => {
-  if (!ESCRITURA_PRODUCCION.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.produccion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const { descripcion, responsable } = req.body;
   if (!descripcion?.trim()) return res.status(400).json({ error: 'Descripción requerida' });
   const maxOrden = db.prepare('SELECT COALESCE(MAX(orden),0) as m FROM ot_tareas WHERE ot_id=?').get(req.params.id).m;
@@ -95,7 +95,7 @@ router.post('/:id/tareas', verificarToken, (req, res) => {
 });
 
 router.put('/:id/tareas/:tarea_id/toggle', verificarToken, (req, res) => {
-  if (!ESCRITURA_PRODUCCION.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.produccion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const t = db.prepare('SELECT * FROM ot_tareas WHERE id=? AND ot_id=?').get(req.params.tarea_id, req.params.id);
   if (!t) return res.status(404).json({ error: 'No encontrada' });
   const nuevo = t.estado === 'Completada' ? 'Pendiente' : 'Completada';
@@ -105,7 +105,7 @@ router.put('/:id/tareas/:tarea_id/toggle', verificarToken, (req, res) => {
 });
 
 router.delete('/:id/tareas/:tarea_id', verificarToken, (req, res) => {
-  if (!ESCRITURA_PRODUCCION.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.produccion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   db.prepare('DELETE FROM ot_tareas WHERE id=? AND ot_id=?').run(req.params.tarea_id, req.params.id);
   res.json({ mensaje: 'Tarea eliminada' });
 });
@@ -113,7 +113,7 @@ router.delete('/:id/tareas/:tarea_id', verificarToken, (req, res) => {
 // ── Partes diarios ─────────────────────────────────────────────────────────────
 
 router.post('/:id/partes', verificarToken, (req, res) => {
-  if (!ESCRITURA_PRODUCCION.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.produccion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const { fecha, operario, horas, descripcion, observaciones } = req.body;
   const r = db.prepare('INSERT INTO ot_partes (ot_id,fecha,operario,horas,descripcion,observaciones) VALUES (?,?,?,?,?,?)')
     .run(req.params.id, fecha||new Date().toISOString().slice(0,10), operario||'', parseFloat(horas)||0, descripcion||'', observaciones||'');
@@ -121,7 +121,7 @@ router.post('/:id/partes', verificarToken, (req, res) => {
 });
 
 router.put('/:id/partes/:parte_id', verificarToken, (req, res) => {
-  if (!ESCRITURA_PRODUCCION.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.produccion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const { fecha, operario, horas, descripcion, observaciones } = req.body;
   db.prepare('UPDATE ot_partes SET fecha=?,operario=?,horas=?,descripcion=?,observaciones=? WHERE id=? AND ot_id=?')
     .run(fecha, operario, parseFloat(horas)||0, descripcion||'', observaciones||'', req.params.parte_id, req.params.id);
@@ -129,7 +129,7 @@ router.put('/:id/partes/:parte_id', verificarToken, (req, res) => {
 });
 
 router.delete('/:id/partes/:parte_id', verificarToken, (req, res) => {
-  if (!ESCRITURA_PRODUCCION.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.produccion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   db.prepare('DELETE FROM ot_partes WHERE id=? AND ot_id=?').run(req.params.parte_id, req.params.id);
   res.json({ mensaje: 'Parte eliminado' });
 });

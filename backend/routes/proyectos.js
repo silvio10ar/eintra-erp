@@ -34,7 +34,7 @@ router.post('/', verificarToken,
   body('codigo').trim().notEmpty(),
   body('nombre').trim().notEmpty(),
   (req, res) => {
-    if (!ESCRITURA_PROYECTOS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+    if (!req.permisos?.proyectos?.escribir) return res.status(403).json({ error: 'Sin permisos' });
     const errs = validationResult(req);
     if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
     const { codigo, nombre, cliente_id, cliente_nombre, descripcion, fecha_inicio, fecha_fin_est, estado, presupuesto_venta, responsable, presupuesto_id } = req.body;
@@ -52,7 +52,7 @@ router.post('/', verificarToken,
 );
 
 router.put('/:id', verificarToken, (req, res) => {
-  if (!ESCRITURA_PROYECTOS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.proyectos?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const p = db.prepare('SELECT * FROM proyectos WHERE id=?').get(req.params.id);
   if (!p) return res.status(404).json({ error: 'No encontrado' });
   const { codigo, nombre, cliente_id, cliente_nombre, descripcion, fecha_inicio, fecha_fin_est, fecha_cierre, estado, presupuesto_venta, responsable } = req.body;
@@ -66,7 +66,7 @@ router.put('/:id', verificarToken, (req, res) => {
 
 // Costos
 router.post('/:id/costos', verificarToken, (req, res) => {
-  if (!ESCRITURA_PROYECTOS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.proyectos?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const { tipo, descripcion, cantidad, precio_unit, fecha, observaciones } = req.body;
   const cant  = parseFloat(cantidad)   || 1;
   const precio = parseFloat(precio_unit) || 0;
@@ -77,7 +77,7 @@ router.post('/:id/costos', verificarToken, (req, res) => {
 });
 
 router.delete('/:id/costos/:costo_id', verificarToken, (req, res) => {
-  if (!ESCRITURA_PROYECTOS.includes(req.usuario.rol)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!req.permisos?.proyectos?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   db.prepare('DELETE FROM proyecto_costos WHERE id=? AND proyecto_id=?').run(req.params.costo_id, req.params.id);
   res.json({ mensaje: 'Costo eliminado' });
 });
@@ -100,6 +100,40 @@ router.get('/exportar', verificarToken, (req, res) => {
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename=proyectos_${new Date().toISOString().slice(0,10)}.xlsx`);
   res.send(buf);
+});
+
+// ── Migración desde sistema anterior ──────────────────────────────────────────
+router.post('/migrar', verificarToken, (req, res) => {
+  if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  const { proyectos = [] } = req.body;
+
+  const ESTADO_MAP = {
+    'Activo':'Activo','activo':'Activo','ACTIVO':'Activo',
+    'Finalizado':'Completado','finalizado':'Completado','Completado':'Completado',
+    'Cancelado':'Cancelado','cancelado':'Cancelado','CANCELADO':'Cancelado',
+    'Pendiente':'En espera','pendiente':'En espera','En espera':'En espera',
+    'En curso':'Activo','en curso':'Activo',
+  };
+
+  const ins = db.prepare(`
+    INSERT OR IGNORE INTO proyectos
+      (codigo,nombre,cliente_nombre,descripcion,fecha_inicio,fecha_fin_est,estado,presupuesto_venta,created_by)
+    VALUES (?,?,?,?,?,?,?,?,?)
+  `);
+
+  let creados = 0;
+  db.transaction(() => {
+    for (const p of proyectos) {
+      const codigo = `HIST-${String(p.id_original || p.id || '').padStart(4,'0')}`;
+      const estado = ESTADO_MAP[p.estado] || 'Completado';
+      const r = ins.run(codigo, p.nombre||'Sin nombre', p.cliente||'', p.descripcion||'',
+        p.fecha_inicio?.slice(0,10)||'', p.fecha_fin?.slice(0,10)||'',
+        estado, p.presupuesto||0, req.usuario.id);
+      if (r.changes) creados++;
+    }
+  })();
+
+  res.json({ ok: true, creados });
 });
 
 module.exports = router;
