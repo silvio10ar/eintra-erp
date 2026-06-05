@@ -1,4 +1,4 @@
-if (!process.env.NODE_ENV) require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
@@ -28,6 +28,8 @@ app.use('/api/v1/proyectos',  require('./routes/proyectos'));
 app.use('/api/v1/produccion', require('./routes/produccion'));
 app.use('/api/v1/finanzas',   require('./routes/finanzas'));
 app.use('/api/v1/dashboard',  require('./routes/dashboard'));
+app.use('/api/v1/roles',         require('./routes/roles'));
+app.use('/api/v1/mantenimiento', require('./routes/mantenimiento'));
 
 const frontendDist = isProd
   ? (process.env.FRONTEND_DIST || path.resolve(__dirname, '../frontend/dist'))

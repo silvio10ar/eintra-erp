@@ -299,6 +299,116 @@ function inicializar() {
     CREATE INDEX IF NOT EXISTS idx_oc_estado       ON ordenes_compra(estado);
   `);
 
+  // ── Columnas extra en movimientos_stock (idempotente) ────────────────────────
+  ['proveedor','proyecto','cliente_interno'].forEach(col => {
+    try { db.exec(`ALTER TABLE movimientos_stock ADD COLUMN ${col} TEXT DEFAULT ''`) } catch(e) {}
+  });
+
+  // ── Columna proveedor en productos (idempotente) ──────────────────────────────
+  try { db.exec(`ALTER TABLE productos ADD COLUMN proveedor TEXT DEFAULT ''`) } catch(e) {}
+
+  // ── Mantenimiento ─────────────────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS activos_mant (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      codigo        TEXT UNIQUE NOT NULL,
+      nombre        TEXT NOT NULL,
+      tipo          TEXT DEFAULT 'Maquinaria',
+      marca         TEXT DEFAULT '',
+      modelo        TEXT DEFAULT '',
+      n_serie       TEXT DEFAULT '',
+      ubicacion     TEXT DEFAULT '',
+      fecha_adq     TEXT DEFAULT '',
+      estado        TEXT DEFAULT 'Activo',
+      observaciones TEXT DEFAULT '',
+      activo        INTEGER DEFAULT 1,
+      created_at    TEXT DEFAULT (datetime('now','localtime')),
+      updated_at    TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS mant_plan (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      activo_id     INTEGER REFERENCES activos_mant(id),
+      activo_nombre TEXT DEFAULT '',
+      descripcion   TEXT NOT NULL,
+      frecuencia    TEXT DEFAULT 'Mensual',
+      proxima_fecha TEXT DEFAULT '',
+      ultima_fecha  TEXT DEFAULT '',
+      activo        INTEGER DEFAULT 1,
+      created_at    TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS mant_ot (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero          TEXT UNIQUE NOT NULL,
+      activo_id       INTEGER REFERENCES activos_mant(id),
+      activo_nombre   TEXT DEFAULT '',
+      tipo            TEXT DEFAULT 'Correctivo',
+      prioridad       TEXT DEFAULT 'Normal',
+      estado          TEXT DEFAULT 'Pendiente',
+      fecha_apertura  TEXT DEFAULT '',
+      fecha_prog      TEXT DEFAULT '',
+      fecha_cierre    TEXT DEFAULT '',
+      descripcion     TEXT NOT NULL,
+      ejecutor_tipo   TEXT DEFAULT 'interno',
+      ejecutor_nombre TEXT DEFAULT '',
+      observaciones   TEXT DEFAULT '',
+      plan_id         INTEGER,
+      created_by      INTEGER REFERENCES usuarios(id),
+      created_at      TEXT DEFAULT (datetime('now','localtime')),
+      updated_at      TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS mant_ot_tareas (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      ot_id           INTEGER NOT NULL REFERENCES mant_ot(id) ON DELETE CASCADE,
+      orden           INTEGER DEFAULT 0,
+      descripcion     TEXT DEFAULT '',
+      estado          TEXT DEFAULT 'Pendiente',
+      completado_por  TEXT DEFAULT '',
+      fecha_comp      TEXT DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS mant_ot_costos (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      ot_id       INTEGER NOT NULL REFERENCES mant_ot(id) ON DELETE CASCADE,
+      tipo        TEXT DEFAULT 'Repuesto',
+      descripcion TEXT DEFAULT '',
+      cantidad    REAL DEFAULT 1,
+      precio_unit REAL DEFAULT 0,
+      total       REAL DEFAULT 0,
+      created_at  TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mant_ot_estado  ON mant_ot(estado);
+    CREATE INDEX IF NOT EXISTS idx_mant_ot_activo  ON mant_ot(activo_id);
+  `);
+
+  // ── Sistema de roles con permisos ────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS roles (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre      TEXT UNIQUE NOT NULL,
+      descripcion TEXT DEFAULT '',
+      activo      INTEGER DEFAULT 1,
+      created_at  TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS rol_permisos (
+      rol_id         INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+      modulo         TEXT NOT NULL,
+      puede_leer     INTEGER DEFAULT 0,
+      puede_escribir INTEGER DEFAULT 0,
+      PRIMARY KEY (rol_id, modulo)
+    );
+
+    CREATE TABLE IF NOT EXISTS usuario_roles (
+      usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+      rol_id     INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+      PRIMARY KEY (usuario_id, rol_id)
+    );
+  `);
+
   // Seed inicial si no hay usuarios
   const hay = db.prepare('SELECT COUNT(*) as c FROM usuarios').get();
   if (hay.c === 0) {

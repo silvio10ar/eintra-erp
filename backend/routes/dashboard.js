@@ -42,7 +42,7 @@ router.get('/resumen', verificarToken, (req, res) => {
     FROM movimientos_caja WHERE fecha>=? AND moneda='ARS'
   `).get(desde);
 
-  const cuentas = db.prepare('SELECT * FROM cuentas_financieras WHERE activa=1 AND moneda="ARS"').all();
+  const cuentas = db.prepare("SELECT * FROM cuentas_financieras WHERE activa=1 AND moneda='ARS'").all();
   const saldoTotal = cuentas.reduce((s,c) => {
     const m = db.prepare("SELECT COALESCE(SUM(CASE WHEN tipo='Ingreso' AND estado='Confirmado' THEN monto ELSE 0 END),0)-COALESCE(SUM(CASE WHEN tipo='Egreso' AND estado='Confirmado' THEN monto ELSE 0 END),0) as delta FROM movimientos_caja WHERE cuenta_id=?").get(c.id);
     return s + c.saldo_inicial + m.delta;
