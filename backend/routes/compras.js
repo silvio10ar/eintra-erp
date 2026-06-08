@@ -9,20 +9,31 @@ const router = express.Router();
 // ── Proveedores ────────────────────────────────────────────────────────────────
 
 router.get('/proveedores', verificarToken, (req, res) => {
-  const { buscar } = req.query;
-  const where = buscar ? "WHERE (nombre LIKE ? OR cuit LIKE ?) AND activo=1" : "WHERE activo=1";
-  const params = buscar ? [`%${buscar}%`, `%${buscar}%`] : [];
+  const { buscar, todos } = req.query;
+  const soloActivos = todos !== '1';
+  let where = soloActivos ? 'WHERE activo=1' : '';
+  const params = [];
+  if (buscar) {
+    where = soloActivos
+      ? 'WHERE (nombre LIKE ? OR cuit LIKE ?) AND activo=1'
+      : 'WHERE (nombre LIKE ? OR cuit LIKE ?)';
+    params.push(`%${buscar}%`, `%${buscar}%`);
+  }
   res.json(db.prepare(`SELECT * FROM proveedores ${where} ORDER BY nombre`).all(...params));
 });
 
+const puedeEscribirAdmin = (req) => req.usuario?.rol === 'admin' || req.permisos?.compras?.escribir || req.permisos?.administracion?.escribir;
+
 router.post('/proveedores', verificarToken, body('nombre').trim().notEmpty(), (req, res) => {
-  if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
   const errs = validationResult(req);
   if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
-  const { nombre, cuit, contacto, telefono, email, direccion, localidad, cp, vendedor, condicion_pago } = req.body;
+  const { nombre, cuit, contacto, telefono, email, direccion, localidad, cp, vendedor, condicion_pago, critico,
+          categoria_provision, fecha_seleccion, frecuencia_evaluacion, responsable_seleccion, responsable_evaluacion } = req.body;
   try {
-    const r = db.prepare('INSERT INTO proveedores (nombre,cuit,contacto,telefono,email,direccion,localidad,cp,vendedor,condicion_pago) VALUES (?,?,?,?,?,?,?,?,?,?)')
-      .run(nombre, cuit||'', contacto||'', telefono||'', email||'', direccion||'', localidad||'', cp||'', vendedor||'', condicion_pago||'TRANSF. BANCARIA');
+    const r = db.prepare('INSERT INTO proveedores (nombre,cuit,contacto,telefono,email,direccion,localidad,cp,vendedor,condicion_pago,critico,categoria_provision,fecha_seleccion,frecuencia_evaluacion,responsable_seleccion,responsable_evaluacion) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(nombre, cuit||'', contacto||'', telefono||'', email||'', direccion||'', localidad||'', cp||'', vendedor||'', condicion_pago||'TRANSF. BANCARIA', critico?1:0,
+           categoria_provision||'', fecha_seleccion||'', frecuencia_evaluacion||'Anual', responsable_seleccion||'', responsable_evaluacion||'');
     res.status(201).json(db.prepare('SELECT * FROM proveedores WHERE id=?').get(r.lastInsertRowid));
   } catch(e) {
     if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'El proveedor ya existe' });
@@ -45,8 +56,7 @@ router.get('/proveedores/buscar', verificarToken, (req, res) => {
 });
 
 router.post('/proveedores/fusionar', verificarToken, (req, res) => {
-  if (!req.permisos?.compras?.escribir && req.usuario?.rol !== 'admin')
-    return res.status(403).json({ error: 'Sin permisos' });
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
   const { master_id, duplicados, datos } = req.body;
   if (!master_id || !Array.isArray(duplicados) || !duplicados.length)
     return res.status(400).json({ error: 'Parámetros incompletos' });
@@ -86,15 +96,29 @@ router.post('/proveedores/fusionar', verificarToken, (req, res) => {
 });
 
 router.put('/proveedores/:id', verificarToken, (req, res) => {
-  if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
   const p = db.prepare('SELECT * FROM proveedores WHERE id=?').get(req.params.id);
   if (!p) return res.status(404).json({ error: 'No encontrado' });
-  const { nombre, cuit, contacto, telefono, email, direccion, localidad, cp, vendedor, condicion_pago } = req.body;
-  db.prepare('UPDATE proveedores SET nombre=?,cuit=?,contacto=?,telefono=?,email=?,direccion=?,localidad=?,cp=?,vendedor=?,condicion_pago=? WHERE id=?')
+  const { nombre, cuit, contacto, telefono, email, direccion, localidad, cp, vendedor, condicion_pago, critico,
+          categoria_provision, fecha_seleccion, frecuencia_evaluacion, responsable_seleccion, responsable_evaluacion } = req.body;
+  db.prepare('UPDATE proveedores SET nombre=?,cuit=?,contacto=?,telefono=?,email=?,direccion=?,localidad=?,cp=?,vendedor=?,condicion_pago=?,critico=?,categoria_provision=?,fecha_seleccion=?,frecuencia_evaluacion=?,responsable_seleccion=?,responsable_evaluacion=? WHERE id=?')
     .run(nombre??p.nombre, cuit??p.cuit, contacto??p.contacto, telefono??p.telefono,
          email??p.email, direccion??p.direccion, localidad??p.localidad, cp??p.cp,
-         vendedor??p.vendedor, condicion_pago??p.condicion_pago, req.params.id);
+         vendedor??p.vendedor, condicion_pago??p.condicion_pago, critico!=null?critico:p.critico,
+         categoria_provision??p.categoria_provision??'', fecha_seleccion??p.fecha_seleccion??'',
+         frecuencia_evaluacion??p.frecuencia_evaluacion??'Anual',
+         responsable_seleccion??p.responsable_seleccion??'', responsable_evaluacion??p.responsable_evaluacion??'',
+         req.params.id);
   res.json(db.prepare('SELECT * FROM proveedores WHERE id=?').get(req.params.id));
+});
+
+router.delete('/proveedores/:id', verificarToken, (req, res) => {
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const p = db.prepare('SELECT * FROM proveedores WHERE id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'No encontrado' });
+  const nuevoActivo = p.activo ? 0 : 1;
+  db.prepare('UPDATE proveedores SET activo=? WHERE id=?').run(nuevoActivo, req.params.id);
+  res.json({ ok: true, activo: nuevoActivo });
 });
 
 // ── Órdenes de Compra ─────────────────────────────────────────────────────────
@@ -138,14 +162,16 @@ router.post('/oc', verificarToken, body('proveedor_nombre').trim().notEmpty(), (
   if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
 
   const { proveedor_id, proveedor_nombre, proveedor_cuit, fecha, moneda, tasa_cambio,
-          autorizado_por, elaborado_por, condicion_pago, lugar_entrega, presupuesto_n, observaciones, items } = req.body;
+          autorizado_por, elaborado_por, condicion_pago, lugar_entrega, presupuesto_n,
+          observaciones, fecha_entrega_est, estado_doc, items } = req.body;
 
   const numero = nextNumeroOC();
   const trx = db.transaction(() => {
-    const r = db.prepare(`INSERT INTO ordenes_compra (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,moneda,tasa_cambio,autorizado_por,elaborado_por,condicion_pago,lugar_entrega,presupuesto_n,observaciones,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    const r = db.prepare(`INSERT INTO ordenes_compra (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,moneda,tasa_cambio,autorizado_por,elaborado_por,condicion_pago,lugar_entrega,presupuesto_n,observaciones,fecha_entrega_est,estado_doc,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(numero, fecha||new Date().toISOString().slice(0,10), proveedor_id||null, proveedor_nombre,
            proveedor_cuit||'', moneda||'DÓLAR', tasa_cambio||0, autorizado_por||'', elaborado_por||'',
-           condicion_pago||'TRANSF. BANCARIA', lugar_entrega||'e-intra', presupuesto_n||'', observaciones||'', req.usuario.id);
+           condicion_pago||'TRANSF. BANCARIA', lugar_entrega||'e-intra', presupuesto_n||'', observaciones||'',
+           fecha_entrega_est||'', estado_doc||'', req.usuario.id);
     const oc_id = r.lastInsertRowid;
     if (items?.length) {
       for (const [i, it] of items.entries()) {
@@ -168,14 +194,20 @@ router.put('/oc/:id', verificarToken, (req, res) => {
 
   const { proveedor_id, proveedor_nombre, proveedor_cuit, fecha, moneda, tasa_cambio,
           autorizado_por, elaborado_por, condicion_pago, lugar_entrega, presupuesto_n,
-          observaciones, estado, items } = req.body;
+          observaciones, estado, fecha_entrega_est, numero_remito, fecha_recepcion,
+          estado_doc, nro_factura, importe_facturado, fecha_vencimiento, pago_confirmado, items } = req.body;
 
   const trx = db.transaction(() => {
-    db.prepare(`UPDATE ordenes_compra SET proveedor_id=?,proveedor_nombre=?,proveedor_cuit=?,fecha=?,moneda=?,tasa_cambio=?,autorizado_por=?,elaborado_por=?,condicion_pago=?,lugar_entrega=?,presupuesto_n=?,observaciones=?,estado=?,updated_at=datetime('now','localtime') WHERE id=?`)
+    db.prepare(`UPDATE ordenes_compra SET proveedor_id=?,proveedor_nombre=?,proveedor_cuit=?,fecha=?,moneda=?,tasa_cambio=?,autorizado_por=?,elaborado_por=?,condicion_pago=?,lugar_entrega=?,presupuesto_n=?,observaciones=?,estado=?,fecha_entrega_est=?,numero_remito=?,fecha_recepcion=?,estado_doc=?,nro_factura=?,importe_facturado=?,fecha_vencimiento=?,pago_confirmado=?,updated_at=datetime('now','localtime') WHERE id=?`)
       .run(proveedor_id??oc.proveedor_id, proveedor_nombre??oc.proveedor_nombre, proveedor_cuit??oc.proveedor_cuit,
            fecha??oc.fecha, moneda??oc.moneda, tasa_cambio??oc.tasa_cambio, autorizado_por??oc.autorizado_por,
            elaborado_por??oc.elaborado_por, condicion_pago??oc.condicion_pago, lugar_entrega??oc.lugar_entrega,
-           presupuesto_n??oc.presupuesto_n, observaciones??oc.observaciones, estado??oc.estado, req.params.id);
+           presupuesto_n??oc.presupuesto_n, observaciones??oc.observaciones, estado??oc.estado,
+           fecha_entrega_est??oc.fecha_entrega_est??'', numero_remito??oc.numero_remito??'',
+           fecha_recepcion??oc.fecha_recepcion??'', estado_doc??oc.estado_doc??'',
+           nro_factura??oc.nro_factura??'', importe_facturado??oc.importe_facturado??0,
+           fecha_vencimiento??oc.fecha_vencimiento??'', pago_confirmado!=null?pago_confirmado:(oc.pago_confirmado??0),
+           req.params.id);
     if (items) {
       db.prepare('DELETE FROM oc_items WHERE oc_id=?').run(req.params.id);
       for (const [i, it] of items.entries()) {
@@ -200,7 +232,7 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
   if (oc.estado === 'Cancelada') return res.status(400).json({ error: 'OC cancelada' });
 
   const items = db.prepare('SELECT * FROM oc_items WHERE oc_id=? AND producto_id IS NOT NULL').all(oc.id);
-  const { recepciones, fecha } = req.body;
+  const { recepciones, fecha, numero_remito } = req.body;
   const fechaRec = fecha || new Date().toISOString().slice(0,10);
 
   const trx = db.transaction(() => {
@@ -219,7 +251,8 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
       if (itemActual.cant_recibida < item.cantidad) todosRecibidos = false;
     }
     const nuevoEstado = todosRecibidos ? 'Recibida' : 'Parcial';
-    db.prepare("UPDATE ordenes_compra SET estado=?,updated_at=datetime('now','localtime') WHERE id=?").run(nuevoEstado, oc.id);
+    db.prepare(`UPDATE ordenes_compra SET estado=?,fecha_recepcion=?,${numero_remito ? 'numero_remito=?,' : ''}updated_at=datetime('now','localtime') WHERE id=?`)
+      .run(nuevoEstado, fechaRec, ...(numero_remito ? [numero_remito] : []), oc.id);
   });
   trx();
   res.json({ mensaje: 'Recepción registrada. Stock actualizado.' });
@@ -395,6 +428,86 @@ router.post('/migrar', verificarToken, (req, res) => {
   })();
 
   res.json({ ok: true, provCreados, ocCreadas, itemsCreados });
+});
+
+// ── Form 49 — Ingreso sin OC/remito ──────────────────────────────────────────
+
+function nextNumeroF49() {
+  const r = db.prepare("SELECT numero FROM form49_ingresos ORDER BY id DESC LIMIT 1").get();
+  if (r) { try { const n = parseInt(r.numero.replace('F49-','')); return `F49-${String(n+1).padStart(6,'0')}`; } catch(_){} }
+  return 'F49-000001';
+}
+
+router.get('/form49', verificarToken, (req, res) => {
+  const { buscar, desde, hasta, page=1, limit=50 } = req.query;
+  const conds=[], params=[];
+  if (buscar) { conds.push('(f.numero LIKE ? OR f.proveedor_nombre LIKE ? OR f.proyecto LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`,`%${buscar}%`); }
+  if (desde)  { conds.push('f.fecha>=?'); params.push(desde); }
+  if (hasta)  { conds.push('f.fecha<=?'); params.push(hasta); }
+  const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';
+  const offset = (parseInt(page)-1)*parseInt(limit);
+  const total  = db.prepare(`SELECT COUNT(*) as c FROM form49_ingresos f ${where}`).get(...params).c;
+  const datos  = db.prepare(`SELECT f.*, COUNT(i.id) as n_items FROM form49_ingresos f LEFT JOIN form49_items i ON f.id=i.form49_id ${where} GROUP BY f.id ORDER BY f.id DESC LIMIT ? OFFSET ?`).all(...params, parseInt(limit), offset);
+  res.json({ total, datos });
+});
+
+router.get('/form49/:id', verificarToken, (req, res) => {
+  const f = db.prepare('SELECT * FROM form49_ingresos WHERE id=?').get(req.params.id);
+  if (!f) return res.status(404).json({ error: 'No encontrado' });
+  const items = db.prepare('SELECT * FROM form49_items WHERE form49_id=? ORDER BY id').all(f.id);
+  res.json({ ...f, items });
+});
+
+router.post('/form49', verificarToken, (req, res) => {
+  if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  const { proveedor_id, proveedor_nombre, fecha, proyecto, autorizado_por, recibido_por, observaciones, items } = req.body;
+  if (!proveedor_nombre?.trim()) return res.status(400).json({ error: 'Proveedor es obligatorio' });
+  const numero = nextNumeroF49();
+  const trx = db.transaction(() => {
+    const r = db.prepare(`INSERT INTO form49_ingresos (numero,fecha,proveedor_id,proveedor_nombre,proyecto,autorizado_por,recibido_por,observaciones,created_by) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(numero, fecha||new Date().toISOString().slice(0,10), proveedor_id||null, proveedor_nombre,
+           proyecto||'', autorizado_por||'', recibido_por||'', observaciones||'', req.usuario.id);
+    const fid = r.lastInsertRowid;
+    if (items?.length) {
+      for (const it of items) {
+        db.prepare('INSERT INTO form49_items (form49_id,descripcion,cantidad,unidad,n_parte,n_serie,n_lote) VALUES (?,?,?,?,?,?,?)')
+          .run(fid, it.descripcion||'', it.cantidad||0, it.unidad||'UND.', it.n_parte||'', it.n_serie||'', it.n_lote||'');
+      }
+    }
+    return fid;
+  });
+  const fid = trx();
+  const f = db.prepare('SELECT * FROM form49_ingresos WHERE id=?').get(fid);
+  res.status(201).json({ ...f, items: db.prepare('SELECT * FROM form49_items WHERE form49_id=? ORDER BY id').all(fid) });
+});
+
+router.put('/form49/:id', verificarToken, (req, res) => {
+  if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  const f = db.prepare('SELECT * FROM form49_ingresos WHERE id=?').get(req.params.id);
+  if (!f) return res.status(404).json({ error: 'No encontrado' });
+  const { proveedor_id, proveedor_nombre, fecha, proyecto, autorizado_por, recibido_por, observaciones, items } = req.body;
+  db.transaction(() => {
+    db.prepare(`UPDATE form49_ingresos SET proveedor_id=?,proveedor_nombre=?,fecha=?,proyecto=?,autorizado_por=?,recibido_por=?,observaciones=? WHERE id=?`)
+      .run(proveedor_id??f.proveedor_id, proveedor_nombre??f.proveedor_nombre, fecha??f.fecha,
+           proyecto??f.proyecto, autorizado_por??f.autorizado_por, recibido_por??f.recibido_por,
+           observaciones??f.observaciones, req.params.id);
+    if (items) {
+      db.prepare('DELETE FROM form49_items WHERE form49_id=?').run(req.params.id);
+      for (const it of items) {
+        db.prepare('INSERT INTO form49_items (form49_id,descripcion,cantidad,unidad,n_parte,n_serie,n_lote) VALUES (?,?,?,?,?,?,?)')
+          .run(req.params.id, it.descripcion||'', it.cantidad||0, it.unidad||'UND.', it.n_parte||'', it.n_serie||'', it.n_lote||'');
+      }
+    }
+  })();
+  const updated = db.prepare('SELECT * FROM form49_ingresos WHERE id=?').get(req.params.id);
+  res.json({ ...updated, items: db.prepare('SELECT * FROM form49_items WHERE form49_id=? ORDER BY id').all(req.params.id) });
+});
+
+router.delete('/form49/:id', verificarToken, (req, res) => {
+  if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  db.prepare('DELETE FROM form49_items WHERE form49_id=?').run(req.params.id);
+  db.prepare('DELETE FROM form49_ingresos WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 module.exports = router;

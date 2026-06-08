@@ -1,55 +1,98 @@
 const express = require('express');
-const XLSX    = require('xlsx');
 const { body, validationResult } = require('express-validator');
-const { db }  = require('../db/database');
+const { db } = require('../db/database');
 const { verificarToken } = require('../middleware/auth');
 
 const router = express.Router();
-const puede  = req => req.usuario?.rol === 'admin' || !!(req.permisos?.mantenimiento?.escribir);
+const puede = req => req.usuario?.rol === 'admin' || !!(req.permisos?.mantenimiento?.escribir);
 
-function nextNumero() {
-  const r = db.prepare("SELECT numero FROM mant_ot ORDER BY id DESC LIMIT 1").get();
-  if (r) { try { return 'MNT-' + String(parseInt(r.numero.replace('MNT-',''))+1).padStart(6,'0') } catch(_) {} }
-  return 'MNT-000001';
-}
+const ALERTAS_SQL = `
+  SELECT
+    tp.id              AS tarea_id,
+    e.id               AS equipo_id,
+    e.codigo,
+    e.nombre,
+    e.categoria,
+    e.ubicacion,
+    tp.componente,
+    tp.accion,
+    tp.tipo,
+    tp.frecuencia,
+    tp.frecuencia_dias,
+    COALESCE(MAX(ep.fecha), ins_max.ultima_inspeccion) AS ultima_ejecucion,
+    CASE
+      WHEN tp.frecuencia = 'Luego de c/uso' THEN 'manual'
+      WHEN COALESCE(MAX(ep.fecha), ins_max.ultima_inspeccion) IS NULL THEN 'nunca_ejecutada'
+      WHEN julianday('now') - julianday(COALESCE(MAX(ep.fecha), ins_max.ultima_inspeccion)) > tp.frecuencia_dias THEN 'vencida'
+      WHEN julianday('now') - julianday(COALESCE(MAX(ep.fecha), ins_max.ultima_inspeccion)) > tp.frecuencia_dias * 0.8 THEN 'proxima'
+      ELSE 'al_dia'
+    END AS estado_alerta,
+    CAST(julianday('now') - julianday(COALESCE(MAX(ep.fecha), ins_max.ultima_inspeccion)) AS INTEGER) AS dias_desde_ultima
+  FROM mant_tareas_preventivas tp
+  JOIN mant_equipos e ON e.id = tp.equipo_id
+  LEFT JOIN mant_ejecuciones_preventivas ep ON ep.tarea_id = tp.id
+  LEFT JOIN (
+    SELECT equipo_id, MAX(fecha) AS ultima_inspeccion
+    FROM mant_inspecciones
+    GROUP BY equipo_id
+  ) ins_max ON ins_max.equipo_id = e.id
+  WHERE e.estado = 'activo' AND tp.activa = 1
+  GROUP BY tp.id
+`;
 
-function calcProxima(desde, frecuencia) {
-  const d = new Date(desde);
-  switch(frecuencia) {
-    case 'Diario':     d.setDate(d.getDate()+1);         break;
-    case 'Semanal':    d.setDate(d.getDate()+7);         break;
-    case 'Mensual':    d.setMonth(d.getMonth()+1);       break;
-    case 'Trimestral': d.setMonth(d.getMonth()+3);       break;
-    case 'Semestral':  d.setMonth(d.getMonth()+6);       break;
-    case 'Anual':      d.setFullYear(d.getFullYear()+1); break;
-    default:           d.setMonth(d.getMonth()+1);
-  }
-  return d.toISOString().slice(0,10);
-}
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
 
-// ── ACTIVOS ────────────────────────────────────────────────────────────────────
-
-router.get('/activos', verificarToken, (req, res) => {
-  const { buscar, tipo, estado } = req.query;
-  const conds = ['activo=1'], params = [];
-  if (buscar) { conds.push('(codigo LIKE ? OR nombre LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`); }
-  if (tipo)   { conds.push('tipo=?');   params.push(tipo); }
-  if (estado) { conds.push('estado=?'); params.push(estado); }
-  res.json(db.prepare(`SELECT * FROM activos_mant WHERE ${conds.join(' AND ')} ORDER BY nombre`).all(...params));
+router.get('/dashboard', verificarToken, (req, res) => {
+  const vencidas   = db.prepare(`SELECT COUNT(*) as c FROM (${ALERTAS_SQL}) WHERE estado_alerta='vencida'`).get().c;
+  const proximas   = db.prepare(`SELECT COUNT(*) as c FROM (${ALERTAS_SQL}) WHERE estado_alerta='proxima'`).get().c;
+  const en_rep     = db.prepare("SELECT COUNT(*) as c FROM mant_equipos WHERE estado='en_reparacion'").get().c;
+  const bajas_anio = db.prepare("SELECT COUNT(*) as c FROM mant_equipos WHERE estado='baja' AND strftime('%Y',fecha_baja)=strftime('%Y','now')").get().c;
+  const urgentes   = db.prepare(`${ALERTAS_SQL} ORDER BY CASE estado_alerta WHEN 'vencida' THEN 1 WHEN 'nunca_ejecutada' THEN 2 ELSE 3 END, dias_desde_ultima DESC LIMIT 10`).all();
+  res.json({ vencidas, proximas, en_rep, bajas_anio, urgentes });
 });
 
-router.post('/activos', verificarToken,
+// ── META (categorías / ubicaciones para filtros) ──────────────────────────────
+
+router.get('/meta', verificarToken, (req, res) => {
+  const categorias = db.prepare('SELECT DISTINCT categoria FROM mant_equipos WHERE categoria IS NOT NULL ORDER BY categoria').all().map(r => r.categoria);
+  res.json({ categorias, ubicaciones: ['MIGUENS', 'POGGIO'] });
+});
+
+// ── EQUIPOS ───────────────────────────────────────────────────────────────────
+
+router.get('/equipos', verificarToken, (req, res) => {
+  const { buscar, categoria, ubicacion, estado } = req.query;
+  const conds = [], params = [];
+  if (buscar)    { conds.push('(codigo LIKE ? OR nombre LIKE ? OR marca LIKE ?)'); params.push(`%${buscar}%`, `%${buscar}%`, `%${buscar}%`); }
+  if (categoria) { conds.push('categoria=?'); params.push(categoria); }
+  if (ubicacion) { conds.push('ubicacion=?'); params.push(ubicacion); }
+  if (estado)    { conds.push('estado=?');    params.push(estado); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  res.json(db.prepare(`SELECT * FROM mant_equipos ${where} ORDER BY codigo`).all(...params));
+});
+
+router.get('/equipos/:id', verificarToken, (req, res) => {
+  const eq = db.prepare('SELECT * FROM mant_equipos WHERE id=?').get(req.params.id);
+  if (!eq) return res.status(404).json({ error: 'Equipo no encontrado' });
+  const tareas = db.prepare(`SELECT * FROM (${ALERTAS_SQL}) WHERE equipo_id=? ORDER BY estado_alerta`).all(eq.id);
+  const correctivas = db.prepare('SELECT * FROM mant_intervenciones_correctivas WHERE equipo_id=? ORDER BY fecha_deteccion DESC LIMIT 10').all(eq.id);
+  const inspecciones = db.prepare('SELECT * FROM mant_inspecciones WHERE equipo_id=? ORDER BY fecha DESC LIMIT 5').all(eq.id);
+  res.json({ ...eq, tareas, correctivas, inspecciones });
+});
+
+router.post('/equipos', verificarToken,
   body('codigo').trim().notEmpty(),
   body('nombre').trim().notEmpty(),
+  body('categoria').trim().notEmpty(),
   (req, res) => {
     if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
     const errs = validationResult(req);
     if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
-    const { codigo, nombre, tipo, marca, modelo, n_serie, ubicacion, fecha_adq, estado, observaciones } = req.body;
+    const { codigo, nombre, categoria, marca, modelo, nro_serie, ubicacion, observaciones } = req.body;
     try {
-      const r = db.prepare('INSERT INTO activos_mant (codigo,nombre,tipo,marca,modelo,n_serie,ubicacion,fecha_adq,estado,observaciones) VALUES (?,?,?,?,?,?,?,?,?,?)')
-        .run(codigo, nombre, tipo||'Maquinaria', marca||'', modelo||'', n_serie||'', ubicacion||'', fecha_adq||'', estado||'Activo', observaciones||'');
-      res.status(201).json(db.prepare('SELECT * FROM activos_mant WHERE id=?').get(r.lastInsertRowid));
+      const r = db.prepare('INSERT INTO mant_equipos (codigo,nombre,categoria,marca,modelo,nro_serie,ubicacion,observaciones) VALUES (?,?,?,?,?,?,?,?)')
+        .run(codigo, nombre, categoria, marca||null, modelo||null, nro_serie||null, ubicacion||null, observaciones||null);
+      res.status(201).json(db.prepare('SELECT * FROM mant_equipos WHERE id=?').get(r.lastInsertRowid));
     } catch(e) {
       if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'El código ya existe' });
       throw e;
@@ -57,203 +100,147 @@ router.post('/activos', verificarToken,
   }
 );
 
-router.put('/activos/:id', verificarToken, (req, res) => {
+router.put('/equipos/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const a = db.prepare('SELECT * FROM activos_mant WHERE id=?').get(req.params.id);
-  if (!a) return res.status(404).json({ error: 'No encontrado' });
-  const { codigo, nombre, tipo, marca, modelo, n_serie, ubicacion, fecha_adq, estado, observaciones } = req.body;
-  db.prepare(`UPDATE activos_mant SET codigo=?,nombre=?,tipo=?,marca=?,modelo=?,n_serie=?,ubicacion=?,fecha_adq=?,estado=?,observaciones=?,updated_at=datetime('now','localtime') WHERE id=?`)
-    .run(codigo??a.codigo, nombre??a.nombre, tipo??a.tipo, marca??a.marca, modelo??a.modelo,
-         n_serie??a.n_serie, ubicacion??a.ubicacion, fecha_adq??a.fecha_adq, estado??a.estado,
-         observaciones??a.observaciones, req.params.id);
-  res.json(db.prepare('SELECT * FROM activos_mant WHERE id=?').get(req.params.id));
+  const eq = db.prepare('SELECT * FROM mant_equipos WHERE id=?').get(req.params.id);
+  if (!eq) return res.status(404).json({ error: 'No encontrado' });
+  const { codigo, nombre, categoria, marca, modelo, nro_serie, ubicacion, estado, observaciones } = req.body;
+  db.prepare('UPDATE mant_equipos SET codigo=?,nombre=?,categoria=?,marca=?,modelo=?,nro_serie=?,ubicacion=?,estado=?,observaciones=? WHERE id=?')
+    .run(codigo??eq.codigo, nombre??eq.nombre, categoria??eq.categoria,
+         marca??eq.marca, modelo??eq.modelo, nro_serie??eq.nro_serie,
+         ubicacion??eq.ubicacion, estado??eq.estado, observaciones??eq.observaciones,
+         req.params.id);
+  res.json(db.prepare('SELECT * FROM mant_equipos WHERE id=?').get(req.params.id));
 });
 
-router.delete('/activos/:id', verificarToken, (req, res) => {
+router.post('/equipos/:id/baja', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-  db.prepare('UPDATE activos_mant SET activo=0 WHERE id=?').run(req.params.id);
-  res.json({ mensaje: 'Activo dado de baja' });
+  const { motivo_baja } = req.body;
+  if (!motivo_baja?.trim()) return res.status(400).json({ error: 'Motivo de baja requerido' });
+  db.prepare("UPDATE mant_equipos SET estado='baja', fecha_baja=date('now'), motivo_baja=? WHERE id=?")
+    .run(motivo_baja, req.params.id);
+  res.json(db.prepare('SELECT * FROM mant_equipos WHERE id=?').get(req.params.id));
 });
 
-// ── ÓRDENES DE TRABAJO ────────────────────────────────────────────────────────
+// ── ALERTAS / PLAN PREVENTIVO ─────────────────────────────────────────────────
 
-router.get('/ot', verificarToken, (req, res) => {
-  const { estado, tipo, prioridad, activo_id, desde, hasta, page=1, limit=50 } = req.query;
-  const conds = [], params = [];
-  if (estado)    { conds.push('estado=?');         params.push(estado); }
-  if (tipo)      { conds.push('tipo=?');            params.push(tipo); }
-  if (prioridad) { conds.push('prioridad=?');       params.push(prioridad); }
-  if (activo_id) { conds.push('activo_id=?');       params.push(activo_id); }
-  if (desde)     { conds.push('fecha_apertura>=?'); params.push(desde); }
-  if (hasta)     { conds.push('fecha_apertura<=?'); params.push(hasta); }
-  const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';
-  const offset = (parseInt(page)-1)*parseInt(limit);
-  const total  = db.prepare(`SELECT COUNT(*) as c FROM mant_ot ${where}`).get(...params).c;
-  const datos  = db.prepare(`SELECT * FROM mant_ot ${where} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...params, parseInt(limit), offset);
-  res.json({ total, datos });
+router.get('/alertas', verificarToken, (req, res) => {
+  const { estado, ubicacion, categoria } = req.query;
+  const conds = ["estado_alerta != 'manual'"], params = [];
+  if (estado)    { conds.push('estado_alerta=?'); params.push(estado); }
+  if (ubicacion) { conds.push('ubicacion=?');     params.push(ubicacion); }
+  if (categoria) { conds.push('categoria=?');     params.push(categoria); }
+  const order = `ORDER BY CASE estado_alerta WHEN 'vencida' THEN 1 WHEN 'nunca_ejecutada' THEN 2 WHEN 'proxima' THEN 3 ELSE 4 END, dias_desde_ultima DESC NULLS LAST`;
+  res.json(db.prepare(`SELECT * FROM (${ALERTAS_SQL}) WHERE ${conds.join(' AND ')} ${order}`).all(...params));
 });
 
-router.get('/ot/:id', verificarToken, (req, res) => {
-  const ot = db.prepare('SELECT * FROM mant_ot WHERE id=?').get(req.params.id);
-  if (!ot) return res.status(404).json({ error: 'OT no encontrada' });
-  const tareas = db.prepare('SELECT * FROM mant_ot_tareas WHERE ot_id=? ORDER BY orden').all(ot.id);
-  const costos = db.prepare('SELECT * FROM mant_ot_costos WHERE ot_id=? ORDER BY id').all(ot.id);
-  res.json({ ...ot, tareas, costos });
-});
+// ── EJECUCIONES PREVENTIVAS ───────────────────────────────────────────────────
 
-router.post('/ot', verificarToken,
-  body('descripcion').trim().notEmpty(),
+router.post('/ejecuciones', verificarToken,
+  body('tarea_id').isInt(),
+  body('equipo_id').isInt(),
+  body('fecha').notEmpty(),
+  body('resultado').isIn(['OK', 'NOK', 'Cuarentena']),
   (req, res) => {
     if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
     const errs = validationResult(req);
     if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
-    const { activo_id, activo_nombre, tipo, prioridad, fecha_apertura, fecha_prog, descripcion, ejecutor_tipo, ejecutor_nombre, observaciones, tareas } = req.body;
-    const numero = nextNumero();
-    const ot_id = db.transaction(() => {
-      const r = db.prepare('INSERT INTO mant_ot (numero,activo_id,activo_nombre,tipo,prioridad,fecha_apertura,fecha_prog,descripcion,ejecutor_tipo,ejecutor_nombre,observaciones,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-        .run(numero, activo_id||null, activo_nombre||'', tipo||'Correctivo', prioridad||'Normal',
-             fecha_apertura||new Date().toISOString().slice(0,10), fecha_prog||'', descripcion,
-             ejecutor_tipo||'interno', ejecutor_nombre||'', observaciones||'', req.usuario.id);
-      if (tareas?.length) {
-        for (const [i,t] of tareas.entries()) {
-          if (!t.descripcion?.trim()) continue;
-          db.prepare('INSERT INTO mant_ot_tareas (ot_id,orden,descripcion) VALUES (?,?,?)').run(r.lastInsertRowid, i+1, t.descripcion);
-        }
-      }
-      return r.lastInsertRowid;
-    })();
-    const ot = db.prepare('SELECT * FROM mant_ot WHERE id=?').get(ot_id);
-    res.status(201).json({ ...ot, tareas: db.prepare('SELECT * FROM mant_ot_tareas WHERE ot_id=? ORDER BY orden').all(ot_id), costos: [] });
+    const { tarea_id, equipo_id, fecha, resultado, observaciones, responsable } = req.body;
+    const r = db.prepare('INSERT INTO mant_ejecuciones_preventivas (tarea_id,equipo_id,fecha,resultado,observaciones,responsable) VALUES (?,?,?,?,?,?)')
+      .run(tarea_id, equipo_id, fecha, resultado, observaciones||null, responsable||null);
+    res.status(201).json({ id: r.lastInsertRowid, tarea_id, equipo_id, fecha, resultado, observaciones, responsable });
   }
 );
 
-router.put('/ot/:id', verificarToken, (req, res) => {
+// ── INTERVENCIONES CORRECTIVAS ────────────────────────────────────────────────
+
+router.get('/correctivas', verificarToken, (req, res) => {
+  const { resultado, equipo_id } = req.query;
+  const conds = [], params = [];
+  if (resultado) { conds.push('ic.resultado=?');  params.push(resultado); }
+  if (equipo_id) { conds.push('ic.equipo_id=?');  params.push(equipo_id); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  res.json(db.prepare(`
+    SELECT ic.*, e.codigo, e.nombre AS equipo_nombre, e.categoria
+    FROM mant_intervenciones_correctivas ic
+    JOIN mant_equipos e ON e.id = ic.equipo_id
+    ${where}
+    ORDER BY ic.id DESC
+  `).all(...params));
+});
+
+router.post('/correctivas', verificarToken,
+  body('equipo_id').isInt(),
+  body('fecha_deteccion').notEmpty(),
+  body('descripcion_falla').trim().notEmpty(),
+  (req, res) => {
+    if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
+    const errs = validationResult(req);
+    if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
+    const { equipo_id, fecha_deteccion, fecha_inicio, descripcion_falla, tipo_servicio, proveedor, responsable, observaciones } = req.body;
+    const r = db.prepare('INSERT INTO mant_intervenciones_correctivas (equipo_id,fecha_deteccion,fecha_inicio,descripcion_falla,tipo_servicio,proveedor,resultado,responsable,observaciones) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(equipo_id, fecha_deteccion, fecha_inicio||null, descripcion_falla, tipo_servicio||'interno', proveedor||null, 'pendiente', responsable||null, observaciones||null);
+    res.status(201).json(db.prepare('SELECT * FROM mant_intervenciones_correctivas WHERE id=?').get(r.lastInsertRowid));
+  }
+);
+
+router.put('/correctivas/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const ot = db.prepare('SELECT * FROM mant_ot WHERE id=?').get(req.params.id);
-  if (!ot) return res.status(404).json({ error: 'OT no encontrada' });
-  const { activo_id, activo_nombre, tipo, prioridad, estado, fecha_apertura, fecha_prog, fecha_cierre, descripcion, ejecutor_tipo, ejecutor_nombre, observaciones, tareas } = req.body;
+  const ic = db.prepare('SELECT * FROM mant_intervenciones_correctivas WHERE id=?').get(req.params.id);
+  if (!ic) return res.status(404).json({ error: 'No encontrada' });
+  const { fecha_inicio, fecha_fin, accion_realizada, tipo_servicio, proveedor, costo, repuestos_usados, resultado, responsable, observaciones } = req.body;
   db.transaction(() => {
-    db.prepare(`UPDATE mant_ot SET activo_id=?,activo_nombre=?,tipo=?,prioridad=?,estado=?,fecha_apertura=?,fecha_prog=?,fecha_cierre=?,descripcion=?,ejecutor_tipo=?,ejecutor_nombre=?,observaciones=?,updated_at=datetime('now','localtime') WHERE id=?`)
-      .run(activo_id??ot.activo_id, activo_nombre??ot.activo_nombre, tipo??ot.tipo, prioridad??ot.prioridad,
-           estado??ot.estado, fecha_apertura??ot.fecha_apertura, fecha_prog??ot.fecha_prog,
-           fecha_cierre??ot.fecha_cierre, descripcion??ot.descripcion,
-           ejecutor_tipo??ot.ejecutor_tipo, ejecutor_nombre??ot.ejecutor_nombre,
-           observaciones??ot.observaciones, req.params.id);
-    if (tareas) {
-      db.prepare('DELETE FROM mant_ot_tareas WHERE ot_id=?').run(req.params.id);
-      for (const [i,t] of tareas.entries()) {
-        if (!t.descripcion?.trim()) continue;
-        db.prepare('INSERT INTO mant_ot_tareas (ot_id,orden,descripcion,estado,completado_por,fecha_comp) VALUES (?,?,?,?,?,?)')
-          .run(req.params.id, i+1, t.descripcion, t.estado||'Pendiente', t.completado_por||'', t.fecha_comp||'');
-      }
+    db.prepare('UPDATE mant_intervenciones_correctivas SET fecha_inicio=?,fecha_fin=?,accion_realizada=?,tipo_servicio=?,proveedor=?,costo=?,repuestos_usados=?,resultado=?,responsable=?,observaciones=? WHERE id=?')
+      .run(fecha_inicio??ic.fecha_inicio, fecha_fin??ic.fecha_fin, accion_realizada??ic.accion_realizada,
+           tipo_servicio??ic.tipo_servicio, proveedor??ic.proveedor, costo??ic.costo,
+           repuestos_usados??ic.repuestos_usados, resultado??ic.resultado,
+           responsable??ic.responsable, observaciones??ic.observaciones, req.params.id);
+    if (resultado === 'derivado_baja') {
+      const motivo = `Correctiva #${req.params.id}: ${accion_realizada || ic.descripcion_falla}`;
+      db.prepare("UPDATE mant_equipos SET estado='baja', fecha_baja=date('now'), motivo_baja=? WHERE id=?")
+        .run(motivo, ic.equipo_id);
     }
   })();
-  const upd = db.prepare('SELECT * FROM mant_ot WHERE id=?').get(req.params.id);
-  res.json({ ...upd, tareas: db.prepare('SELECT * FROM mant_ot_tareas WHERE ot_id=? ORDER BY orden').all(req.params.id), costos: db.prepare('SELECT * FROM mant_ot_costos WHERE ot_id=? ORDER BY id').all(req.params.id) });
+  res.json(db.prepare('SELECT * FROM mant_intervenciones_correctivas WHERE id=?').get(req.params.id));
 });
 
-router.patch('/ot/:id/tareas/:tid', verificarToken, (req, res) => {
+// ── INSPECCIONES ──────────────────────────────────────────────────────────────
+
+router.get('/inspecciones', verificarToken, (req, res) => {
+  const { equipo_id, desde, hasta } = req.query;
+  const conds = [], params = [];
+  if (equipo_id) { conds.push('i.equipo_id=?'); params.push(equipo_id); }
+  if (desde)     { conds.push('i.fecha>=?');     params.push(desde); }
+  if (hasta)     { conds.push('i.fecha<=?');     params.push(hasta); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  res.json(db.prepare(`
+    SELECT i.*, e.codigo, e.nombre AS equipo_nombre, e.categoria
+    FROM mant_inspecciones i
+    JOIN mant_equipos e ON e.id = i.equipo_id
+    ${where}
+    ORDER BY i.fecha DESC, i.id DESC
+  `).all(...params));
+});
+
+router.post('/inspecciones', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const { estado, completado_por } = req.body;
-  const fc = estado === 'Completada' ? new Date().toISOString().slice(0,10) : '';
-  db.prepare('UPDATE mant_ot_tareas SET estado=?,completado_por=?,fecha_comp=? WHERE id=? AND ot_id=?')
-    .run(estado||'Pendiente', completado_por||'', fc, req.params.tid, req.params.id);
-  res.json(db.prepare('SELECT * FROM mant_ot_tareas WHERE id=?').get(req.params.tid));
+  const { registros } = req.body;
+  if (!Array.isArray(registros) || !registros.length) return res.status(400).json({ error: 'Sin registros' });
+  const ins = db.prepare('INSERT INTO mant_inspecciones (equipo_id,fecha,estado_general,ubicacion_verificada,etiqueta_ok,observaciones,responsable) VALUES (?,?,?,?,?,?,?)');
+  db.transaction(rows => {
+    for (const r of rows)
+      ins.run(r.equipo_id, r.fecha, r.estado_general, r.ubicacion_verificada||null, r.etiqueta_ok??1, r.observaciones||null, r.responsable||null);
+  })(registros);
+  res.status(201).json({ insertados: registros.length });
 });
 
-router.post('/ot/:id/costos', verificarToken, (req, res) => {
-  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const { tipo, descripcion, cantidad, precio_unit } = req.body;
-  const total = (parseFloat(cantidad)||1) * (parseFloat(precio_unit)||0);
-  const r = db.prepare('INSERT INTO mant_ot_costos (ot_id,tipo,descripcion,cantidad,precio_unit,total) VALUES (?,?,?,?,?,?)')
-    .run(req.params.id, tipo||'Repuesto', descripcion||'', parseFloat(cantidad)||1, parseFloat(precio_unit)||0, total);
-  res.status(201).json(db.prepare('SELECT * FROM mant_ot_costos WHERE id=?').get(r.lastInsertRowid));
-});
+// ── HISTORIAL POR EQUIPO ──────────────────────────────────────────────────────
 
-router.delete('/ot/:id/costos/:cid', verificarToken, (req, res) => {
-  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-  db.prepare('DELETE FROM mant_ot_costos WHERE id=? AND ot_id=?').run(req.params.cid, req.params.id);
-  res.json({ ok: true });
-});
-
-router.delete('/ot/:id', verificarToken, (req, res) => {
-  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-  db.prepare('DELETE FROM mant_ot_tareas WHERE ot_id=?').run(req.params.id);
-  db.prepare('DELETE FROM mant_ot_costos WHERE ot_id=?').run(req.params.id);
-  db.prepare('DELETE FROM mant_ot WHERE id=?').run(req.params.id);
-  res.json({ mensaje: 'OT eliminada' });
-});
-
-// ── PLAN PREVENTIVO ────────────────────────────────────────────────────────────
-
-router.get('/plan', verificarToken, (req, res) => {
-  const { activo_id } = req.query;
-  const where = activo_id ? 'WHERE activo=1 AND activo_id=?' : 'WHERE activo=1';
-  res.json(db.prepare(`SELECT * FROM mant_plan ${where} ORDER BY proxima_fecha`).all(...(activo_id?[activo_id]:[])));
-});
-
-router.post('/plan', verificarToken,
-  body('descripcion').trim().notEmpty(),
-  (req, res) => {
-    if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-    const errs = validationResult(req);
-    if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
-    const { activo_id, activo_nombre, descripcion, frecuencia, proxima_fecha } = req.body;
-    const r = db.prepare('INSERT INTO mant_plan (activo_id,activo_nombre,descripcion,frecuencia,proxima_fecha) VALUES (?,?,?,?,?)')
-      .run(activo_id||null, activo_nombre||'', descripcion, frecuencia||'Mensual', proxima_fecha||'');
-    res.status(201).json(db.prepare('SELECT * FROM mant_plan WHERE id=?').get(r.lastInsertRowid));
-  }
-);
-
-router.put('/plan/:id', verificarToken, (req, res) => {
-  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const p = db.prepare('SELECT * FROM mant_plan WHERE id=?').get(req.params.id);
-  if (!p) return res.status(404).json({ error: 'No encontrado' });
-  const { activo_id, activo_nombre, descripcion, frecuencia, proxima_fecha } = req.body;
-  db.prepare('UPDATE mant_plan SET activo_id=?,activo_nombre=?,descripcion=?,frecuencia=?,proxima_fecha=? WHERE id=?')
-    .run(activo_id??p.activo_id, activo_nombre??p.activo_nombre, descripcion??p.descripcion,
-         frecuencia??p.frecuencia, proxima_fecha??p.proxima_fecha, req.params.id);
-  res.json(db.prepare('SELECT * FROM mant_plan WHERE id=?').get(req.params.id));
-});
-
-router.delete('/plan/:id', verificarToken, (req, res) => {
-  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-  db.prepare('UPDATE mant_plan SET activo=0 WHERE id=?').run(req.params.id);
-  res.json({ ok: true });
-});
-
-router.post('/plan/:id/ejecutar', verificarToken, (req, res) => {
-  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const plan = db.prepare('SELECT * FROM mant_plan WHERE id=?').get(req.params.id);
-  if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
-  const hoy    = new Date().toISOString().slice(0,10);
-  const proxima = calcProxima(hoy, plan.frecuencia);
-  const numero = nextNumero();
-  const ot_id = db.transaction(() => {
-    const r = db.prepare('INSERT INTO mant_ot (numero,activo_id,activo_nombre,tipo,prioridad,estado,fecha_apertura,descripcion,ejecutor_tipo,plan_id,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-      .run(numero, plan.activo_id, plan.activo_nombre, 'Preventivo', 'Normal', 'Pendiente', hoy, plan.descripcion, 'interno', plan.id, req.usuario.id);
-    db.prepare('UPDATE mant_plan SET ultima_fecha=?,proxima_fecha=? WHERE id=?').run(hoy, proxima, plan.id);
-    return r.lastInsertRowid;
-  })();
-  res.status(201).json({ ot_id, numero, proxima_fecha: proxima });
-});
-
-// ── EXPORTAR ───────────────────────────────────────────────────────────────────
-
-router.get('/exportar', verificarToken, (req, res) => {
-  const ots = db.prepare('SELECT * FROM mant_ot ORDER BY id DESC').all();
-  const datos = ots.map(o => ({
-    'N° OT': o.numero, 'Activo': o.activo_nombre, 'Tipo': o.tipo, 'Prioridad': o.prioridad,
-    'Estado': o.estado, 'Descripción': o.descripcion, 'Apertura': o.fecha_apertura,
-    'Programado': o.fecha_prog, 'Cierre': o.fecha_cierre,
-    'Ejecutor': o.ejecutor_nombre, 'Tipo Ejecutor': o.ejecutor_tipo,
-  }));
-  const ws = XLSX.utils.json_to_sheet(datos);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Mantenimiento');
-  res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition',`attachment; filename=mantenimiento_${new Date().toISOString().slice(0,10)}.xlsx`);
-  res.send(XLSX.write(wb, { type:'buffer', bookType:'xlsx' }));
+router.get('/equipos/:codigo/historial', verificarToken, (req, res) => {
+  const equipo = db.prepare('SELECT * FROM mant_equipos WHERE codigo=?').get(req.params.codigo);
+  if (!equipo) return res.status(404).json({ error: 'Equipo no encontrado' });
+  const historial = db.prepare('SELECT * FROM v_mant_historial_equipo WHERE codigo=? ORDER BY fecha DESC').all(req.params.codigo);
+  res.json({ equipo, historial });
 });
 
 module.exports = router;

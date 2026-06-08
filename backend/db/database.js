@@ -307,6 +307,76 @@ function inicializar() {
   // ── Columna proveedor en productos (idempotente) ──────────────────────────────
   try { db.exec(`ALTER TABLE productos ADD COLUMN proveedor TEXT DEFAULT ''`) } catch(e) {}
 
+  // ── SGC Compras: columnas extra (idempotente) ─────────────────────────────────
+  try { db.exec(`ALTER TABLE proveedores ADD COLUMN critico INTEGER DEFAULT 0`) } catch(e) {}
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN fecha_entrega_est TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN numero_remito TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN fecha_recepcion TEXT DEFAULT ''`) } catch(e) {}
+
+  // ── Form 17 — Seguimiento de Compras (idempotente) ───────────────────────────
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN estado_doc TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN nro_factura TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN importe_facturado REAL DEFAULT 0`) } catch(e) {}
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN fecha_vencimiento TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN pago_confirmado INTEGER DEFAULT 0`) } catch(e) {}
+  try { db.exec(`ALTER TABLE oc_items ADD COLUMN estado_calidad TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE oc_items ADD COLUMN estado_factura TEXT DEFAULT ''`) } catch(e) {}
+
+  // ── Form 11 — Selección y Evaluación de Proveedores (idempotente) ────────────
+  try { db.exec(`ALTER TABLE proveedores ADD COLUMN categoria_provision TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE proveedores ADD COLUMN fecha_seleccion TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE proveedores ADD COLUMN frecuencia_evaluacion TEXT DEFAULT 'Anual'`) } catch(e) {}
+  try { db.exec(`ALTER TABLE proveedores ADD COLUMN responsable_seleccion TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE proveedores ADD COLUMN responsable_evaluacion TEXT DEFAULT ''`) } catch(e) {}
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS evaluaciones_proveedor (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      proveedor_id  INTEGER NOT NULL REFERENCES proveedores(id),
+      tipo          TEXT NOT NULL CHECK(tipo IN ('seleccion','evaluacion')),
+      anio          INTEGER NOT NULL,
+      resultado     TEXT DEFAULT '',
+      puntaje       REAL DEFAULT 0,
+      fecha         TEXT DEFAULT '',
+      observaciones TEXT DEFAULT '',
+      created_by    INTEGER REFERENCES usuarios(id),
+      created_at    TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS evaluacion_criterios (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      evaluacion_id INTEGER NOT NULL REFERENCES evaluaciones_proveedor(id) ON DELETE CASCADE,
+      criterio      TEXT NOT NULL,
+      puntaje       TEXT DEFAULT ''
+    );
+  `);
+
+  // ── Form 49 — Ingreso sin OC/remito ───────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS form49_ingresos (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero           TEXT UNIQUE NOT NULL,
+      fecha            TEXT DEFAULT '',
+      proveedor_id     INTEGER REFERENCES proveedores(id),
+      proveedor_nombre TEXT DEFAULT '',
+      proyecto         TEXT DEFAULT '',
+      autorizado_por   TEXT DEFAULT '',
+      recibido_por     TEXT DEFAULT '',
+      observaciones    TEXT DEFAULT '',
+      created_by       INTEGER REFERENCES usuarios(id),
+      created_at       TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS form49_items (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      form49_id   INTEGER NOT NULL REFERENCES form49_ingresos(id) ON DELETE CASCADE,
+      descripcion TEXT DEFAULT '',
+      cantidad    REAL DEFAULT 0,
+      unidad      TEXT DEFAULT 'UND.',
+      n_parte     TEXT DEFAULT '',
+      n_serie     TEXT DEFAULT '',
+      n_lote      TEXT DEFAULT ''
+    );
+  `);
+
   // ── Mantenimiento ─────────────────────────────────────────────────────────────
   db.exec(`
     CREATE TABLE IF NOT EXISTS activos_mant (
