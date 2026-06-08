@@ -10,6 +10,7 @@ const TODOS_LOS_ITEMS = [
   { to: '/produccion', label: 'Producción',   icon: 'tools',        modulo: 'produccion'  },
   { to: '/finanzas',      label: 'Finanzas',      icon: 'cash-stack',    modulo: 'finanzas'      },
   { to: '/mantenimiento', label: 'Mantenimiento', icon: 'wrench-adjustable', modulo: 'mantenimiento' },
+  { to: '/administracion', label: 'Administración', icon: 'building-gear', modulo: 'administracion' },
   { to: '/usuarios',      label: 'Usuarios',      icon: 'people-gear',   modulo: '__admin__'     },
   { to: '/roles',      label: 'Roles',        icon: 'shield-lock',  modulo: '__admin__'   },
 ]

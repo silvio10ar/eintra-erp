@@ -12,7 +12,7 @@ const puede = req => !!(req.permisos?.stock?.escribir);
 router.get('/productos', verificarToken, (req, res) => {
   const { buscar, categoria, ubicacion, alerta } = req.query;
   const conds = ['p.activo=1'], params = [];
-  if (buscar)   { conds.push('(p.codigo LIKE ? OR p.descripcion LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`); }
+  if (buscar)   { conds.push('(p.codigo LIKE ? OR p.descripcion LIKE ? OR p.proveedor LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`,`%${buscar}%`); }
   if (categoria){ conds.push('p.categoria=?');  params.push(categoria); }
   if (ubicacion){ conds.push('p.ubicacion=?');  params.push(ubicacion); }
   if (alerta === 'bajo')     conds.push('p.stock_actual > 0 AND p.stock_minimo > 0 AND p.stock_actual <= p.stock_minimo');
@@ -175,7 +175,7 @@ router.get('/exportar', verificarToken, (req, res) => {
   }
 
   const conds = ['p.activo=1'], params = [];
-  if (buscar)   { conds.push('(p.codigo LIKE ? OR p.descripcion LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`); }
+  if (buscar)   { conds.push('(p.codigo LIKE ? OR p.descripcion LIKE ? OR p.proveedor LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`,`%${buscar}%`); }
   if (categoria){ conds.push('p.categoria=?'); params.push(categoria); }
   if (ubicacion){ conds.push('p.ubicacion=?'); params.push(ubicacion); }
   if (alerta === 'bajo')    conds.push('p.stock_actual > 0 AND p.stock_minimo > 0 AND p.stock_actual <= p.stock_minimo');

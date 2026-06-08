@@ -2,825 +2,1287 @@ import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
 
-const TIPOS_ACTIVO  = ['Maquinaria','Infraestructura','Herramienta','Vehículo']
-const ESTADOS_ACTIVO = ['Activo','En mantenimiento','Dado de baja']
-const TIPOS_OT      = ['Correctivo','Preventivo']
-const PRIORIDADES   = [{ v:'Normal', c:'secondary' },{ v:'Alta', c:'warning' },{ v:'Urgente', c:'danger' }]
-const ESTADOS_OT    = [{ v:'Pendiente', c:'secondary' },{ v:'En proceso', c:'primary' },{ v:'Completada', c:'success' },{ v:'Cancelada', c:'danger' }]
-const FRECUENCIAS   = ['Diario','Semanal','Mensual','Trimestral','Semestral','Anual']
-const TIPOS_COSTO   = ['Repuesto','Mano de Obra','Servicio','Otro']
+const hoy = () => new Date().toISOString().slice(0, 10)
+const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
+const fmtN = n => n != null ? new Intl.NumberFormat('es-AR').format(n) : '—'
 
-const fmtN = n => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n ?? 0)
-const fmtF = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
-const hoy  = () => new Date().toISOString().slice(0,10)
-const diasHasta = iso => { if (!iso) return null; const d = Math.round((new Date(iso)-new Date())/(1000*60*60*24)); return d }
+const BADGE_ALERTA = { vencida: 'danger', proxima: 'warning', al_dia: 'success', nunca_ejecutada: 'secondary', manual: 'info' }
+const LABEL_ALERTA = { vencida: 'Vencida', proxima: 'Próxima', al_dia: 'Al día', nunca_ejecutada: 'Sin ejecutar', manual: 'Luego de c/uso' }
+const BADGE_ESTADO = { activo: 'success', en_reparacion: 'warning', baja: 'secondary' }
+const BADGE_RESULTADO = { resuelto: 'success', pendiente: 'warning', derivado_baja: 'secondary' }
 
-const FORM_ACTIVO = { codigo:'', nombre:'', tipo:'Maquinaria', marca:'', modelo:'', n_serie:'', ubicacion:'', fecha_adq:'', estado:'Activo', observaciones:'' }
-const FORM_OT = { activo_id:'', activo_nombre:'', tipo:'Correctivo', prioridad:'Normal', fecha_apertura:hoy(), fecha_prog:'', descripcion:'', ejecutor_tipo:'interno', ejecutor_nombre:'', observaciones:'', tareas:[] }
-const FORM_PLAN = { activo_id:'', activo_nombre:'', descripcion:'', frecuencia:'Mensual', proxima_fecha:'' }
-const FORM_COSTO = { tipo:'Repuesto', descripcion:'', cantidad:1, precio_unit:0 }
+const FORM_EQUIPO = { codigo: '', nombre: '', categoria: '', marca: '', modelo: '', nro_serie: '', ubicacion: '', observaciones: '' }
+const FORM_EJEC = { fecha: hoy(), resultado: 'OK', observaciones: '', responsable: '' }
+const FORM_CORREC = { equipo_id: '', equipo_texto: '', fecha_deteccion: hoy(), fecha_inicio: '', descripcion_falla: '', tipo_servicio: 'interno', proveedor: '', responsable: '', observaciones: '' }
+const FORM_CIERRE = { fecha_fin: hoy(), accion_realizada: '', tipo_servicio: 'interno', proveedor: '', costo: '', repuestos_usados: '', resultado: 'resuelto', responsable: '', observaciones: '' }
 
 export default function Mantenimiento() {
   const canWrite = puedeEscribir('mantenimiento')
-  const [tab, setTab] = useState('ot')
+  const [tab, setTab] = useState('dashboard')
+  const [meta, setMeta] = useState({ categorias: [], ubicaciones: ['MIGUENS', 'POGGIO'] })
 
-  /* ── Activos ────────────────────────────────────────────────────── */
-  const [activos, setActivos]     = useState([])
-  const [buscarA, setBuscarA]     = useState('')
-  const [filTipoA, setFilTipoA]   = useState('')
-  const [filEstA, setFilEstA]     = useState('')
-  const [loadA, setLoadA]         = useState(false)
-  const [modalA, setModalA]       = useState(null)
-  const [formA, setFormA]         = useState(FORM_ACTIVO)
-  const [savA, setSavA]           = useState(false)
-  const [errA, setErrA]           = useState('')
+  // ── Dashboard ──────────────────────────────────────────────────────────────
+  const [kpis, setKpis] = useState(null)
+  const [loadDash, setLoadDash] = useState(false)
 
-  /* ── OT ─────────────────────────────────────────────────────────── */
-  const [ots, setOts]             = useState([])
-  const [totalOT, setTotalOT]     = useState(0)
-  const [pageOT, setPageOT]       = useState(1)
-  const [loadOT, setLoadOT]       = useState(true)
-  const [filtOT, setFiltOT]       = useState({ estado:'', tipo:'', prioridad:'', desde:'', hasta:'' })
-  const [modalDetOT, setModalDetOT] = useState(null)
-  const [loadDet, setLoadDet]     = useState(false)
-  const [modalFormOT, setModalFormOT] = useState(null)
-  const [formOT, setFormOT]       = useState(FORM_OT)
-  const [savOT, setSavOT]         = useState(false)
-  const [errOT, setErrOT]         = useState('')
-  const [nuevaTarea, setNuevaTarea] = useState('')
-  const [formCosto, setFormCosto] = useState(FORM_COSTO)
-  const [savCosto, setSavCosto]   = useState(false)
-  const [sugsA, setSugsA]         = useState([])
+  // ── Equipos ────────────────────────────────────────────────────────────────
+  const [equipos, setEquipos] = useState([])
+  const [loadEq, setLoadEq] = useState(false)
+  const [filtEq, setFiltEq] = useState({ buscar: '', categoria: '', ubicacion: '', estado: '' })
+  const [modalEq, setModalEq] = useState(null)       // 'nuevo' | 'editar' | 'detalle' | 'baja'
+  const [equipoSel, setEquipoSel] = useState(null)
+  const [formEq, setFormEq] = useState(FORM_EQUIPO)
+  const [motivoBaja, setMotivoBaja] = useState('')
+  const [savEq, setSavEq] = useState(false)
+  const [errEq, setErrEq] = useState('')
 
-  /* ── Plan ───────────────────────────────────────────────────────── */
-  const [planes, setPlanes]       = useState([])
-  const [loadPlan, setLoadPlan]   = useState(false)
-  const [modalPlan, setModalPlan] = useState(null)
-  const [formPlan, setFormPlan]   = useState(FORM_PLAN)
-  const [savPlan, setSavPlan]     = useState(false)
-  const [errPlan, setErrPlan]     = useState('')
-  const [sugsAP, setSugsAP]       = useState([])
+  // ── Plan preventivo / Alertas ──────────────────────────────────────────────
+  const [alertas, setAlertas] = useState([])
+  const [loadAl, setLoadAl] = useState(false)
+  const [filtAl, setFiltAl] = useState({ estado: '', ubicacion: '', categoria: '' })
+  const [modalEjec, setModalEjec] = useState(null)   // tarea seleccionada
+  const [formEjec, setFormEjec] = useState(FORM_EJEC)
+  const [savEjec, setSavEjec] = useState(false)
+  const [errEjec, setErrEjec] = useState('')
+  const [nokCorrec, setNokCorrec] = useState(false)  // mostrar opción correctiva post-NOK
 
-  /* ── Cargar activos ─────────────────────────────────────────────── */
-  const cargarActivos = useCallback(() => {
-    setLoadA(true)
-    api.get('/mantenimiento/activos', { params: { buscar: buscarA||undefined, tipo: filTipoA||undefined, estado: filEstA||undefined } })
-      .then(r => setActivos(r.data)).finally(() => setLoadA(false))
-  }, [buscarA, filTipoA, filEstA])
+  // ── Correctivas ────────────────────────────────────────────────────────────
+  const [correctivas, setCorrectivas] = useState([])
+  const [loadCo, setLoadCo] = useState(false)
+  const [filtCo, setFiltCo] = useState({ resultado: '' })
+  const [modalCo, setModalCo] = useState(null)       // 'nueva' | 'cierre'
+  const [correctivaSel, setCorrectivaSel] = useState(null)
+  const [formCo, setFormCo] = useState(FORM_CORREC)
+  const [formCierre, setFormCierre] = useState(FORM_CIERRE)
+  const [sugsEq, setSugsEq] = useState([])
+  const [savCo, setSavCo] = useState(false)
+  const [errCo, setErrCo] = useState('')
 
-  useEffect(() => { if (tab === 'activos') cargarActivos() }, [cargarActivos, tab])
+  // ── Inspección ─────────────────────────────────────────────────────────────
+  const [equiposActivos, setEquiposActivos] = useState([])
+  const [loadInsp, setLoadInsp] = useState(false)
+  const [fechaInsp, setFechaInsp] = useState(hoy())
+  const [responsableInsp, setResponsableInsp] = useState('')
+  const [filaInsp, setFilaInsp] = useState({})
+  const [savInsp, setSavInsp] = useState(false)
+  const [msgInsp, setMsgInsp] = useState('')
+  const [expandedEquipos, setExpandedEquipos] = useState(new Set())
+  const toggleEquipo = id => setExpandedEquipos(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
+
+  const [modoInsp, setModoInsp] = useState('historial') // 'nueva' | 'historial'
+  const [histInsp, setHistInsp] = useState([])
+  const [loadHistInsp, setLoadHistInsp] = useState(false)
+  const [filtHistInsp, setFiltHistInsp] = useState({ desde: '', hasta: '' })
+  const [buscarInsp, setBuscarInsp] = useState('')
+
+  // ── Historial ──────────────────────────────────────────────────────────────
+  const [historialEq, setHistorialEq] = useState(null)
+  const [loadHist, setLoadHist] = useState(false)
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CARGA DE DATOS
+  // ══════════════════════════════════════════════════════════════════════════
 
   useEffect(() => {
-    api.get('/mantenimiento/activos').then(r => setActivos(r.data)).catch(() => {})
+    api.get('/mantenimiento/meta').then(r => setMeta(r.data)).catch(() => {})
   }, [])
 
-  /* ── Cargar OT ──────────────────────────────────────────────────── */
-  const cargarOT = useCallback(() => {
-    setLoadOT(true)
-    const p = { page: pageOT, limit: 50 }
-    if (filtOT.estado)    p.estado    = filtOT.estado
-    if (filtOT.tipo)      p.tipo      = filtOT.tipo
-    if (filtOT.prioridad) p.prioridad = filtOT.prioridad
-    if (filtOT.desde)     p.desde     = filtOT.desde
-    if (filtOT.hasta)     p.hasta     = filtOT.hasta
-    api.get('/mantenimiento/ot', { params: p })
-      .then(r => { setOts(r.data.datos); setTotalOT(r.data.total) })
-      .finally(() => setLoadOT(false))
-  }, [pageOT, filtOT])
-
-  useEffect(() => { if (tab === 'ot') cargarOT() }, [cargarOT, tab])
-
-  /* ── Cargar Plan ────────────────────────────────────────────────── */
-  const cargarPlan = useCallback(() => {
-    setLoadPlan(true)
-    api.get('/mantenimiento/plan').then(r => setPlanes(r.data)).finally(() => setLoadPlan(false))
+  const cargarDashboard = useCallback(() => {
+    setLoadDash(true)
+    api.get('/mantenimiento/dashboard').then(r => setKpis(r.data)).finally(() => setLoadDash(false))
   }, [])
 
-  useEffect(() => { if (tab === 'plan') cargarPlan() }, [cargarPlan, tab])
+  const cargarEquipos = useCallback(() => {
+    setLoadEq(true)
+    const p = {}
+    if (filtEq.buscar)    p.buscar    = filtEq.buscar
+    if (filtEq.categoria) p.categoria = filtEq.categoria
+    if (filtEq.ubicacion) p.ubicacion = filtEq.ubicacion
+    if (filtEq.estado)    p.estado    = filtEq.estado
+    api.get('/mantenimiento/equipos', { params: p }).then(r => setEquipos(r.data)).finally(() => setLoadEq(false))
+  }, [filtEq])
 
-  /* ── Detalle OT ─────────────────────────────────────────────────── */
-  const verOT = id => {
-    setLoadDet(true); setModalDetOT(null)
-    api.get(`/mantenimiento/ot/${id}`).then(r => setModalDetOT(r.data)).finally(() => setLoadDet(false))
+  const cargarAlertas = useCallback(() => {
+    setLoadAl(true)
+    const p = {}
+    if (filtAl.estado)    p.estado    = filtAl.estado
+    if (filtAl.ubicacion) p.ubicacion = filtAl.ubicacion
+    if (filtAl.categoria) p.categoria = filtAl.categoria
+    api.get('/mantenimiento/alertas', { params: p }).then(r => setAlertas(r.data)).finally(() => setLoadAl(false))
+  }, [filtAl])
+
+  const cargarCorrectivas = useCallback(() => {
+    setLoadCo(true)
+    const p = {}
+    if (filtCo.resultado) p.resultado = filtCo.resultado
+    api.get('/mantenimiento/correctivas', { params: p }).then(r => setCorrectivas(r.data)).finally(() => setLoadCo(false))
+  }, [filtCo])
+
+  const cargarEquiposActivos = useCallback(() => {
+    setLoadInsp(true)
+    api.get('/mantenimiento/equipos', { params: { estado: 'activo' } })
+      .then(r => {
+        setEquiposActivos(r.data)
+        const init = {}
+        r.data.forEach(e => { init[e.id] = { estado_general: 'OK', ubicacion_verificada: e.ubicacion || '', etiqueta_ok: 1, observaciones: '' } })
+        setFilaInsp(init)
+      }).finally(() => setLoadInsp(false))
+  }, [])
+
+  useEffect(() => { if (tab === 'dashboard')  cargarDashboard() },  [cargarDashboard, tab])
+  useEffect(() => { if (tab === 'equipos')    cargarEquipos() },    [cargarEquipos, tab])
+  useEffect(() => { if (tab === 'plan')       cargarAlertas() },    [cargarAlertas, tab])
+  useEffect(() => { if (tab === 'correctivas') cargarCorrectivas() }, [cargarCorrectivas, tab])
+  const cargarHistorialInspecciones = useCallback(() => {
+    setLoadHistInsp(true)
+    const p = {}
+    if (filtHistInsp.desde) p.desde = filtHistInsp.desde
+    if (filtHistInsp.hasta) p.hasta = filtHistInsp.hasta
+    api.get('/mantenimiento/inspecciones', { params: p })
+      .then(r => setHistInsp(r.data))
+      .finally(() => setLoadHistInsp(false))
+  }, [filtHistInsp])
+
+  useEffect(() => {
+    if (tab === 'inspeccion') {
+      if (modoInsp === 'historial') cargarHistorialInspecciones()
+      else cargarEquiposActivos()
+    }
+  }, [tab, modoInsp, cargarEquiposActivos, cargarHistorialInspecciones])
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ACCIONES — EQUIPOS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function abrirNuevoEquipo() {
+    setFormEq(FORM_EQUIPO); setErrEq(''); setModalEq('nuevo')
   }
 
-  /* ── Completar tarea ────────────────────────────────────────────── */
-  const toggleTarea = async (tarea) => {
-    const nuevoEstado = tarea.estado === 'Completada' ? 'Pendiente' : 'Completada'
-    await api.patch(`/mantenimiento/ot/${modalDetOT.id}/tareas/${tarea.id}`, { estado: nuevoEstado })
-    const r = await api.get(`/mantenimiento/ot/${modalDetOT.id}`)
-    setModalDetOT(r.data)
+  function abrirEditarEquipo(eq) {
+    setFormEq({ codigo: eq.codigo, nombre: eq.nombre, categoria: eq.categoria, marca: eq.marca||'', modelo: eq.modelo||'', nro_serie: eq.nro_serie||'', ubicacion: eq.ubicacion||'', observaciones: eq.observaciones||'' })
+    setEquipoSel(eq); setErrEq(''); setModalEq('editar')
   }
 
-  /* ── Agregar costo ──────────────────────────────────────────────── */
-  const agregarCosto = async e => {
-    e.preventDefault(); setSavCosto(true)
+  async function verDetalleEquipo(eq) {
+    setEquipoSel(eq); setModalEq('detalle'); setLoadHist(true)
     try {
-      await api.post(`/mantenimiento/ot/${modalDetOT.id}/costos`, formCosto)
-      const r = await api.get(`/mantenimiento/ot/${modalDetOT.id}`)
-      setModalDetOT(r.data); setFormCosto(FORM_COSTO)
-    } finally { setSavCosto(false) }
+      const r = await api.get(`/mantenimiento/equipos/${eq.id}`)
+      setEquipoSel(r.data)
+    } finally { setLoadHist(false) }
   }
 
-  const eliminarCosto = async cid => {
-    await api.delete(`/mantenimiento/ot/${modalDetOT.id}/costos/${cid}`)
-    const r = await api.get(`/mantenimiento/ot/${modalDetOT.id}`)
-    setModalDetOT(r.data)
+  async function guardarEquipo() {
+    setSavEq(true); setErrEq('')
+    try {
+      if (modalEq === 'nuevo') {
+        await api.post('/mantenimiento/equipos', formEq)
+      } else {
+        await api.put(`/mantenimiento/equipos/${equipoSel.id}`, formEq)
+      }
+      setModalEq(null); cargarEquipos()
+    } catch(e) {
+      setErrEq(e.response?.data?.error || 'Error al guardar')
+    } finally { setSavEq(false) }
   }
 
-  /* ── Cambiar estado OT ──────────────────────────────────────────── */
-  const cambiarEstado = async (ot, nuevoEstado) => {
-    const body = { estado: nuevoEstado }
-    if (nuevoEstado === 'Completada') body.fecha_cierre = hoy()
-    await api.put(`/mantenimiento/ot/${ot.id}`, body)
-    verOT(ot.id); cargarOT()
+  async function darBaja() {
+    if (!motivoBaja.trim()) { setErrEq('Ingresá el motivo de baja'); return }
+    setSavEq(true)
+    try {
+      await api.post(`/mantenimiento/equipos/${equipoSel.id}/baja`, { motivo_baja: motivoBaja })
+      setModalEq(null); setMotivoBaja(''); cargarEquipos()
+      if (tab === 'dashboard') cargarDashboard()
+    } catch(e) {
+      setErrEq(e.response?.data?.error || 'Error')
+    } finally { setSavEq(false) }
   }
 
-  /* ── Form OT ────────────────────────────────────────────────────── */
-  const abrirNuevaOT = () => {
-    setFormOT({ ...FORM_OT, fecha_apertura: hoy(), tareas: [] })
-    setErrOT(''); setSugsA([]); setNuevaTarea(''); setModalFormOT('nuevo')
+  // ══════════════════════════════════════════════════════════════════════════
+  // ACCIONES — EJECUCIONES PREVENTIVAS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function abrirRegistrarEjecucion(tarea) {
+    setModalEjec(tarea)
+    setFormEjec(FORM_EJEC)
+    setNokCorrec(false)
+    setErrEjec('')
   }
 
-  const abrirEditarOT = ot => {
-    setFormOT({
-      activo_id: ot.activo_id||'', activo_nombre: ot.activo_nombre||'',
-      tipo: ot.tipo, prioridad: ot.prioridad, fecha_apertura: ot.fecha_apertura,
-      fecha_prog: ot.fecha_prog||'', descripcion: ot.descripcion,
-      ejecutor_tipo: ot.ejecutor_tipo||'interno', ejecutor_nombre: ot.ejecutor_nombre||'',
-      observaciones: ot.observaciones||'',
-      tareas: (ot.tareas||[]).map(t => ({ ...t })),
+  async function guardarEjecucion() {
+    setSavEjec(true); setErrEjec('')
+    try {
+      await api.post('/mantenimiento/ejecuciones', {
+        tarea_id:  modalEjec.tarea_id,
+        equipo_id: modalEjec.equipo_id,
+        ...formEjec
+      })
+      if (formEjec.resultado === 'NOK') {
+        setNokCorrec(true)
+      } else {
+        setModalEjec(null)
+        cargarAlertas()
+        if (tab === 'dashboard') cargarDashboard()
+      }
+    } catch(e) {
+      setErrEjec(e.response?.data?.error || 'Error al registrar')
+    } finally { setSavEjec(false) }
+  }
+
+  function crearCorrectivaDesdeNOK() {
+    const t = modalEjec
+    setModalEjec(null)
+    setNokCorrec(false)
+    setFormCo({
+      ...FORM_CORREC,
+      equipo_id:       t.equipo_id,
+      equipo_texto:    `${t.codigo} — ${t.nombre}`,
+      fecha_deteccion: formEjec.fecha,
+      descripcion_falla: `Tarea NOK: ${t.componente} — ${t.accion}`,
+      responsable:     formEjec.responsable,
     })
-    setErrOT(''); setSugsA([]); setNuevaTarea(''); setModalFormOT(ot)
+    setErrCo('')
+    setTab('correctivas')
+    setModalCo('nueva')
   }
 
-  const guardarOT = async e => {
-    e.preventDefault(); setSavOT(true); setErrOT('')
+  // ══════════════════════════════════════════════════════════════════════════
+  // ACCIONES — CORRECTIVAS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function buscarEquipoCorrectiva(txt) {
+    setFormCo(f => ({ ...f, equipo_texto: txt, equipo_id: '' }))
+    if (txt.length < 2) { setSugsEq([]); return }
+    api.get('/mantenimiento/equipos', { params: { buscar: txt } })
+      .then(r => setSugsEq(r.data.filter(e => e.estado !== 'baja').slice(0, 6)))
+      .catch(() => {})
+  }
+
+  async function guardarCorrectiva() {
+    if (!formCo.equipo_id) { setErrCo('Seleccioná un equipo'); return }
+    setSavCo(true); setErrCo('')
     try {
-      const body = { ...formOT, activo_id: formOT.activo_id||null }
-      if (modalFormOT === 'nuevo') await api.post('/mantenimiento/ot', body)
-      else await api.put(`/mantenimiento/ot/${modalFormOT.id}`, body)
-      setModalFormOT(null); cargarOT()
-    } catch(err) { setErrOT(err.response?.data?.error ?? 'Error al guardar') }
-    finally { setSavOT(false) }
+      await api.post('/mantenimiento/correctivas', {
+        equipo_id:       formCo.equipo_id,
+        fecha_deteccion: formCo.fecha_deteccion,
+        fecha_inicio:    formCo.fecha_inicio || null,
+        descripcion_falla: formCo.descripcion_falla,
+        tipo_servicio:   formCo.tipo_servicio,
+        proveedor:       formCo.proveedor || null,
+        responsable:     formCo.responsable || null,
+        observaciones:   formCo.observaciones || null,
+      })
+      setModalCo(null); cargarCorrectivas()
+    } catch(e) {
+      setErrCo(e.response?.data?.error || 'Error al guardar')
+    } finally { setSavCo(false) }
   }
 
-  const eliminarOT = async id => {
-    if (!confirm('¿Eliminar esta OT?')) return
-    await api.delete(`/mantenimiento/ot/${id}`)
-    setModalDetOT(null); cargarOT()
-  }
-
-  /* ── Autocomplete activo en form OT ─────────────────────────────── */
-  const buscarActivo = (txt, setSugs) => {
-    const q = txt.toLowerCase()
-    setSugs(activos.filter(a => a.nombre.toLowerCase().includes(q) || a.codigo.toLowerCase().includes(q)).slice(0,6))
-  }
-
-  /* ── Form Plan ──────────────────────────────────────────────────── */
-  const guardarPlan = async e => {
-    e.preventDefault(); setSavPlan(true); setErrPlan('')
+  async function cerrarCorrectiva() {
+    setSavCo(true); setErrCo('')
     try {
-      if (modalPlan === 'nuevo') await api.post('/mantenimiento/plan', formPlan)
-      else await api.put(`/mantenimiento/plan/${modalPlan.id}`, formPlan)
-      setModalPlan(null); cargarPlan()
-    } catch(err) { setErrPlan(err.response?.data?.error ?? 'Error al guardar') }
-    finally { setSavPlan(false) }
+      await api.put(`/mantenimiento/correctivas/${correctivaSel.id}`, {
+        ...formCierre,
+        costo: formCierre.costo ? parseFloat(formCierre.costo) : null,
+      })
+      setModalCo(null); cargarCorrectivas()
+      if (formCierre.resultado === 'derivado_baja') cargarEquipos()
+    } catch(e) {
+      setErrCo(e.response?.data?.error || 'Error al cerrar')
+    } finally { setSavCo(false) }
   }
 
-  const ejecutarPlan = async plan => {
-    if (!confirm(`¿Generar OT para: "${plan.descripcion}"?`)) return
-    const r = await api.post(`/mantenimiento/plan/${plan.id}/ejecutar`)
-    cargarPlan()
-    alert(`OT generada: ${r.data.numero}\nPróxima fecha: ${fmtF(r.data.proxima_fecha)}`)
+  // ══════════════════════════════════════════════════════════════════════════
+  // ACCIONES — INSPECCIÓN
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function actualizarFilaInsp(equipo_id, campo, valor) {
+    setFilaInsp(f => ({ ...f, [equipo_id]: { ...f[equipo_id], [campo]: valor } }))
   }
 
-  const eliminarPlan = async id => {
-    if (!confirm('¿Eliminar este plan preventivo?')) return
-    await api.delete(`/mantenimiento/plan/${id}`)
-    cargarPlan()
-  }
-
-  /* ── Form Activo ────────────────────────────────────────────────── */
-  const guardarActivo = async e => {
-    e.preventDefault(); setSavA(true); setErrA('')
+  async function guardarInspeccion() {
+    if (!responsableInsp.trim()) { setMsgInsp('Ingresá el responsable'); return }
+    setSavInsp(true); setMsgInsp('')
+    const registros = equiposActivos.map(e => ({
+      equipo_id:           e.id,
+      fecha:               fechaInsp,
+      responsable:         responsableInsp,
+      estado_general:      filaInsp[e.id]?.estado_general      || 'OK',
+      ubicacion_verificada: filaInsp[e.id]?.ubicacion_verificada || e.ubicacion || '',
+      etiqueta_ok:         filaInsp[e.id]?.etiqueta_ok ?? 1,
+      observaciones:       filaInsp[e.id]?.observaciones       || null,
+    }))
     try {
-      if (modalA === 'nuevo') await api.post('/mantenimiento/activos', formA)
-      else await api.put(`/mantenimiento/activos/${modalA.id}`, formA)
-      setModalA(null); cargarActivos()
-      api.get('/mantenimiento/activos').then(r => setActivos(r.data))
-    } catch(err) { setErrA(err.response?.data?.error ?? 'Error al guardar') }
-    finally { setSavA(false) }
+      await api.post('/mantenimiento/inspecciones', { registros })
+      setMsgInsp(`✓ Inspección guardada: ${registros.length} equipos registrados`)
+    } catch(e) {
+      setMsgInsp(e.response?.data?.error || 'Error al guardar')
+    } finally { setSavInsp(false) }
   }
 
-  const darDeBaja = async id => {
-    if (!confirm('¿Dar de baja este activo?')) return
-    await api.delete(`/mantenimiento/activos/${id}`)
-    cargarActivos()
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER HELPERS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function BadgeAlerta({ v }) {
+    return <span className={`badge bg-${BADGE_ALERTA[v] || 'secondary'}`}>{LABEL_ALERTA[v] || v}</span>
   }
 
-  /* ── Helpers ────────────────────────────────────────────────────── */
-  const totalPagsOT  = Math.ceil(totalOT / 50)
-  const totalCostos  = (modalDetOT?.costos||[]).reduce((s,c) => s+c.total, 0)
-  const tareasComp   = (modalDetOT?.tareas||[]).filter(t => t.estado === 'Completada').length
-  const tareasTotal  = (modalDetOT?.tareas||[]).length
-
-  const alertaPlan = p => {
-    const d = diasHasta(p.proxima_fecha)
-    if (d === null) return null
-    if (d < 0) return 'danger'
-    if (d <= 7) return 'warning'
-    return null
+  function BadgeEstado({ v }) {
+    const labels = { activo: 'Activo', en_reparacion: 'En reparación', baja: 'Baja' }
+    return <span className={`badge bg-${BADGE_ESTADO[v] || 'secondary'}`}>{labels[v] || v}</span>
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER — DASHBOARD
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function TabDashboard() {
+    return (
+      <div>
+        {loadDash && <div className="text-center py-4"><div className="spinner-border text-primary" /></div>}
+        {kpis && (
+          <>
+            <div className="row g-3 mb-4">
+              {[
+                { label: 'Tareas vencidas',    val: kpis.vencidas,   color: 'danger',  icon: 'bi-exclamation-triangle' },
+                { label: 'Próximas a vencer',  val: kpis.proximas,   color: 'warning', icon: 'bi-clock' },
+                { label: 'En reparación',       val: kpis.en_rep,     color: 'info',    icon: 'bi-tools' },
+                { label: 'Bajas este año',      val: kpis.bajas_anio, color: 'secondary',icon:'bi-archive' },
+              ].map(({ label, val, color, icon }) => (
+                <div className="col-6 col-md-3" key={label}>
+                  <div className={`card border-${color} h-100`}>
+                    <div className="card-body d-flex align-items-center gap-3">
+                      <i className={`bi ${icon} fs-2 text-${color}`} />
+                      <div>
+                        <div className={`fs-2 fw-bold text-${color}`}>{val}</div>
+                        <div className="text-muted small">{label}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <h6 className="fw-bold mb-2">Alertas más urgentes</h6>
+            {kpis.urgentes.length === 0
+              ? <div className="alert alert-success">No hay tareas vencidas</div>
+              : (
+                <div className="table-responsive">
+                  <table className="table table-sm table-hover">
+                    <thead className="table-dark">
+                      <tr>
+                        <th>Equipo</th><th>Categoría</th><th>Tarea</th><th>Frecuencia</th><th>Última ejec.</th><th>Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {kpis.urgentes.map((a, i) => (
+                        <tr key={i}>
+                          <td><strong>{a.codigo}</strong><br/><small>{a.nombre}</small></td>
+                          <td>{a.categoria}</td>
+                          <td>{a.componente} — {a.accion}</td>
+                          <td>{a.frecuencia}</td>
+                          <td>{fmtF(a.ultima_ejecucion)}{a.dias_desde_ultima != null && <span className="text-muted ms-1">({a.dias_desde_ultima}d)</span>}</td>
+                          <td><BadgeAlerta v={a.estado_alerta} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            }
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER — EQUIPOS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function TabEquipos() {
+    return (
+      <div>
+        {/* Filtros */}
+        <div className="row g-2 mb-3">
+          <div className="col-md-4">
+            <input className="form-control" placeholder="Buscar código, nombre, marca..." value={filtEq.buscar}
+              onChange={e => setFiltEq(f => ({ ...f, buscar: e.target.value }))} />
+          </div>
+          <div className="col-md-2">
+            <select className="form-select" value={filtEq.categoria} onChange={e => setFiltEq(f => ({ ...f, categoria: e.target.value }))}>
+              <option value="">Categoría</option>
+              {meta.categorias.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="col-md-2">
+            <select className="form-select" value={filtEq.ubicacion} onChange={e => setFiltEq(f => ({ ...f, ubicacion: e.target.value }))}>
+              <option value="">Ubicación</option>
+              {meta.ubicaciones.map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </div>
+          <div className="col-md-2">
+            <select className="form-select" value={filtEq.estado} onChange={e => setFiltEq(f => ({ ...f, estado: e.target.value }))}>
+              <option value="">Estado</option>
+              <option value="activo">Activo</option>
+              <option value="en_reparacion">En reparación</option>
+              <option value="baja">Baja</option>
+            </select>
+          </div>
+          <div className="col-md-2 d-flex gap-2">
+            <button className="btn btn-outline-secondary flex-fill" onClick={cargarEquipos}>Buscar</button>
+            {canWrite && <button className="btn btn-primary" onClick={abrirNuevoEquipo}><i className="bi bi-plus" /></button>}
+          </div>
+        </div>
+
+        {loadEq && <div className="text-center py-3"><div className="spinner-border text-primary" /></div>}
+
+        <div className="table-responsive">
+          <table className="table table-sm table-hover">
+            <thead className="table-dark">
+              <tr><th>Código</th><th>Nombre</th><th>Categoría</th><th>Ubicación</th><th>N° Serie</th><th>Estado</th><th></th></tr>
+            </thead>
+            <tbody>
+              {equipos.length === 0 && !loadEq && (
+                <tr><td colSpan={7} className="text-center text-muted py-3">Sin resultados</td></tr>
+              )}
+              {equipos.map(eq => (
+                <tr key={eq.id} className={eq.estado === 'baja' ? 'text-muted' : ''}>
+                  <td><strong>{eq.codigo}</strong></td>
+                  <td>{eq.nombre}</td>
+                  <td>{eq.categoria}</td>
+                  <td>{eq.ubicacion || '—'}</td>
+                  <td><small>{eq.nro_serie || '—'}</small></td>
+                  <td><BadgeEstado v={eq.estado} /></td>
+                  <td>
+                    <div className="btn-group btn-group-sm">
+                      <button className="btn btn-outline-secondary" onClick={() => verDetalleEquipo(eq)} title="Ver detalle"><i className="bi bi-eye" /></button>
+                      {canWrite && eq.estado !== 'baja' && <>
+                        <button className="btn btn-outline-primary" onClick={() => abrirEditarEquipo(eq)} title="Editar"><i className="bi bi-pencil" /></button>
+                        <button className="btn btn-outline-danger" onClick={() => { setEquipoSel(eq); setMotivoBaja(''); setErrEq(''); setModalEq('baja') }} title="Dar de baja"><i className="bi bi-archive" /></button>
+                      </>}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Modal equipo nuevo/editar */}
+        {(modalEq === 'nuevo' || modalEq === 'editar') && (
+          <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+            <div className="modal-dialog modal-lg">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">{modalEq === 'nuevo' ? 'Nuevo equipo' : 'Editar equipo'}</h5>
+                  <button className="btn-close" onClick={() => setModalEq(null)} />
+                </div>
+                <div className="modal-body">
+                  {errEq && <div className="alert alert-danger">{errEq}</div>}
+                  <div className="row g-3">
+                    <div className="col-md-3">
+                      <label className="form-label fw-semibold">Código *</label>
+                      <input className="form-control" value={formEq.codigo} onChange={e => setFormEq(f => ({ ...f, codigo: e.target.value }))} placeholder="EQ-001" />
+                    </div>
+                    <div className="col-md-9">
+                      <label className="form-label fw-semibold">Nombre *</label>
+                      <input className="form-control" value={formEq.nombre} onChange={e => setFormEq(f => ({ ...f, nombre: e.target.value }))} />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label fw-semibold">Categoría *</label>
+                      <input className="form-control" list="cats" value={formEq.categoria} onChange={e => setFormEq(f => ({ ...f, categoria: e.target.value }))} />
+                      <datalist id="cats">{meta.categorias.map(c => <option key={c} value={c} />)}</datalist>
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label">Marca</label>
+                      <input className="form-control" value={formEq.marca} onChange={e => setFormEq(f => ({ ...f, marca: e.target.value }))} />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label">Modelo</label>
+                      <input className="form-control" value={formEq.modelo} onChange={e => setFormEq(f => ({ ...f, modelo: e.target.value }))} />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label">N° Serie</label>
+                      <input className="form-control" value={formEq.nro_serie} onChange={e => setFormEq(f => ({ ...f, nro_serie: e.target.value }))} />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label">Ubicación</label>
+                      <select className="form-select" value={formEq.ubicacion} onChange={e => setFormEq(f => ({ ...f, ubicacion: e.target.value }))}>
+                        <option value="">Sin asignar</option>
+                        {meta.ubicaciones.map(u => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label">Observaciones</label>
+                      <textarea className="form-control" rows={2} value={formEq.observaciones} onChange={e => setFormEq(f => ({ ...f, observaciones: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={() => setModalEq(null)}>Cancelar</button>
+                  <button className="btn btn-primary" onClick={guardarEquipo} disabled={savEq}>
+                    {savEq ? <span className="spinner-border spinner-border-sm me-1" /> : null}Guardar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal baja */}
+        {modalEq === 'baja' && equipoSel && (
+          <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+            <div className="modal-dialog">
+              <div className="modal-content">
+                <div className="modal-header bg-danger text-white">
+                  <h5 className="modal-title">Dar de baja: {equipoSel.codigo}</h5>
+                  <button className="btn-close btn-close-white" onClick={() => setModalEq(null)} />
+                </div>
+                <div className="modal-body">
+                  {errEq && <div className="alert alert-danger">{errEq}</div>}
+                  <p>{equipoSel.nombre}</p>
+                  <label className="form-label fw-semibold">Motivo de baja *</label>
+                  <textarea className="form-control" rows={3} value={motivoBaja} onChange={e => setMotivoBaja(e.target.value)} placeholder="Descripción del motivo de baja..." />
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={() => setModalEq(null)}>Cancelar</button>
+                  <button className="btn btn-danger" onClick={darBaja} disabled={savEq}>
+                    {savEq ? <span className="spinner-border spinner-border-sm me-1" /> : null}Confirmar baja
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal detalle equipo */}
+        {modalEq === 'detalle' && equipoSel && (
+          <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+            <div className="modal-dialog modal-xl">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">{equipoSel.codigo} — {equipoSel.nombre}</h5>
+                  <button className="btn-close" onClick={() => setModalEq(null)} />
+                </div>
+                <div className="modal-body">
+                  {loadHist && <div className="text-center py-3"><div className="spinner-border text-primary" /></div>}
+                  {!loadHist && (
+                    <>
+                      <div className="row g-2 mb-3">
+                        {[['Categoría', equipoSel.categoria],['Marca', equipoSel.marca||'—'],['Modelo', equipoSel.modelo||'—'],['N° Serie', equipoSel.nro_serie||'—'],['Ubicación', equipoSel.ubicacion||'—'],['Estado', '']].map(([k,v]) => (
+                          <div className="col-6 col-md-2" key={k}>
+                            <small className="text-muted d-block">{k}</small>
+                            {k === 'Estado' ? <BadgeEstado v={equipoSel.estado} /> : <strong>{v}</strong>}
+                          </div>
+                        ))}
+                        {equipoSel.estado === 'baja' && (
+                          <div className="col-12">
+                            <div className="alert alert-secondary py-1 mb-0">Baja: {fmtF(equipoSel.fecha_baja)} — {equipoSel.motivo_baja}</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {equipoSel.tareas?.length > 0 && (
+                        <>
+                          <h6 className="fw-bold">Plan preventivo</h6>
+                          <div className="table-responsive mb-3">
+                            <table className="table table-sm">
+                              <thead className="table-light"><tr><th>Componente</th><th>Acción</th><th>Frecuencia</th><th>Última ejec.</th><th>Estado</th></tr></thead>
+                              <tbody>
+                                {equipoSel.tareas.map((t, i) => (
+                                  <tr key={i}>
+                                    <td>{t.componente}</td><td>{t.accion}</td><td>{t.frecuencia}</td>
+                                    <td>{fmtF(t.ultima_ejecucion)}</td>
+                                    <td><BadgeAlerta v={t.estado_alerta} /></td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
+
+                      {equipoSel.correctivas?.length > 0 && (
+                        <>
+                          <h6 className="fw-bold">Últimas correctivas</h6>
+                          <div className="table-responsive">
+                            <table className="table table-sm">
+                              <thead className="table-light"><tr><th>Detección</th><th>Falla</th><th>Resultado</th><th>Responsable</th></tr></thead>
+                              <tbody>
+                                {equipoSel.correctivas.map(c => (
+                                  <tr key={c.id}>
+                                    <td>{fmtF(c.fecha_deteccion)}</td>
+                                    <td>{c.descripcion_falla}</td>
+                                    <td><span className={`badge bg-${BADGE_RESULTADO[c.resultado]||'secondary'}`}>{c.resultado}</span></td>
+                                    <td>{c.responsable||'—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={() => setModalEq(null)}>Cerrar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER — PLAN PREVENTIVO
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function TabPlan() {
+    const conteo = { vencida: 0, proxima: 0, nunca_ejecutada: 0, al_dia: 0 }
+    alertas.forEach(a => { if (conteo[a.estado_alerta] !== undefined) conteo[a.estado_alerta]++ })
+
+    return (
+      <div>
+        <div className="d-flex gap-3 mb-3 flex-wrap">
+          {[['vencida','danger'],['proxima','warning'],['nunca_ejecutada','secondary'],['al_dia','success']].map(([e,c]) => (
+            <span key={e} className={`badge bg-${c} fs-6`}>{LABEL_ALERTA[e]}: {conteo[e]}</span>
+          ))}
+        </div>
+
+        <div className="row g-2 mb-3">
+          <div className="col-md-3">
+            <select className="form-select" value={filtAl.estado} onChange={e => setFiltAl(f => ({ ...f, estado: e.target.value }))}>
+              <option value="">Todos los estados</option>
+              <option value="vencida">Vencida</option>
+              <option value="proxima">Próxima</option>
+              <option value="nunca_ejecutada">Sin ejecutar</option>
+              <option value="al_dia">Al día</option>
+            </select>
+          </div>
+          <div className="col-md-2">
+            <select className="form-select" value={filtAl.ubicacion} onChange={e => setFiltAl(f => ({ ...f, ubicacion: e.target.value }))}>
+              <option value="">Ubicación</option>
+              {meta.ubicaciones.map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </div>
+          <div className="col-md-3">
+            <select className="form-select" value={filtAl.categoria} onChange={e => setFiltAl(f => ({ ...f, categoria: e.target.value }))}>
+              <option value="">Categoría</option>
+              {meta.categorias.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="col-md-2">
+            <button className="btn btn-outline-secondary w-100" onClick={cargarAlertas}>Filtrar</button>
+          </div>
+        </div>
+
+        {loadAl && <div className="text-center py-3"><div className="spinner-border text-primary" /></div>}
+
+        {!loadAl && (() => {
+          // Agrupar por equipo
+          const PRIO = { vencida: 4, proxima: 3, nunca_ejecutada: 2, manual: 1, al_dia: 0 }
+          const mapaEq = {}
+          alertas.forEach(a => {
+            if (!mapaEq[a.equipo_id]) mapaEq[a.equipo_id] = { equipo_id: a.equipo_id, codigo: a.codigo, nombre: a.nombre, categoria: a.categoria, ubicacion: a.ubicacion, tareas: [] }
+            mapaEq[a.equipo_id].tareas.push(a)
+          })
+          const grupos = Object.values(mapaEq)
+          const peor = tareas => tareas.reduce((b, t) => PRIO[t.estado_alerta] > PRIO[b] ? t.estado_alerta : b, 'al_dia')
+
+          if (!grupos.length) return <p className="text-muted text-center py-3">Sin resultados</p>
+
+          return (
+            <div>
+              <div className="d-flex gap-2 mb-2 justify-content-end">
+                <button className="btn btn-sm btn-outline-secondary" onClick={() => setExpandedEquipos(new Set(grupos.map(g => g.equipo_id)))}>
+                  <i className="bi bi-chevron-expand me-1" />Expandir todo
+                </button>
+                <button className="btn btn-sm btn-outline-secondary" onClick={() => setExpandedEquipos(new Set())}>
+                  <i className="bi bi-chevron-contract me-1" />Colapsar todo
+                </button>
+              </div>
+
+              {grupos.map(eq => {
+                const p = peor(eq.tareas)
+                const abierto = expandedEquipos.has(eq.equipo_id)
+                const bgCls = p === 'vencida' ? 'border-danger bg-danger bg-opacity-10'
+                            : p === 'proxima' ? 'border-warning bg-warning bg-opacity-10'
+                            : 'border-secondary bg-light'
+                return (
+                  <div key={eq.equipo_id} className="mb-1 border rounded overflow-hidden">
+                    <div
+                      className={`d-flex align-items-center justify-content-between px-3 py-2 ${bgCls}`}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => toggleEquipo(eq.equipo_id)}
+                    >
+                      <div>
+                        <strong>{eq.codigo}</strong>
+                        <span className="ms-2">{eq.nombre}</span>
+                        <small className="ms-2 text-muted">{eq.categoria}</small>
+                      </div>
+                      <div className="d-flex align-items-center gap-3">
+                        <small className="text-muted">{eq.ubicacion}</small>
+                        <BadgeAlerta v={p} />
+                        <small className="text-muted">{eq.tareas.length} tarea{eq.tareas.length !== 1 ? 's' : ''}</small>
+                        <i className={`bi bi-chevron-${abierto ? 'up' : 'down'} text-muted`} />
+                      </div>
+                    </div>
+
+                    {abierto && (
+                      <div className="table-responsive">
+                        <table className="table table-sm table-hover mb-0">
+                          <thead className="table-light">
+                            <tr>
+                              <th>Componente</th><th>Acción</th><th>Tipo</th><th>Frecuencia</th>
+                              <th>Última ejec.</th><th>Días</th><th>Estado</th>
+                              {canWrite && <th></th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {eq.tareas.map((a, i) => (
+                              <tr key={i} className={a.estado_alerta === 'vencida' ? 'table-danger' : a.estado_alerta === 'proxima' ? 'table-warning' : ''}>
+                                <td>{a.componente}</td>
+                                <td>{a.accion}</td>
+                                <td><small className="text-muted">{a.tipo}</small></td>
+                                <td>{a.frecuencia}</td>
+                                <td>{fmtF(a.ultima_ejecucion)}</td>
+                                <td>{a.dias_desde_ultima != null ? `${a.dias_desde_ultima}d` : '—'}</td>
+                                <td><BadgeAlerta v={a.estado_alerta} /></td>
+                                {canWrite && (
+                                  <td>
+                                    <button className="btn btn-sm btn-outline-primary" onClick={e => { e.stopPropagation(); abrirRegistrarEjecucion(a) }}>
+                                      <i className="bi bi-check2-circle me-1" />Registrar
+                                    </button>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
+
+        {/* Modal registrar ejecución */}
+        {modalEjec && (
+          <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+            <div className="modal-dialog">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">Registrar ejecución</h5>
+                  <button className="btn-close" onClick={() => { setModalEjec(null); setNokCorrec(false) }} />
+                </div>
+                <div className="modal-body">
+                  <div className="alert alert-light py-2">
+                    <strong>{modalEjec.codigo}</strong> — {modalEjec.nombre}<br/>
+                    <small>{modalEjec.componente} · {modalEjec.accion}</small>
+                  </div>
+                  {errEjec && <div className="alert alert-danger">{errEjec}</div>}
+
+                  {nokCorrec ? (
+                    <div className="alert alert-warning">
+                      <strong>Resultado NOK registrado.</strong><br/>
+                      ¿Querés crear una intervención correctiva?
+                      <div className="mt-2 d-flex gap-2">
+                        <button className="btn btn-warning btn-sm" onClick={crearCorrectivaDesdeNOK}>Sí, crear correctiva</button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => { setModalEjec(null); setNokCorrec(false); cargarAlertas() }}>No, cerrar</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="row g-3">
+                      <div className="col-md-6">
+                        <label className="form-label fw-semibold">Fecha *</label>
+                        <input type="date" className="form-control" value={formEjec.fecha} onChange={e => setFormEjec(f => ({ ...f, fecha: e.target.value }))} />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label fw-semibold">Resultado *</label>
+                        <select className="form-select" value={formEjec.resultado} onChange={e => setFormEjec(f => ({ ...f, resultado: e.target.value }))}>
+                          <option value="OK">OK</option>
+                          <option value="NOK">NOK</option>
+                          <option value="Cuarentena">Cuarentena</option>
+                        </select>
+                      </div>
+                      <div className="col-12">
+                        <label className="form-label">Responsable</label>
+                        <input className="form-control" value={formEjec.responsable} onChange={e => setFormEjec(f => ({ ...f, responsable: e.target.value }))} />
+                      </div>
+                      <div className="col-12">
+                        <label className="form-label">Observaciones</label>
+                        <textarea className="form-control" rows={2} value={formEjec.observaciones} onChange={e => setFormEjec(f => ({ ...f, observaciones: e.target.value }))} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {!nokCorrec && (
+                  <div className="modal-footer">
+                    <button className="btn btn-secondary" onClick={() => setModalEjec(null)}>Cancelar</button>
+                    <button className="btn btn-primary" onClick={guardarEjecucion} disabled={savEjec}>
+                      {savEjec ? <span className="spinner-border spinner-border-sm me-1" /> : null}Guardar
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER — CORRECTIVAS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function TabCorrectivas() {
+    return (
+      <div>
+        <div className="d-flex gap-2 mb-3">
+          <select className="form-select w-auto" value={filtCo.resultado} onChange={e => setFiltCo(f => ({ ...f, resultado: e.target.value }))}>
+            <option value="">Todos</option>
+            <option value="pendiente">Pendiente</option>
+            <option value="resuelto">Resuelto</option>
+            <option value="derivado_baja">Derivado a baja</option>
+          </select>
+          <button className="btn btn-outline-secondary" onClick={cargarCorrectivas}>Filtrar</button>
+          {canWrite && (
+            <button className="btn btn-primary ms-auto" onClick={() => { setFormCo(FORM_CORREC); setErrCo(''); setSugsEq([]); setModalCo('nueva') }}>
+              <i className="bi bi-plus me-1" />Nueva correctiva
+            </button>
+          )}
+        </div>
+
+        {loadCo && <div className="text-center py-3"><div className="spinner-border text-primary" /></div>}
+
+        <div className="table-responsive">
+          <table className="table table-sm table-hover">
+            <thead className="table-dark">
+              <tr><th>Equipo</th><th>Detección</th><th>Falla</th><th>Tipo</th><th>Responsable</th><th>Estado</th>{canWrite && <th></th>}</tr>
+            </thead>
+            <tbody>
+              {correctivas.length === 0 && !loadCo && (
+                <tr><td colSpan={7} className="text-center text-muted py-3">Sin resultados</td></tr>
+              )}
+              {correctivas.map(c => (
+                <tr key={c.id}>
+                  <td><strong>{c.codigo}</strong><br/><small>{c.equipo_nombre}</small></td>
+                  <td>{fmtF(c.fecha_deteccion)}</td>
+                  <td>{c.descripcion_falla}</td>
+                  <td><span className="badge bg-secondary">{c.tipo_servicio}</span></td>
+                  <td>{c.responsable||'—'}</td>
+                  <td><span className={`badge bg-${BADGE_RESULTADO[c.resultado]||'secondary'}`}>{c.resultado}</span></td>
+                  {canWrite && (
+                    <td>
+                      {c.resultado === 'pendiente' && (
+                        <button className="btn btn-sm btn-outline-success" onClick={() => {
+                          setCorrectivaSel(c)
+                          setFormCierre({ ...FORM_CIERRE, tipo_servicio: c.tipo_servicio })
+                          setErrCo('')
+                          setModalCo('cierre')
+                        }}>
+                          <i className="bi bi-check-circle me-1" />Cerrar
+                        </button>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Modal nueva correctiva */}
+        {modalCo === 'nueva' && (
+          <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+            <div className="modal-dialog modal-lg">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">Nueva intervención correctiva</h5>
+                  <button className="btn-close" onClick={() => setModalCo(null)} />
+                </div>
+                <div className="modal-body">
+                  {errCo && <div className="alert alert-danger">{errCo}</div>}
+                  <div className="row g-3">
+                    <div className="col-12">
+                      <label className="form-label fw-semibold">Equipo *</label>
+                      <div className="position-relative">
+                        <input className="form-control" placeholder="Buscar por código o nombre..."
+                          value={formCo.equipo_texto}
+                          onChange={e => buscarEquipoCorrectiva(e.target.value)} />
+                        {sugsEq.length > 0 && (
+                          <div className="list-group position-absolute w-100" style={{ zIndex: 1000 }}>
+                            {sugsEq.map(e => (
+                              <button key={e.id} type="button" className="list-group-item list-group-item-action py-1"
+                                onClick={() => { setFormCo(f => ({ ...f, equipo_id: e.id, equipo_texto: `${e.codigo} — ${e.nombre}` })); setSugsEq([]) }}>
+                                <strong>{e.codigo}</strong> — {e.nombre} <small className="text-muted">({e.categoria})</small>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label fw-semibold">Fecha detección *</label>
+                      <input type="date" className="form-control" value={formCo.fecha_deteccion} onChange={e => setFormCo(f => ({ ...f, fecha_deteccion: e.target.value }))} />
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label">Fecha inicio reparación</label>
+                      <input type="date" className="form-control" value={formCo.fecha_inicio} onChange={e => setFormCo(f => ({ ...f, fecha_inicio: e.target.value }))} />
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label fw-semibold">Descripción de la falla *</label>
+                      <textarea className="form-control" rows={2} value={formCo.descripcion_falla} onChange={e => setFormCo(f => ({ ...f, descripcion_falla: e.target.value }))} />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label">Tipo de servicio</label>
+                      <select className="form-select" value={formCo.tipo_servicio} onChange={e => setFormCo(f => ({ ...f, tipo_servicio: e.target.value }))}>
+                        <option value="interno">Interno</option>
+                        <option value="externo">Externo</option>
+                      </select>
+                    </div>
+                    {formCo.tipo_servicio === 'externo' && (
+                      <div className="col-md-8">
+                        <label className="form-label">Proveedor</label>
+                        <input className="form-control" value={formCo.proveedor} onChange={e => setFormCo(f => ({ ...f, proveedor: e.target.value }))} />
+                      </div>
+                    )}
+                    <div className="col-md-6">
+                      <label className="form-label">Responsable</label>
+                      <input className="form-control" value={formCo.responsable} onChange={e => setFormCo(f => ({ ...f, responsable: e.target.value }))} />
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label">Observaciones</label>
+                      <textarea className="form-control" rows={2} value={formCo.observaciones} onChange={e => setFormCo(f => ({ ...f, observaciones: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={() => setModalCo(null)}>Cancelar</button>
+                  <button className="btn btn-primary" onClick={guardarCorrectiva} disabled={savCo}>
+                    {savCo ? <span className="spinner-border spinner-border-sm me-1" /> : null}Guardar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal cierre correctiva */}
+        {modalCo === 'cierre' && correctivaSel && (
+          <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+            <div className="modal-dialog modal-lg">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">Cerrar correctiva — {correctivaSel.codigo}</h5>
+                  <button className="btn-close" onClick={() => setModalCo(null)} />
+                </div>
+                <div className="modal-body">
+                  <div className="alert alert-light py-2 mb-3">
+                    <strong>Falla:</strong> {correctivaSel.descripcion_falla}
+                  </div>
+                  {errCo && <div className="alert alert-danger">{errCo}</div>}
+                  <div className="row g-3">
+                    <div className="col-md-6">
+                      <label className="form-label">Fecha fin</label>
+                      <input type="date" className="form-control" value={formCierre.fecha_fin} onChange={e => setFormCierre(f => ({ ...f, fecha_fin: e.target.value }))} />
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label fw-semibold">Resultado *</label>
+                      <select className="form-select" value={formCierre.resultado} onChange={e => setFormCierre(f => ({ ...f, resultado: e.target.value }))}>
+                        <option value="resuelto">Resuelto</option>
+                        <option value="derivado_baja">Derivado a baja del equipo</option>
+                        <option value="pendiente">Pendiente</option>
+                      </select>
+                    </div>
+                    {formCierre.resultado === 'derivado_baja' && (
+                      <div className="col-12">
+                        <div className="alert alert-warning py-2">El equipo pasará a estado <strong>Baja</strong> al guardar.</div>
+                      </div>
+                    )}
+                    <div className="col-12">
+                      <label className="form-label">Acción realizada</label>
+                      <textarea className="form-control" rows={2} value={formCierre.accion_realizada} onChange={e => setFormCierre(f => ({ ...f, accion_realizada: e.target.value }))} />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label">Tipo de servicio</label>
+                      <select className="form-select" value={formCierre.tipo_servicio} onChange={e => setFormCierre(f => ({ ...f, tipo_servicio: e.target.value }))}>
+                        <option value="interno">Interno</option>
+                        <option value="externo">Externo</option>
+                      </select>
+                    </div>
+                    {formCierre.tipo_servicio === 'externo' && (
+                      <div className="col-md-8">
+                        <label className="form-label">Proveedor</label>
+                        <input className="form-control" value={formCierre.proveedor} onChange={e => setFormCierre(f => ({ ...f, proveedor: e.target.value }))} />
+                      </div>
+                    )}
+                    <div className="col-md-4">
+                      <label className="form-label">Costo (ARS)</label>
+                      <input type="number" className="form-control" value={formCierre.costo} onChange={e => setFormCierre(f => ({ ...f, costo: e.target.value }))} />
+                    </div>
+                    <div className="col-md-8">
+                      <label className="form-label">Repuestos usados</label>
+                      <input className="form-control" value={formCierre.repuestos_usados} onChange={e => setFormCierre(f => ({ ...f, repuestos_usados: e.target.value }))} />
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label">Responsable</label>
+                      <input className="form-control" value={formCierre.responsable} onChange={e => setFormCierre(f => ({ ...f, responsable: e.target.value }))} />
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label">Observaciones</label>
+                      <textarea className="form-control" rows={2} value={formCierre.observaciones} onChange={e => setFormCierre(f => ({ ...f, observaciones: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={() => setModalCo(null)}>Cancelar</button>
+                  <button className="btn btn-success" onClick={cerrarCorrectiva} disabled={savCo}>
+                    {savCo ? <span className="spinner-border spinner-border-sm me-1" /> : null}Cerrar correctiva
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER — INSPECCIÓN
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function TabInspeccion() {
+    const BADGE_INSP = { OK: 'success', NOK: 'danger', requiere_atencion: 'warning', en_reparacion: 'info' }
+    const LABEL_INSP = { OK: 'OK', NOK: 'NOK', requiere_atencion: 'Requiere atención', en_reparacion: 'En reparación' }
+
+    // filtro local del historial por búsqueda de equipo
+    const histFiltrado = buscarInsp
+      ? histInsp.filter(r => r.codigo?.toLowerCase().includes(buscarInsp.toLowerCase()) || r.equipo_nombre?.toLowerCase().includes(buscarInsp.toLowerCase()))
+      : histInsp
+
+    return (
+      <div>
+        {/* Toggle modo */}
+        <div className="btn-group mb-4">
+          <button className={`btn ${modoInsp === 'historial' ? 'btn-primary' : 'btn-outline-primary'}`} onClick={() => setModoInsp('historial')}>
+            <i className="bi bi-clock-history me-1" />Historial F14
+          </button>
+          {canWrite && (
+            <button className={`btn ${modoInsp === 'nueva' ? 'btn-primary' : 'btn-outline-primary'}`} onClick={() => setModoInsp('nueva')}>
+              <i className="bi bi-clipboard-plus me-1" />Nueva ronda
+            </button>
+          )}
+        </div>
+
+        {/* ── HISTORIAL ─────────────────────────────────────────────────────── */}
+        {modoInsp === 'historial' && (
+          <div>
+            <div className="row g-2 mb-3">
+              <div className="col-md-3">
+                <input className="form-control" placeholder="Buscar equipo..." value={buscarInsp}
+                  onChange={e => setBuscarInsp(e.target.value)} />
+              </div>
+              <div className="col-md-2">
+                <label className="form-label small mb-1">Desde</label>
+                <input type="date" className="form-control" value={filtHistInsp.desde}
+                  onChange={e => setFiltHistInsp(f => ({ ...f, desde: e.target.value }))} />
+              </div>
+              <div className="col-md-2">
+                <label className="form-label small mb-1">Hasta</label>
+                <input type="date" className="form-control" value={filtHistInsp.hasta}
+                  onChange={e => setFiltHistInsp(f => ({ ...f, hasta: e.target.value }))} />
+              </div>
+              <div className="col-md-2 d-flex align-items-end">
+                <button className="btn btn-outline-secondary w-100" onClick={cargarHistorialInspecciones}>Filtrar</button>
+              </div>
+            </div>
+
+            {loadHistInsp && <div className="text-center py-3"><div className="spinner-border text-primary" /></div>}
+
+            {!loadHistInsp && (
+              <>
+                <p className="text-muted small">{histFiltrado.length} registros</p>
+                <div className="table-responsive">
+                  <table className="table table-sm table-hover">
+                    <thead className="table-dark">
+                      <tr>
+                        <th>Fecha</th>
+                        <th>Código</th>
+                        <th>Equipo</th>
+                        <th>Estado</th>
+                        <th>Ubicación verif.</th>
+                        <th style={{ width: 80 }}>Etiqueta</th>
+                        <th>Observaciones</th>
+                        <th>Responsable</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {histFiltrado.length === 0 && (
+                        <tr><td colSpan={8} className="text-center text-muted py-3">Sin registros</td></tr>
+                      )}
+                      {histFiltrado.map(r => (
+                        <tr key={r.id} className={r.estado_general === 'NOK' ? 'table-danger' : r.estado_general === 'requiere_atencion' ? 'table-warning' : ''}>
+                          <td>{fmtF(r.fecha)}</td>
+                          <td><strong>{r.codigo}</strong></td>
+                          <td><small>{r.equipo_nombre}</small></td>
+                          <td>
+                            <span className={`badge bg-${BADGE_INSP[r.estado_general] || 'secondary'}`}>
+                              {LABEL_INSP[r.estado_general] || r.estado_general}
+                            </span>
+                          </td>
+                          <td>{r.ubicacion_verificada || '—'}</td>
+                          <td className="text-center">
+                            {r.etiqueta_ok ? <i className="bi bi-check-circle text-success" /> : <i className="bi bi-x-circle text-danger" />}
+                          </td>
+                          <td><small>{r.observaciones || '—'}</small></td>
+                          <td><small>{r.responsable || '—'}</small></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── NUEVA RONDA ───────────────────────────────────────────────────── */}
+        {modoInsp === 'nueva' && (
+          <div>
+            <div className="row g-3 mb-3 align-items-end">
+              <div className="col-md-3">
+                <label className="form-label fw-semibold">Fecha de inspección</label>
+                <input type="date" className="form-control" value={fechaInsp} onChange={e => setFechaInsp(e.target.value)} />
+              </div>
+              <div className="col-md-4">
+                <label className="form-label fw-semibold">Responsable</label>
+                <input className="form-control" placeholder="Nombre del inspector" value={responsableInsp} onChange={e => setResponsableInsp(e.target.value)} />
+              </div>
+              <div className="col-md-3">
+                <button className="btn btn-outline-secondary w-100" onClick={cargarEquiposActivos}>
+                  <i className="bi bi-arrow-clockwise me-1" />Recargar equipos
+                </button>
+              </div>
+            </div>
+
+            {msgInsp && <div className={`alert ${msgInsp.startsWith('✓') ? 'alert-success' : 'alert-danger'} py-2`}>{msgInsp}</div>}
+            {loadInsp && <div className="text-center py-3"><div className="spinner-border text-primary" /></div>}
+
+            {!loadInsp && equiposActivos.length > 0 && (
+              <>
+                <p className="text-muted"><i className="bi bi-info-circle me-1" />{equiposActivos.length} equipos activos. Completá el estado de cada uno.</p>
+                <div className="table-responsive">
+                  <table className="table table-sm table-bordered">
+                    <thead className="table-dark">
+                      <tr>
+                        <th style={{ width: 90 }}>Código</th>
+                        <th>Nombre</th>
+                        <th style={{ width: 120 }}>Planta</th>
+                        <th style={{ width: 160 }}>Estado general</th>
+                        <th style={{ width: 140 }}>Ubicación verif.</th>
+                        <th style={{ width: 80 }}>Etiqueta</th>
+                        <th>Observaciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {equiposActivos.map(eq => {
+                        const fila = filaInsp[eq.id] || {}
+                        return (
+                          <tr key={eq.id} className={fila.estado_general === 'NOK' ? 'table-danger' : fila.estado_general === 'requiere_atencion' ? 'table-warning' : ''}>
+                            <td><strong>{eq.codigo}</strong></td>
+                            <td><small>{eq.nombre}</small></td>
+                            <td><small>{eq.ubicacion || '—'}</small></td>
+                            <td>
+                              <select className="form-select form-select-sm" value={fila.estado_general || 'OK'}
+                                onChange={e => actualizarFilaInsp(eq.id, 'estado_general', e.target.value)}>
+                                <option value="OK">OK</option>
+                                <option value="requiere_atencion">Requiere atención</option>
+                                <option value="NOK">NOK</option>
+                                <option value="en_reparacion">En reparación</option>
+                              </select>
+                            </td>
+                            <td>
+                              <select className="form-select form-select-sm" value={fila.ubicacion_verificada || ''}
+                                onChange={e => actualizarFilaInsp(eq.id, 'ubicacion_verificada', e.target.value)}>
+                                <option value="">—</option>
+                                <option value="MIGUENS">MIGUENS</option>
+                                <option value="POGGIO">POGGIO</option>
+                              </select>
+                            </td>
+                            <td className="text-center">
+                              <div className="form-check form-check-inline m-0">
+                                <input type="checkbox" className="form-check-input" checked={fila.etiqueta_ok === 1 || fila.etiqueta_ok === true}
+                                  onChange={e => actualizarFilaInsp(eq.id, 'etiqueta_ok', e.target.checked ? 1 : 0)} />
+                              </div>
+                            </td>
+                            <td>
+                              <input className="form-control form-control-sm" value={fila.observaciones || ''}
+                                onChange={e => actualizarFilaInsp(eq.id, 'observaciones', e.target.value)}
+                                placeholder="Observaciones..." />
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="d-flex justify-content-end mt-3">
+                  <button className="btn btn-success px-4" onClick={guardarInspeccion} disabled={savInsp}>
+                    {savInsp ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-check2-all me-1" />}
+                    Guardar inspección ({equiposActivos.length} equipos)
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER PRINCIPAL
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const tabs = [
+    { id: 'dashboard',   label: 'Dashboard',       icon: 'bi-speedometer2' },
+    { id: 'equipos',     label: 'Equipos',          icon: 'bi-tools' },
+    { id: 'plan',        label: 'Plan preventivo',  icon: 'bi-calendar-check' },
+    { id: 'correctivas', label: 'Correctivas',      icon: 'bi-wrench' },
+    { id: 'inspeccion',  label: 'Inspección',       icon: 'bi-clipboard-check' },
+  ]
 
   return (
-    <>
-      <h5 className="fw-bold mb-3">Mantenimiento</h5>
+    <div className="container-fluid py-3">
+      <h4 className="fw-bold mb-3"><i className="bi bi-tools me-2" />Mantenimiento</h4>
 
-      <ul className="nav nav-tabs mb-3">
-        {[['ot','wrench','Órdenes de Trabajo'],['plan','calendar-check','Plan Preventivo'],['activos','gear','Activos']].map(([v,ic,l]) => (
-          <li key={v} className="nav-item">
-            <button className={`nav-link ${tab===v?'active':''}`} onClick={() => setTab(v)}>
-              <i className={`bi bi-${ic} me-1`}/>{l}
+      <ul className="nav nav-tabs mb-4">
+        {tabs.map(t => (
+          <li className="nav-item" key={t.id}>
+            <button className={`nav-link ${tab === t.id ? 'active fw-semibold' : ''}`} onClick={() => setTab(t.id)}>
+              <i className={`bi ${t.icon} me-1`} />{t.label}
+              {t.id === 'plan' && kpis?.vencidas > 0 && (
+                <span className="badge bg-danger ms-1">{kpis.vencidas}</span>
+              )}
             </button>
           </li>
         ))}
       </ul>
 
-      {/* ─── TAB: ÓRDENES DE TRABAJO ────────────────────────────────── */}
-      {tab === 'ot' && <>
-        <div className="d-flex flex-wrap gap-2 mb-3">
-          {canWrite && (
-            <button className="btn btn-sm btn-success" onClick={abrirNuevaOT}>
-              <i className="bi bi-plus-lg me-1"/>Nueva OT
-            </button>
-          )}
-          <a href="/api/v1/mantenimiento/exportar" className="btn btn-sm btn-outline-secondary" target="_blank" rel="noreferrer">
-            <i className="bi bi-file-excel me-1"/>Exportar
-          </a>
-        </div>
-
-        <div className="d-flex flex-wrap gap-2 mb-2">
-          <select className="form-select form-select-sm" style={{width:140}}
-            value={filtOT.estado} onChange={e => { setFiltOT(p=>({...p,estado:e.target.value})); setPageOT(1) }}>
-            <option value="">Todos los estados</option>
-            {ESTADOS_OT.map(s => <option key={s.v} value={s.v}>{s.v}</option>)}
-          </select>
-          <select className="form-select form-select-sm" style={{width:130}}
-            value={filtOT.tipo} onChange={e => { setFiltOT(p=>({...p,tipo:e.target.value})); setPageOT(1) }}>
-            <option value="">Todos los tipos</option>
-            {TIPOS_OT.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <select className="form-select form-select-sm" style={{width:120}}
-            value={filtOT.prioridad} onChange={e => { setFiltOT(p=>({...p,prioridad:e.target.value})); setPageOT(1) }}>
-            <option value="">Toda prioridad</option>
-            {PRIORIDADES.map(p => <option key={p.v} value={p.v}>{p.v}</option>)}
-          </select>
-          <input type="date" className="form-control form-control-sm" style={{width:135}}
-            value={filtOT.desde} onChange={e => { setFiltOT(p=>({...p,desde:e.target.value})); setPageOT(1) }}/>
-          <input type="date" className="form-control form-control-sm" style={{width:135}}
-            value={filtOT.hasta} onChange={e => { setFiltOT(p=>({...p,hasta:e.target.value})); setPageOT(1) }}/>
-          {(filtOT.estado||filtOT.tipo||filtOT.prioridad||filtOT.desde||filtOT.hasta) &&
-            <button className="btn btn-sm btn-outline-secondary" onClick={() => { setFiltOT({estado:'',tipo:'',prioridad:'',desde:'',hasta:''}); setPageOT(1) }}>Limpiar</button>}
-        </div>
-
-        <div className="card border-0 shadow-sm">
-          {loadOT
-            ? <div className="text-center py-5"><div className="spinner-border text-secondary"/></div>
-            : <div className="table-responsive" style={{maxHeight:'calc(100vh - 320px)', overflowY:'auto'}}>
-                <table className="table table-hover table-sm mb-0" style={{fontSize:'0.83rem'}}>
-                  <thead className="table-dark sticky-top">
-                    <tr>
-                      <th>N° OT</th><th>ACTIVO</th><th className="text-center">TIPO</th>
-                      <th className="text-center">PRIOR.</th><th className="text-center">ESTADO</th>
-                      <th>DESCRIPCIÓN</th><th>APERTURA</th><th>EJECUTOR</th><th/>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ots.length === 0
-                      ? <tr><td colSpan={9} className="text-center text-muted py-4">Sin resultados</td></tr>
-                      : ots.map(o => {
-                          const est  = ESTADOS_OT.find(s=>s.v===o.estado)
-                          const prio = PRIORIDADES.find(p=>p.v===o.prioridad)
-                          return (
-                            <tr key={o.id} style={{cursor:'pointer'}} onClick={() => verOT(o.id)}>
-                              <td className="fw-semibold">{o.numero}</td>
-                              <td><div className="text-truncate" style={{maxWidth:160}} title={o.activo_nombre}>{o.activo_nombre||<span className="text-muted">—</span>}</div></td>
-                              <td className="text-center"><span className={`badge bg-${o.tipo==='Preventivo'?'info':'secondary'}`}>{o.tipo}</span></td>
-                              <td className="text-center"><span className={`badge bg-${prio?.c??'secondary'}`}>{o.prioridad}</span></td>
-                              <td className="text-center"><span className={`badge bg-${est?.c??'secondary'}`}>{o.estado}</span></td>
-                              <td><div className="text-truncate" style={{maxWidth:260}} title={o.descripcion}>{o.descripcion}</div></td>
-                              <td className="text-nowrap text-muted">{fmtF(o.fecha_apertura)}</td>
-                              <td><div className="text-truncate" style={{maxWidth:130}} title={o.ejecutor_nombre}>{o.ejecutor_nombre||<span className="text-muted">—</span>}</div></td>
-                              <td className="text-end">
-                                <button className="btn btn-xs btn-outline-primary py-0 px-2" style={{fontSize:'0.75rem'}}
-                                  onClick={e=>{e.stopPropagation(); verOT(o.id)}}>Ver</button>
-                              </td>
-                            </tr>
-                          )
-                        })
-                    }
-                  </tbody>
-                </table>
-              </div>
-          }
-          <div className="border-top px-3 py-1 d-flex justify-content-between align-items-center" style={{fontSize:'0.78rem', background:'#f8f9fa'}}>
-            <span className="text-muted">Total: <strong>{totalOT}</strong> órdenes</span>
-            {totalPagsOT > 1 && (
-              <div className="d-flex gap-1 align-items-center">
-                <button className="btn btn-xs btn-outline-secondary py-0 px-2" disabled={pageOT===1} onClick={()=>setPageOT(p=>p-1)}>‹</button>
-                <span className="text-muted small">{pageOT}/{totalPagsOT}</span>
-                <button className="btn btn-xs btn-outline-secondary py-0 px-2" disabled={pageOT>=totalPagsOT} onClick={()=>setPageOT(p=>p+1)}>›</button>
-              </div>
-            )}
-          </div>
-        </div>
-      </>}
-
-      {/* ─── TAB: PLAN PREVENTIVO ───────────────────────────────────── */}
-      {tab === 'plan' && <>
-        <div className="d-flex gap-2 mb-3">
-          {canWrite && (
-            <button className="btn btn-sm btn-success" onClick={() => { setFormPlan(FORM_PLAN); setErrPlan(''); setSugsAP([]); setModalPlan('nuevo') }}>
-              <i className="bi bi-plus-lg me-1"/>Nuevo Plan
-            </button>
-          )}
-        </div>
-
-        <div className="card border-0 shadow-sm">
-          {loadPlan
-            ? <div className="text-center py-5"><div className="spinner-border text-secondary"/></div>
-            : <div className="table-responsive" style={{maxHeight:'calc(100vh - 260px)', overflowY:'auto'}}>
-                <table className="table table-hover table-sm mb-0" style={{fontSize:'0.83rem'}}>
-                  <thead className="table-dark sticky-top">
-                    <tr>
-                      <th>ACTIVO</th><th>DESCRIPCIÓN</th><th className="text-center">FRECUENCIA</th>
-                      <th className="text-center">PRÓXIMA FECHA</th><th className="text-center">ÚLTIMA EJEC.</th>
-                      {canWrite && <th/>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {planes.length === 0
-                      ? <tr><td colSpan={canWrite?6:5} className="text-center text-muted py-4">Sin planes definidos</td></tr>
-                      : planes.map(p => {
-                          const alerta = alertaPlan(p)
-                          const d = diasHasta(p.proxima_fecha)
-                          return (
-                            <tr key={p.id} className={alerta==='danger'?'table-danger':alerta==='warning'?'table-warning':''}>
-                              <td className="fw-semibold">{p.activo_nombre||<span className="text-muted">General</span>}</td>
-                              <td><div className="text-truncate" style={{maxWidth:300}} title={p.descripcion}>{p.descripcion}</div></td>
-                              <td className="text-center"><span className="badge bg-info text-dark">{p.frecuencia}</span></td>
-                              <td className="text-center">
-                                {p.proxima_fecha ? <>
-                                  {fmtF(p.proxima_fecha)}
-                                  {d !== null && <span className={`ms-1 small ${d<0?'text-danger':d<=7?'text-warning':'text-muted'}`}>
-                                    ({d<0?`vencido hace ${Math.abs(d)}d`:d===0?'hoy':`en ${d}d`})
-                                  </span>}
-                                </> : '—'}
-                              </td>
-                              <td className="text-center text-muted">{fmtF(p.ultima_fecha)}</td>
-                              {canWrite && (
-                                <td className="text-end">
-                                  <div className="d-flex gap-1 justify-content-end">
-                                    <button className="btn btn-xs btn-success py-0 px-2" style={{fontSize:'0.75rem'}} onClick={() => ejecutarPlan(p)}>
-                                      <i className="bi bi-play-fill"/>
-                                    </button>
-                                    <button className="btn btn-xs btn-outline-secondary py-0 px-2" style={{fontSize:'0.75rem'}}
-                                      onClick={() => { setFormPlan({...p}); setErrPlan(''); setSugsAP([]); setModalPlan(p) }}>
-                                      <i className="bi bi-pencil"/>
-                                    </button>
-                                    <button className="btn btn-xs btn-outline-danger py-0 px-2" style={{fontSize:'0.75rem'}} onClick={() => eliminarPlan(p.id)}>
-                                      <i className="bi bi-x"/>
-                                    </button>
-                                  </div>
-                                </td>
-                              )}
-                            </tr>
-                          )
-                        })
-                    }
-                  </tbody>
-                </table>
-              </div>
-          }
-        </div>
-      </>}
-
-      {/* ─── TAB: ACTIVOS ───────────────────────────────────────────── */}
-      {tab === 'activos' && <>
-        <div className="d-flex flex-wrap gap-2 mb-3">
-          {canWrite && (
-            <button className="btn btn-sm btn-success" onClick={() => { setFormA(FORM_ACTIVO); setErrA(''); setModalA('nuevo') }}>
-              <i className="bi bi-plus-lg me-1"/>Nuevo Activo
-            </button>
-          )}
-          <input className="form-control form-control-sm" style={{width:220}} placeholder="Buscar activo…"
-            value={buscarA} onChange={e => setBuscarA(e.target.value)}/>
-          <select className="form-select form-select-sm" style={{width:150}} value={filTipoA} onChange={e => setFilTipoA(e.target.value)}>
-            <option value="">Todos los tipos</option>
-            {TIPOS_ACTIVO.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <select className="form-select form-select-sm" style={{width:160}} value={filEstA} onChange={e => setFilEstA(e.target.value)}>
-            <option value="">Todos los estados</option>
-            {ESTADOS_ACTIVO.map(e => <option key={e} value={e}>{e}</option>)}
-          </select>
-        </div>
-
-        <div className="card border-0 shadow-sm">
-          {loadA
-            ? <div className="text-center py-5"><div className="spinner-border text-secondary"/></div>
-            : <div className="table-responsive" style={{maxHeight:'calc(100vh - 280px)', overflowY:'auto'}}>
-                <table className="table table-hover table-sm mb-0" style={{fontSize:'0.83rem'}}>
-                  <thead className="table-dark sticky-top">
-                    <tr>
-                      <th>CÓDIGO</th><th>NOMBRE</th><th className="text-center">TIPO</th>
-                      <th className="text-center">ESTADO</th><th>UBICACIÓN</th>
-                      <th>MARCA / MODELO</th><th>N° SERIE</th>
-                      {canWrite && <th/>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activos.length === 0
-                      ? <tr><td colSpan={canWrite?8:7} className="text-center text-muted py-4">Sin activos</td></tr>
-                      : activos.map(a => (
-                          <tr key={a.id}>
-                            <td className="fw-semibold">{a.codigo}</td>
-                            <td><div className="text-truncate" style={{maxWidth:220}} title={a.nombre}>{a.nombre}</div></td>
-                            <td className="text-center"><span className="badge bg-secondary">{a.tipo}</span></td>
-                            <td className="text-center">
-                              <span className={`badge bg-${a.estado==='Activo'?'success':a.estado==='En mantenimiento'?'warning':'danger'}`}>{a.estado}</span>
-                            </td>
-                            <td className="text-muted">{a.ubicacion||'—'}</td>
-                            <td className="text-muted">{[a.marca,a.modelo].filter(Boolean).join(' ')||'—'}</td>
-                            <td className="text-muted">{a.n_serie||'—'}</td>
-                            {canWrite && (
-                              <td>
-                                <div className="d-flex gap-1 justify-content-end">
-                                  <button className="btn btn-xs btn-outline-secondary py-0 px-2" style={{fontSize:'0.75rem'}}
-                                    onClick={() => { setFormA({...a}); setErrA(''); setModalA(a) }}>Editar</button>
-                                  <button className="btn btn-xs btn-outline-danger py-0 px-2" style={{fontSize:'0.75rem'}}
-                                    onClick={() => darDeBaja(a.id)}>Baja</button>
-                                </div>
-                              </td>
-                            )}
-                          </tr>
-                        ))
-                    }
-                  </tbody>
-                </table>
-              </div>
-          }
-        </div>
-      </>}
-
-      {/* ══ MODAL: DETALLE OT ═══════════════════════════════════════════ */}
-      {(modalDetOT || loadDet) && (
-        <div className="modal show d-block" style={{background:'rgba(0,0,0,.5)'}}>
-          <div className="modal-dialog modal-xl modal-dialog-scrollable">
-            <div className="modal-content">
-              <div className="modal-header py-2">
-                <h5 className="modal-title">
-                  {loadDet ? 'Cargando…' : `${modalDetOT?.numero} — ${modalDetOT?.descripcion}`}
-                </h5>
-                <button className="btn-close" onClick={() => { setModalDetOT(null); setLoadDet(false) }}/>
-              </div>
-              {loadDet && <div className="modal-body text-center py-5"><div className="spinner-border text-secondary"/></div>}
-              {!loadDet && modalDetOT && (
-                <>
-                  <div className="modal-body">
-                    {/* Header */}
-                    <div className="row g-2 mb-3 small">
-                      <div className="col-auto"><strong>Activo:</strong> {modalDetOT.activo_nombre||'—'}</div>
-                      <div className="col-auto"><strong>Tipo:</strong> <span className={`badge bg-${modalDetOT.tipo==='Preventivo'?'info':'secondary'}`}>{modalDetOT.tipo}</span></div>
-                      <div className="col-auto"><strong>Prioridad:</strong> <span className={`badge bg-${PRIORIDADES.find(p=>p.v===modalDetOT.prioridad)?.c??'secondary'}`}>{modalDetOT.prioridad}</span></div>
-                      <div className="col-auto"><strong>Estado:</strong> <span className={`badge bg-${ESTADOS_OT.find(s=>s.v===modalDetOT.estado)?.c??'secondary'}`}>{modalDetOT.estado}</span></div>
-                      <div className="col-auto"><strong>Apertura:</strong> {fmtF(modalDetOT.fecha_apertura)}</div>
-                      {modalDetOT.fecha_prog   && <div className="col-auto"><strong>Programado:</strong> {fmtF(modalDetOT.fecha_prog)}</div>}
-                      {modalDetOT.fecha_cierre && <div className="col-auto"><strong>Cierre:</strong> {fmtF(modalDetOT.fecha_cierre)}</div>}
-                      <div className="col-auto"><strong>Ejecutor:</strong> {modalDetOT.ejecutor_tipo==='externo'?'Externo':'Interno'}{modalDetOT.ejecutor_nombre?` — ${modalDetOT.ejecutor_nombre}`:''}</div>
-                      {modalDetOT.observaciones && <div className="col-12 text-muted"><i>{modalDetOT.observaciones}</i></div>}
-                    </div>
-
-                    <div className="row g-3">
-                      {/* Tareas */}
-                      <div className="col-md-5">
-                        <div className="d-flex justify-content-between align-items-center mb-2">
-                          <strong className="small">Tareas {tareasTotal>0 && <span className="text-muted">({tareasComp}/{tareasTotal})</span>}</strong>
-                        </div>
-                        {(modalDetOT.tareas||[]).length === 0
-                          ? <p className="text-muted small mb-0">Sin tareas definidas</p>
-                          : <ul className="list-group list-group-flush">
-                              {modalDetOT.tareas.map(t => (
-                                <li key={t.id} className="list-group-item px-0 py-1 d-flex align-items-center gap-2" style={{fontSize:'0.83rem'}}>
-                                  {canWrite
-                                    ? <input type="checkbox" className="form-check-input mt-0" checked={t.estado==='Completada'} onChange={() => toggleTarea(t)}/>
-                                    : <i className={`bi bi-${t.estado==='Completada'?'check-circle-fill text-success':'circle text-muted'}`}/>
-                                  }
-                                  <span className={t.estado==='Completada'?'text-decoration-line-through text-muted':''}>{t.descripcion}</span>
-                                  {t.estado==='Completada' && t.fecha_comp && <span className="ms-auto text-muted" style={{fontSize:'0.75rem'}}>{fmtF(t.fecha_comp)}</span>}
-                                </li>
-                              ))}
-                            </ul>
-                        }
-                      </div>
-
-                      {/* Costos */}
-                      <div className="col-md-7">
-                        <strong className="small d-block mb-2">Costos</strong>
-                        <table className="table table-sm table-bordered mb-2" style={{fontSize:'0.8rem'}}>
-                          <thead className="table-light">
-                            <tr><th>TIPO</th><th>DESCRIPCIÓN</th><th className="text-end">CANT.</th><th className="text-end">PRECIO U.</th><th className="text-end">TOTAL</th>{canWrite&&<th/>}</tr>
-                          </thead>
-                          <tbody>
-                            {(modalDetOT.costos||[]).length === 0
-                              ? <tr><td colSpan={canWrite?6:5} className="text-center text-muted py-2">Sin costos</td></tr>
-                              : (modalDetOT.costos||[]).map(c => (
-                                  <tr key={c.id}>
-                                    <td>{c.tipo}</td>
-                                    <td>{c.descripcion}</td>
-                                    <td className="text-end">{fmtN(c.cantidad)}</td>
-                                    <td className="text-end">{fmtN(c.precio_unit)}</td>
-                                    <td className="text-end fw-semibold">{fmtN(c.total)}</td>
-                                    {canWrite && <td className="text-center"><button className="btn btn-xs text-danger py-0 px-1" onClick={() => eliminarCosto(c.id)}><i className="bi bi-x"/></button></td>}
-                                  </tr>
-                                ))
-                            }
-                          </tbody>
-                          {(modalDetOT.costos||[]).length > 0 && (
-                            <tfoot><tr><td colSpan={canWrite?4:4} className="text-end fw-bold">TOTAL</td><td className="text-end fw-bold">{fmtN(totalCostos)}</td>{canWrite&&<td/>}</tr></tfoot>
-                          )}
-                        </table>
-                        {canWrite && (
-                          <form className="d-flex gap-1 flex-wrap" onSubmit={agregarCosto}>
-                            <select className="form-select form-select-sm" style={{width:110}} value={formCosto.tipo} onChange={e=>setFormCosto(p=>({...p,tipo:e.target.value}))}>
-                              {TIPOS_COSTO.map(t=><option key={t} value={t}>{t}</option>)}
-                            </select>
-                            <input className="form-control form-control-sm" style={{flex:1,minWidth:120}} placeholder="Descripción" value={formCosto.descripcion} onChange={e=>setFormCosto(p=>({...p,descripcion:e.target.value}))} required/>
-                            <input type="number" className="form-control form-control-sm" style={{width:70}} placeholder="Cant." value={formCosto.cantidad} min="0.001" step="any" onChange={e=>setFormCosto(p=>({...p,cantidad:e.target.value}))}/>
-                            <input type="number" className="form-control form-control-sm" style={{width:90}} placeholder="Precio" value={formCosto.precio_unit} min="0" step="any" onChange={e=>setFormCosto(p=>({...p,precio_unit:e.target.value}))}/>
-                            <button type="submit" className="btn btn-sm btn-outline-primary" disabled={savCosto}><i className="bi bi-plus-lg"/></button>
-                          </form>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="modal-footer py-2 justify-content-between">
-                    <div className="d-flex gap-2 flex-wrap">
-                      {canWrite && modalDetOT.estado === 'Pendiente' && (
-                        <button className="btn btn-sm btn-primary" onClick={() => cambiarEstado(modalDetOT,'En proceso')}>
-                          <i className="bi bi-play-fill me-1"/>Iniciar
-                        </button>
-                      )}
-                      {canWrite && modalDetOT.estado === 'En proceso' && (
-                        <button className="btn btn-sm btn-success" onClick={() => cambiarEstado(modalDetOT,'Completada')}>
-                          <i className="bi bi-check-lg me-1"/>Completar
-                        </button>
-                      )}
-                      {canWrite && (modalDetOT.estado==='Pendiente'||modalDetOT.estado==='En proceso') && (
-                        <button className="btn btn-sm btn-outline-danger" onClick={() => cambiarEstado(modalDetOT,'Cancelada')}>Cancelar OT</button>
-                      )}
-                      {canWrite && <button className="btn btn-sm btn-outline-secondary" onClick={() => { setModalDetOT(null); abrirEditarOT(modalDetOT) }}><i className="bi bi-pencil me-1"/>Editar</button>}
-                      {canWrite && <button className="btn btn-sm btn-outline-danger" onClick={() => eliminarOT(modalDetOT.id)}><i className="bi bi-trash me-1"/>Eliminar</button>}
-                    </div>
-                    <button className="btn btn-sm btn-secondary" onClick={() => setModalDetOT(null)}>Cerrar</button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ══ MODAL: CREAR / EDITAR OT ════════════════════════════════════ */}
-      {modalFormOT !== null && (
-        <div className="modal show d-block" style={{background:'rgba(0,0,0,.5)', zIndex:1060}}>
-          <div className="modal-dialog modal-lg modal-dialog-scrollable">
-            <form className="modal-content" onSubmit={guardarOT}>
-              <div className="modal-header py-2">
-                <h5 className="modal-title">{modalFormOT==='nuevo' ? 'Nueva OT' : `Editar OT #${modalFormOT.numero}`}</h5>
-                <button type="button" className="btn-close" onClick={()=>setModalFormOT(null)}/>
-              </div>
-              <div className="modal-body">
-                {errOT && <div className="alert alert-danger py-2 small">{errOT}</div>}
-                <div className="row g-2">
-                  {/* Activo */}
-                  <div className="col-md-6 position-relative">
-                    <label className="form-label small fw-medium mb-1">Activo</label>
-                    <input className="form-control form-control-sm" value={formOT.activo_nombre} placeholder="Buscar activo…"
-                      onChange={e => { setFormOT(p=>({...p,activo_nombre:e.target.value,activo_id:''})); buscarActivo(e.target.value, setSugsA) }}/>
-                    {sugsA.length > 0 && (
-                      <div className="border rounded shadow-sm position-absolute bg-white" style={{zIndex:9999,top:'100%',width:'100%',maxHeight:180,overflowY:'auto'}}>
-                        {sugsA.map(a => (
-                          <div key={a.id} className="px-3 py-2 border-bottom" style={{cursor:'pointer',fontSize:'0.83rem'}}
-                            onMouseEnter={e=>e.currentTarget.classList.add('bg-light')}
-                            onMouseLeave={e=>e.currentTarget.classList.remove('bg-light')}
-                            onClick={() => { setFormOT(p=>({...p,activo_id:a.id,activo_nombre:a.nombre})); setSugsA([]) }}>
-                            <strong>{a.codigo}</strong> — {a.nombre} <span className="text-muted ms-1">({a.tipo})</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium mb-1">Tipo</label>
-                    <select className="form-select form-select-sm" value={formOT.tipo} onChange={e=>setFormOT(p=>({...p,tipo:e.target.value}))}>
-                      {TIPOS_OT.map(t=><option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium mb-1">Prioridad</label>
-                    <select className="form-select form-select-sm" value={formOT.prioridad} onChange={e=>setFormOT(p=>({...p,prioridad:e.target.value}))}>
-                      {PRIORIDADES.map(p=><option key={p.v} value={p.v}>{p.v}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-12">
-                    <label className="form-label small fw-medium mb-1">Descripción *</label>
-                    <input className="form-control form-control-sm" value={formOT.descripcion} required onChange={e=>setFormOT(p=>({...p,descripcion:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium mb-1">Fecha apertura</label>
-                    <input type="date" className="form-control form-control-sm" value={formOT.fecha_apertura} onChange={e=>setFormOT(p=>({...p,fecha_apertura:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium mb-1">Fecha programada</label>
-                    <input type="date" className="form-control form-control-sm" value={formOT.fecha_prog} onChange={e=>setFormOT(p=>({...p,fecha_prog:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium mb-1">Ejecutor</label>
-                    <select className="form-select form-select-sm" value={formOT.ejecutor_tipo} onChange={e=>setFormOT(p=>({...p,ejecutor_tipo:e.target.value}))}>
-                      <option value="interno">Interno</option>
-                      <option value="externo">Externo</option>
-                    </select>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium mb-1">Nombre ejecutor</label>
-                    <input className="form-control form-control-sm" value={formOT.ejecutor_nombre} onChange={e=>setFormOT(p=>({...p,ejecutor_nombre:e.target.value}))}/>
-                  </div>
-                  <div className="col-12">
-                    <label className="form-label small fw-medium mb-1">Observaciones</label>
-                    <input className="form-control form-control-sm" value={formOT.observaciones} onChange={e=>setFormOT(p=>({...p,observaciones:e.target.value}))}/>
-                  </div>
-
-                  {/* Tareas */}
-                  <div className="col-12">
-                    <label className="form-label small fw-medium mb-1">Tareas</label>
-                    {formOT.tareas.map((t, i) => (
-                      <div key={i} className="d-flex gap-1 mb-1">
-                        <input className="form-control form-control-sm" value={t.descripcion}
-                          onChange={e => setFormOT(p => ({ ...p, tareas: p.tareas.map((x,j)=>j===i?{...x,descripcion:e.target.value}:x) }))}/>
-                        <button type="button" className="btn btn-sm btn-outline-danger py-0 px-2"
-                          onClick={() => setFormOT(p=>({...p,tareas:p.tareas.filter((_,j)=>j!==i)}))}>
-                          <i className="bi bi-x"/>
-                        </button>
-                      </div>
-                    ))}
-                    <div className="d-flex gap-1 mt-1">
-                      <input className="form-control form-control-sm" placeholder="Nueva tarea…" value={nuevaTarea} onChange={e=>setNuevaTarea(e.target.value)}
-                        onKeyDown={e=>{ if(e.key==='Enter'){ e.preventDefault(); if(nuevaTarea.trim()){setFormOT(p=>({...p,tareas:[...p.tareas,{descripcion:nuevaTarea.trim(),estado:'Pendiente'}]})); setNuevaTarea('')}}}}/>
-                      <button type="button" className="btn btn-sm btn-outline-secondary py-0 px-2"
-                        onClick={() => { if(nuevaTarea.trim()){setFormOT(p=>({...p,tareas:[...p.tareas,{descripcion:nuevaTarea.trim(),estado:'Pendiente'}]})); setNuevaTarea('') }}}>
-                        <i className="bi bi-plus"/>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="modal-footer py-2">
-                <button type="button" className="btn btn-secondary btn-sm" onClick={()=>setModalFormOT(null)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary btn-sm" disabled={savOT}>
-                  {savOT && <span className="spinner-border spinner-border-sm me-2"/>}Guardar OT
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ══ MODAL: PLAN PREVENTIVO ══════════════════════════════════════ */}
-      {modalPlan !== null && (
-        <div className="modal show d-block" style={{background:'rgba(0,0,0,.4)', zIndex:1060}}>
-          <div className="modal-dialog">
-            <form className="modal-content" onSubmit={guardarPlan}>
-              <div className="modal-header py-2">
-                <h5 className="modal-title">{modalPlan==='nuevo' ? 'Nuevo Plan Preventivo' : 'Editar Plan'}</h5>
-                <button type="button" className="btn-close" onClick={()=>setModalPlan(null)}/>
-              </div>
-              <div className="modal-body">
-                {errPlan && <div className="alert alert-danger py-2 small">{errPlan}</div>}
-                <div className="row g-3">
-                  <div className="col-12 position-relative">
-                    <label className="form-label small fw-medium">Activo</label>
-                    <input className="form-control" value={formPlan.activo_nombre} placeholder="Buscar activo o dejar vacío para general…"
-                      onChange={e => { setFormPlan(p=>({...p,activo_nombre:e.target.value,activo_id:''})); buscarActivo(e.target.value, setSugsAP) }}/>
-                    {sugsAP.length > 0 && (
-                      <div className="border rounded shadow-sm position-absolute bg-white" style={{zIndex:9999,top:'100%',width:'100%',maxHeight:180,overflowY:'auto'}}>
-                        {sugsAP.map(a => (
-                          <div key={a.id} className="px-3 py-2 border-bottom" style={{cursor:'pointer',fontSize:'0.83rem'}}
-                            onMouseEnter={e=>e.currentTarget.classList.add('bg-light')}
-                            onMouseLeave={e=>e.currentTarget.classList.remove('bg-light')}
-                            onClick={() => { setFormPlan(p=>({...p,activo_id:a.id,activo_nombre:a.nombre})); setSugsAP([]) }}>
-                            <strong>{a.codigo}</strong> — {a.nombre}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="col-12">
-                    <label className="form-label small fw-medium">Descripción *</label>
-                    <input className="form-control" value={formPlan.descripcion} required onChange={e=>setFormPlan(p=>({...p,descripcion:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-6">
-                    <label className="form-label small fw-medium">Frecuencia</label>
-                    <select className="form-select" value={formPlan.frecuencia} onChange={e=>setFormPlan(p=>({...p,frecuencia:e.target.value}))}>
-                      {FRECUENCIAS.map(f=><option key={f} value={f}>{f}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-md-6">
-                    <label className="form-label small fw-medium">Próxima fecha</label>
-                    <input type="date" className="form-control" value={formPlan.proxima_fecha} onChange={e=>setFormPlan(p=>({...p,proxima_fecha:e.target.value}))}/>
-                  </div>
-                </div>
-              </div>
-              <div className="modal-footer py-2">
-                <button type="button" className="btn btn-secondary" onClick={()=>setModalPlan(null)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary" disabled={savPlan}>
-                  {savPlan && <span className="spinner-border spinner-border-sm me-2"/>}Guardar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ══ MODAL: ACTIVO ═══════════════════════════════════════════════ */}
-      {modalA !== null && (
-        <div className="modal show d-block" style={{background:'rgba(0,0,0,.4)', zIndex:1060}}>
-          <div className="modal-dialog modal-lg">
-            <form className="modal-content" onSubmit={guardarActivo}>
-              <div className="modal-header py-2">
-                <h5 className="modal-title">{modalA==='nuevo' ? 'Nuevo Activo' : 'Editar Activo'}</h5>
-                <button type="button" className="btn-close" onClick={()=>setModalA(null)}/>
-              </div>
-              <div className="modal-body">
-                {errA && <div className="alert alert-danger py-2 small">{errA}</div>}
-                <div className="row g-3">
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium">Código *</label>
-                    <input className="form-control" value={formA.codigo} required onChange={e=>setFormA(p=>({...p,codigo:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-5">
-                    <label className="form-label small fw-medium">Nombre *</label>
-                    <input className="form-control" value={formA.nombre} required onChange={e=>setFormA(p=>({...p,nombre:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label small fw-medium">Tipo</label>
-                    <select className="form-select" value={formA.tipo} onChange={e=>setFormA(p=>({...p,tipo:e.target.value}))}>
-                      {TIPOS_ACTIVO.map(t=><option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium">Marca</label>
-                    <input className="form-control" value={formA.marca} onChange={e=>setFormA(p=>({...p,marca:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium">Modelo</label>
-                    <input className="form-control" value={formA.modelo} onChange={e=>setFormA(p=>({...p,modelo:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium">N° de Serie</label>
-                    <input className="form-control" value={formA.n_serie} onChange={e=>setFormA(p=>({...p,n_serie:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium">Estado</label>
-                    <select className="form-select" value={formA.estado} onChange={e=>setFormA(p=>({...p,estado:e.target.value}))}>
-                      {ESTADOS_ACTIVO.map(e=><option key={e} value={e}>{e}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label small fw-medium">Ubicación</label>
-                    <input className="form-control" value={formA.ubicacion} onChange={e=>setFormA(p=>({...p,ubicacion:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium">Fecha adquisición</label>
-                    <input type="date" className="form-control" value={formA.fecha_adq} onChange={e=>setFormA(p=>({...p,fecha_adq:e.target.value}))}/>
-                  </div>
-                  <div className="col-12">
-                    <label className="form-label small fw-medium">Observaciones</label>
-                    <input className="form-control" value={formA.observaciones} onChange={e=>setFormA(p=>({...p,observaciones:e.target.value}))}/>
-                  </div>
-                </div>
-              </div>
-              <div className="modal-footer py-2">
-                <button type="button" className="btn btn-secondary" onClick={()=>setModalA(null)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary" disabled={savA}>
-                  {savA && <span className="spinner-border spinner-border-sm me-2"/>}Guardar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </>
+      {tab === 'dashboard'   && <TabDashboard />}
+      {tab === 'equipos'     && <TabEquipos />}
+      {tab === 'plan'        && <TabPlan />}
+      {tab === 'correctivas' && <TabCorrectivas />}
+      {tab === 'inspeccion'  && TabInspeccion()}
+    </div>
   )
 }

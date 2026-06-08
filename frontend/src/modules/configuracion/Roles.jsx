@@ -2,13 +2,15 @@ import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 
 const MODULOS = [
-  { key: 'stock',      label: 'Stock'      },
-  { key: 'compras',    label: 'Compras'    },
-  { key: 'ventas',     label: 'Ventas'     },
-  { key: 'proyectos',  label: 'Proyectos'  },
-  { key: 'produccion', label: 'Producción' },
-  { key: 'finanzas',   label: 'Finanzas'   },
-  { key: 'usuarios',   label: 'Usuarios'   },
+  { key: 'stock',         label: 'Stock'         },
+  { key: 'compras',       label: 'Compras'       },
+  { key: 'ventas',        label: 'Ventas'        },
+  { key: 'proyectos',     label: 'Proyectos'     },
+  { key: 'produccion',    label: 'Producción'    },
+  { key: 'finanzas',      label: 'Finanzas'      },
+  { key: 'mantenimiento',  label: 'Mantenimiento'  },
+  { key: 'administracion', label: 'Administración' },
+  { key: 'usuarios',       label: 'Usuarios'       },
 ]
 
 const PERM_VACIO = () => Object.fromEntries(MODULOS.map(m => [m.key, { leer: false, escribir: false }]))

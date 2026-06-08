@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
+import Form49 from './Form49'
 
 const ESTADOS = [
   { v:'Emitida',   c:'warning' },
@@ -27,7 +28,9 @@ const CAMPOS_PROV = [
   { k:'condicion_pago', l:'Cond. de Pago'  },
 ]
 const ITEM_VACIO = { producto_id:'', descripcion:'', unidad:'UND.', cantidad:1, precio_unitario:0, bonif1:0, bonif2:0, bonif3:0, bonif4:0, precio_final:0, plazo:'INMEDIATO', cant_recibida:0 }
-const FORM_OC = { proveedor_id:'', proveedor_nombre:'', proveedor_cuit:'', fecha:hoy(), moneda:'DÓLAR', tasa_cambio:0, autorizado_por:'', elaborado_por:'', condicion_pago:'TRANSF. BANCARIA', lugar_entrega:'e-intra', presupuesto_n:'', observaciones:'', items:[{ ...ITEM_VACIO }] }
+const FORM_OC = { proveedor_id:'', proveedor_nombre:'', proveedor_cuit:'', fecha:hoy(), moneda:'DÓLAR', tasa_cambio:0, autorizado_por:'', elaborado_por:'', condicion_pago:'TRANSF. BANCARIA', lugar_entrega:'e-intra', presupuesto_n:'', observaciones:'', fecha_entrega_est:'', estado_doc:'', items:[{ ...ITEM_VACIO }] }
+
+const ESTADOS_DOC = ['', 'PENDIENTE', 'RECIBIDA', 'CONFORME', 'NO CONFORME', 'OBSERVADA']
 
 function calcFinal(p, b1, b2, b3, b4) {
   let v = parseFloat(p) || 0
@@ -70,10 +73,11 @@ export default function Compras() {
   const [productos, setProductos]   = useState([])
 
   /* ── Modal recibir ──────────────────────────────────────────────── */
-  const [modalRec, setModalRec] = useState(null)
-  const [recCants, setRecCants] = useState({})
-  const [fechaRec, setFechaRec] = useState(hoy())
-  const [savRec, setSavRec]     = useState(false)
+  const [modalRec, setModalRec]     = useState(null)
+  const [recCants, setRecCants]     = useState({})
+  const [fechaRec, setFechaRec]     = useState(hoy())
+  const [nroRemito, setNroRemito]   = useState('')
+  const [savRec, setSavRec]         = useState(false)
 
   /* ── Modal proveedor ────────────────────────────────────────────── */
   const [modalProv, setModalProv] = useState(null)
@@ -130,6 +134,8 @@ export default function Compras() {
       autorizado_por: oc.autorizado_por || '', elaborado_por: oc.elaborado_por || '',
       condicion_pago: oc.condicion_pago || 'TRANSF. BANCARIA', lugar_entrega: oc.lugar_entrega || 'e-intra',
       presupuesto_n: oc.presupuesto_n || '', observaciones: oc.observaciones || '',
+      fecha_entrega_est: oc.fecha_entrega_est || '',
+      estado_doc: oc.estado_doc || '',
       items: oc.items?.length
         ? oc.items.map(it => ({ id: it.id, producto_id: it.producto_id||'', descripcion: it.descripcion||'', unidad: it.unidad||'UND.', cantidad: it.cantidad, precio_unitario: it.precio_unitario, bonif1: it.bonif1||0, bonif2: it.bonif2||0, bonif3: it.bonif3||0, bonif4: it.bonif4||0, precio_final: it.precio_final, plazo: it.plazo||'INMEDIATO', cant_recibida: it.cant_recibida||0 }))
         : [{ ...ITEM_VACIO }],
@@ -170,13 +176,13 @@ export default function Compras() {
     for (const it of oc.items || []) {
       if (it.producto_id) { const pend = it.cantidad - (it.cant_recibida||0); cants[it.id] = pend > 0 ? pend : 0 }
     }
-    setRecCants(cants); setFechaRec(hoy()); setSavRec(false); setModalRec(oc)
+    setRecCants(cants); setFechaRec(hoy()); setNroRemito(''); setSavRec(false); setModalRec(oc)
   }
 
   const confirmarRecibir = async () => {
     setSavRec(true)
     try {
-      await api.post(`/compras/oc/${modalRec.id}/recibir`, { recepciones: recCants, fecha: fechaRec })
+      await api.post(`/compras/oc/${modalRec.id}/recibir`, { recepciones: recCants, fecha: fechaRec, numero_remito: nroRemito||undefined })
       setModalRec(null); setModalOC(null); cargarOC()
       alert('Recepción registrada. Stock actualizado.')
     } catch(err) { alert(err.response?.data?.error ?? 'Error al recibir') }
@@ -277,7 +283,15 @@ export default function Compras() {
             <i className="bi bi-building me-1"/>Proveedores
           </button>
         </li>
+        <li className="nav-item">
+          <button className={`nav-link ${tab==='form49'?'active':''}`} onClick={() => setTab('form49')}>
+            <i className="bi bi-box-arrow-in-down me-1"/>Form 49
+          </button>
+        </li>
       </ul>
+
+      {/* ─── TAB: FORM 49 ───────────────────────────────────────────── */}
+      {tab === 'form49' && <Form49 canWrite={canWrite} proveedores={provs} />}
 
       {/* ─── TAB: ÓRDENES DE COMPRA ─────────────────────────────────── */}
       {tab === 'oc' && <>
@@ -458,9 +472,44 @@ export default function Compras() {
                       <div className="col-auto"><strong>Entrega:</strong> {modalOC.lugar_entrega}</div>
                       {modalOC.autorizado_por && <div className="col-auto"><strong>Autoriza:</strong> {modalOC.autorizado_por}</div>}
                       {modalOC.elaborado_por  && <div className="col-auto"><strong>Elabora:</strong> {modalOC.elaborado_por}</div>}
-                      {modalOC.presupuesto_n  && <div className="col-auto"><strong>Ppto N°:</strong> {modalOC.presupuesto_n}</div>}
-                      {modalOC.observaciones  && <div className="col-12 text-muted"><i>{modalOC.observaciones}</i></div>}
+                      {modalOC.presupuesto_n      && <div className="col-auto"><strong>Ppto N°:</strong> {modalOC.presupuesto_n}</div>}
+                      {modalOC.fecha_entrega_est  && <div className="col-auto"><strong>Entrega Est.:</strong> {fmtF(modalOC.fecha_entrega_est)}</div>}
+                      {modalOC.numero_remito      && <div className="col-auto"><strong>Remito:</strong> {modalOC.numero_remito}</div>}
+                      {modalOC.fecha_recepcion    && <div className="col-auto"><strong>Recibido:</strong> {fmtF(modalOC.fecha_recepcion)}</div>}
+                      {modalOC.observaciones      && <div className="col-12 text-muted"><i>{modalOC.observaciones}</i></div>}
                     </div>
+
+                    {/* Seguimiento Form 17 */}
+                    {(modalOC.estado_doc || modalOC.nro_factura || modalOC.importe_facturado > 0 || modalOC.fecha_vencimiento) && (
+                      <div className="card border-primary mb-3">
+                        <div className="card-header py-1 bg-primary text-white small fw-bold">
+                          <i className="bi bi-file-earmark-text me-1"/>Seguimiento (Form 17)
+                        </div>
+                        <div className="card-body py-2 px-3">
+                          <div className="row g-2 small">
+                            {modalOC.estado_doc && (
+                              <div className="col-auto">
+                                <strong>Estado Doc.:</strong>{' '}
+                                <span className={`badge ${modalOC.estado_doc==='CONFORME'?'bg-success':modalOC.estado_doc==='NO CONFORME'?'bg-danger':modalOC.estado_doc==='OBSERVADA'?'bg-warning text-dark':'bg-secondary'}`}>
+                                  {modalOC.estado_doc}
+                                </span>
+                              </div>
+                            )}
+                            {modalOC.nro_factura && <div className="col-auto"><strong>N° Factura:</strong> {modalOC.nro_factura}</div>}
+                            {modalOC.importe_facturado > 0 && <div className="col-auto"><strong>Importe Facturado:</strong> {fmtN(modalOC.importe_facturado)}</div>}
+                            {modalOC.fecha_vencimiento && <div className="col-auto"><strong>Vencimiento:</strong> {fmtF(modalOC.fecha_vencimiento)}</div>}
+                            {modalOC.pago_confirmado != null && (
+                              <div className="col-auto">
+                                <strong>Pago:</strong>{' '}
+                                <span className={`badge ${modalOC.pago_confirmado ? 'bg-success' : 'bg-secondary'}`}>
+                                  {modalOC.pago_confirmado ? 'CONFIRMADO' : 'PENDIENTE'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     <table className="table table-sm table-bordered mb-0" style={{fontSize:'0.8rem'}}>
                       <thead className="table-light">
@@ -592,9 +641,19 @@ export default function Compras() {
                             <label className="form-label small fw-medium mb-1">Lugar de Entrega</label>
                             <input className="form-control form-control-sm" value={formOC.lugar_entrega} onChange={e=>setFormOC(p=>({...p,lugar_entrega:e.target.value}))}/>
                           </div>
-                          <div className="col-12">
+                          <div className="col-6">
                             <label className="form-label small fw-medium mb-1">Presupuesto N°</label>
                             <input className="form-control form-control-sm" value={formOC.presupuesto_n} onChange={e=>setFormOC(p=>({...p,presupuesto_n:e.target.value}))}/>
+                          </div>
+                          <div className="col-6">
+                            <label className="form-label small fw-medium mb-1">Fecha Entrega Est.</label>
+                            <input type="date" className="form-control form-control-sm" value={formOC.fecha_entrega_est} onChange={e=>setFormOC(p=>({...p,fecha_entrega_est:e.target.value}))}/>
+                          </div>
+                          <div className="col-6">
+                            <label className="form-label small fw-medium mb-1">Estado Doc. (Form 17)</label>
+                            <select className="form-select form-select-sm" value={formOC.estado_doc} onChange={e=>setFormOC(p=>({...p,estado_doc:e.target.value}))}>
+                              {ESTADOS_DOC.map(s => <option key={s} value={s}>{s||'— Sin estado —'}</option>)}
+                            </select>
                           </div>
                           <div className="col-6">
                             <label className="form-label small fw-medium mb-1">Elaborado por</label>
@@ -773,9 +832,15 @@ export default function Compras() {
                 <button className="btn-close" onClick={()=>setModalRec(null)}/>
               </div>
               <div className="modal-body">
-                <div className="mb-3">
-                  <label className="form-label small fw-medium">Fecha de recepción</label>
-                  <input type="date" className="form-control form-control-sm" style={{width:160}} value={fechaRec} onChange={e=>setFechaRec(e.target.value)}/>
+                <div className="row g-2 mb-3">
+                  <div className="col-auto">
+                    <label className="form-label small fw-medium">Fecha de recepción</label>
+                    <input type="date" className="form-control form-control-sm" style={{width:160}} value={fechaRec} onChange={e=>setFechaRec(e.target.value)}/>
+                  </div>
+                  <div className="col">
+                    <label className="form-label small fw-medium">N° Remito</label>
+                    <input className="form-control form-control-sm" placeholder="Ej: 0001-00012345" value={nroRemito} onChange={e=>setNroRemito(e.target.value)}/>
+                  </div>
                 </div>
                 <table className="table table-sm table-bordered" style={{fontSize:'0.83rem'}}>
                   <thead className="table-light">

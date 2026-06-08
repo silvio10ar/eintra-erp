@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const { db } = require('../db/database');
 
-const MODULOS = ['stock','compras','ventas','proyectos','produccion','finanzas','usuarios'];
+const MODULOS = ['stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios'];
 
 function getPermisosEfectivos(userId, rol) {
   if (rol === 'admin') {
