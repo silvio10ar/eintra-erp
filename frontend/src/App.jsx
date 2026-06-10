@@ -11,6 +11,7 @@ import Mantenimiento from './modules/mantenimiento/Mantenimiento'
 import Usuarios from './modules/configuracion/Usuarios'
 import Roles from './modules/configuracion/Roles'
 import Administracion from './modules/administracion/Administracion'
+import RRHH from './modules/rrhh/RRHH'
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
             <Route path="/produccion"  element={<EnConstruccion modulo="Producción" icono="tools" />} />
             <Route path="/finanzas"    element={<EnConstruccion modulo="Finanzas" icono="cash-stack" />} />
             <Route path="/mantenimiento" element={<Mantenimiento />} />
+            <Route path="/rrhh"         element={<RRHH />} />
             <Route path="/administracion" element={<Administracion />} />
             <Route path="/usuarios"    element={<Usuarios />} />
             <Route path="/roles"       element={<Roles />} />

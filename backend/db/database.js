@@ -477,7 +477,320 @@ function inicializar() {
       rol_id     INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
       PRIMARY KEY (usuario_id, rol_id)
     );
+
+    CREATE TABLE IF NOT EXISTS usuario_permisos (
+      usuario_id     INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+      modulo         TEXT    NOT NULL,
+      puede_leer     INTEGER NOT NULL DEFAULT 0,
+      puede_escribir INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (usuario_id, modulo)
+    );
   `);
+
+  // ── Mantenimiento (sistema de equipos e inspecciones) ─────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mant_equipos (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      codigo        TEXT UNIQUE NOT NULL,
+      nombre        TEXT NOT NULL,
+      categoria     TEXT DEFAULT '',
+      marca         TEXT DEFAULT '',
+      modelo        TEXT DEFAULT '',
+      nro_serie     TEXT DEFAULT '',
+      ubicacion     TEXT DEFAULT '',
+      estado        TEXT NOT NULL DEFAULT 'activo' CHECK(estado IN ('activo','en_reparacion','baja')),
+      fecha_baja    TEXT DEFAULT '',
+      motivo_baja   TEXT DEFAULT '',
+      observaciones TEXT DEFAULT '',
+      created_at    TEXT DEFAULT (datetime('now','localtime')),
+      updated_at    TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS mant_tareas_preventivas (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      equipo_id       INTEGER NOT NULL REFERENCES mant_equipos(id) ON DELETE CASCADE,
+      componente      TEXT NOT NULL,
+      accion          TEXT NOT NULL,
+      tipo            TEXT DEFAULT '',
+      frecuencia      TEXT DEFAULT 'Mensual',
+      frecuencia_dias INTEGER DEFAULT 30,
+      activa          INTEGER DEFAULT 1,
+      created_at      TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS mant_ejecuciones_preventivas (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      tarea_id      INTEGER NOT NULL REFERENCES mant_tareas_preventivas(id) ON DELETE CASCADE,
+      equipo_id     INTEGER NOT NULL REFERENCES mant_equipos(id),
+      fecha         TEXT NOT NULL,
+      resultado     TEXT DEFAULT 'OK' CHECK(resultado IN ('OK','NOK','Cuarentena')),
+      observaciones TEXT DEFAULT '',
+      responsable   TEXT DEFAULT '',
+      created_at    TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS mant_intervenciones_correctivas (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      equipo_id         INTEGER NOT NULL REFERENCES mant_equipos(id),
+      fecha_deteccion   TEXT NOT NULL,
+      fecha_inicio      TEXT DEFAULT '',
+      fecha_fin         TEXT DEFAULT '',
+      descripcion_falla TEXT NOT NULL,
+      accion_realizada  TEXT DEFAULT '',
+      tipo_servicio     TEXT DEFAULT 'interno',
+      proveedor         TEXT DEFAULT '',
+      costo             REAL DEFAULT 0,
+      repuestos_usados  TEXT DEFAULT '',
+      resultado         TEXT DEFAULT 'pendiente',
+      responsable       TEXT DEFAULT '',
+      observaciones     TEXT DEFAULT '',
+      created_at        TEXT DEFAULT (datetime('now','localtime')),
+      updated_at        TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS mant_inspecciones (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      equipo_id            INTEGER NOT NULL REFERENCES mant_equipos(id),
+      fecha                TEXT NOT NULL,
+      estado_general       TEXT DEFAULT '',
+      ubicacion_verificada TEXT DEFAULT '',
+      etiqueta_ok          INTEGER DEFAULT 1,
+      observaciones        TEXT DEFAULT '',
+      responsable          TEXT DEFAULT '',
+      created_at           TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS mant_historial_estados (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      equipo_id       INTEGER NOT NULL REFERENCES mant_equipos(id),
+      fecha           TEXT NOT NULL DEFAULT (date('now')),
+      estado_anterior TEXT DEFAULT '',
+      estado_nuevo    TEXT NOT NULL,
+      motivo          TEXT DEFAULT '',
+      created_at      TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mant_eq_estado   ON mant_equipos(estado);
+  `);
+
+  // ── RRHH (Recursos Humanos) ───────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS rrhh_empleados (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre     TEXT NOT NULL,
+      tipo       TEXT NOT NULL DEFAULT 'interno' CHECK(tipo IN ('interno','contratista')),
+      empresa    TEXT DEFAULT '',
+      activo     INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS rrhh_categorias (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      codigo      TEXT NOT NULL UNIQUE,
+      descripcion TEXT NOT NULL,
+      grupo       TEXT DEFAULT '',
+      activo      INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS rrhh_proyectos (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre     TEXT NOT NULL UNIQUE,
+      activo     INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS rrhh_registros (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      fecha        TEXT NOT NULL,
+      empleado_id  INTEGER NOT NULL REFERENCES rrhh_empleados(id),
+      proyecto_id  INTEGER REFERENCES rrhh_proyectos(id),
+      categoria_id INTEGER REFERENCES rrhh_categorias(id),
+      hora_inicio  TEXT DEFAULT '',
+      hora_fin     TEXT DEFAULT '',
+      horas        REAL NOT NULL DEFAULT 0,
+      modulo       TEXT DEFAULT '',
+      descripcion  TEXT DEFAULT '',
+      created_at   TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rrhh_reg_fecha    ON rrhh_registros(fecha);
+    CREATE INDEX IF NOT EXISTS idx_rrhh_reg_empleado ON rrhh_registros(empleado_id);
+    CREATE INDEX IF NOT EXISTS idx_rrhh_reg_proyecto ON rrhh_registros(proyecto_id);
+
+    CREATE INDEX IF NOT EXISTS idx_mant_tp_equipo   ON mant_tareas_preventivas(equipo_id);
+    CREATE INDEX IF NOT EXISTS idx_mant_insp_equipo ON mant_inspecciones(equipo_id);
+    CREATE INDEX IF NOT EXISTS idx_mant_insp_fecha  ON mant_inspecciones(fecha);
+    CREATE INDEX IF NOT EXISTS idx_mant_hist_eq     ON mant_historial_estados(equipo_id);
+  `);
+
+  try {
+    db.exec(`
+      CREATE VIEW IF NOT EXISTS v_mant_historial_equipo AS
+        SELECT e.codigo, 'inspeccion' AS tipo, i.fecha,
+               i.estado_general AS estado, i.ubicacion_verificada AS ubicacion,
+               i.etiqueta_ok, i.observaciones, i.responsable, i.id
+        FROM mant_inspecciones i
+        JOIN mant_equipos e ON e.id = i.equipo_id
+        UNION ALL
+        SELECT e.codigo, 'correctiva' AS tipo, ic.fecha_deteccion AS fecha,
+               ic.resultado AS estado, NULL AS ubicacion,
+               NULL AS etiqueta_ok, ic.descripcion_falla AS observaciones,
+               ic.responsable, ic.id
+        FROM mant_intervenciones_correctivas ic
+        JOIN mant_equipos e ON e.id = ic.equipo_id
+    `);
+  } catch(e) {}
+
+  // ── Poblar historial de estados desde bajas existentes (idempotente) ─────────
+  try {
+    db.exec(`
+      INSERT INTO mant_historial_estados (equipo_id, fecha, estado_anterior, estado_nuevo, motivo)
+      SELECT ic.equipo_id, ic.fecha_deteccion, 'activo', 'baja', ic.descripcion_falla
+      FROM mant_intervenciones_correctivas ic
+      WHERE ic.resultado = 'baja_definitiva'
+      AND NOT EXISTS (
+        SELECT 1 FROM mant_historial_estados hs
+        WHERE hs.equipo_id = ic.equipo_id AND hs.estado_nuevo = 'baja'
+      )
+    `);
+  } catch(e) {}
+
+  // ── Estado equipos: corregir según correctivas pendientes (idempotente) ──────
+  try {
+    db.exec(`
+      UPDATE mant_equipos SET estado='en_reparacion'
+      WHERE id IN (
+        SELECT equipo_id FROM mant_intervenciones_correctivas WHERE resultado='pendiente'
+      ) AND estado='activo'
+    `);
+  } catch(e) {}
+
+  // ── Dedup tareas preventivas (idempotente) ────────────────────────────────
+  try {
+    db.exec(`
+      DELETE FROM mant_tareas_preventivas
+      WHERE id NOT IN (
+        SELECT MIN(id)
+        FROM mant_tareas_preventivas
+        GROUP BY equipo_id, componente, accion, tipo, frecuencia
+      )
+    `);
+  } catch(e) {}
+
+  // ── RRHH: Dispositivos y Asistencia ──────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS rrhh_dispositivos (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre      TEXT DEFAULT 'Terminal',
+      modelo      TEXT DEFAULT 'DS-K1T320MFWX',
+      ip          TEXT NOT NULL DEFAULT '',
+      puerto      INTEGER DEFAULT 80,
+      usuario     TEXT DEFAULT 'admin',
+      password    TEXT DEFAULT '',
+      activo      INTEGER DEFAULT 1,
+      ultima_sync TEXT DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS rrhh_asistencia (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      dispositivo_id  INTEGER REFERENCES rrhh_dispositivos(id),
+      empleado_id     INTEGER REFERENCES rrhh_empleados(id),
+      empleado_nombre TEXT DEFAULT '',
+      empleado_ext    TEXT DEFAULT '',
+      fecha           TEXT NOT NULL,
+      hora            TEXT NOT NULL,
+      tipo_acceso     TEXT DEFAULT '',
+      temperatura     REAL,
+      created_at      TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE(dispositivo_id, empleado_ext, fecha, hora)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rrhh_asist_fecha ON rrhh_asistencia(fecha);
+    CREATE INDEX IF NOT EXISTS idx_rrhh_asist_emp   ON rrhh_asistencia(empleado_id);
+  `);
+
+  // id_dispositivo en empleados (para vincular con el nro de empleado del terminal)
+  try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN id_dispositivo TEXT DEFAULT ''`); } catch(e) {}
+
+  // Índice único en nombre para evitar duplicados al reiniciar
+  try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rrhh_emp_nombre ON rrhh_empleados(nombre)`); } catch(e) {}
+
+  // ── Seed RRHH: categorías (idempotente) ──────────────────────────────────────
+  const CATS_RRHH = [
+    ['CP','Chapas y perfiles','Granallado'],
+    ['LM','Limpieza Manual','Mano de obra Herreria'],
+    ['PM','Pintura/Marcado','Mano de obra Herreria'],
+    ['MM','Movimiento Materiales','Mano de obra Herreria'],
+    ['PC','Preparacion de Chapa','Mano de obra Herreria'],
+    ['LC','Preparacion de Canos y Perfiles','Mano de obra Herreria'],
+    ['SO','Soldadura','Mano de obra Herreria'],
+    ['LR','Limpieza y retoque de pintura','Terminaciones y Montaje'],
+    ['PI','Pintura interior/exterior','Terminaciones y Montaje'],
+    ['MC','Montaje de Canerias','Terminaciones y Montaje'],
+    ['ME','Montaje de Equipos','Terminaciones y Montaje'],
+    ['AM','Aislaciones y Molduras','Terminaciones y Montaje'],
+    ['CT','Construccion de Tablero','Electrico'],
+    ['IE','Instalacion Electrica','Electrico'],
+    ['PP','Programacion de Software','Electrico'],
+    ['MI','Mantenimiento edilicio','Infraestructura'],
+    ['EP','Mantenimiento equipos propios','Infraestructura'],
+    ['ET','Reparacion de equipos terceros','Infraestructura'],
+    ['AL','Almacen de materiales','Ingenieria'],
+    ['GC','Gestion de calidad documentos','Ingenieria'],
+    ['DC','Dibujo CAD','Ingenieria'],
+    ['CC','Medicion y Control de Calidad','Ingenieria'],
+    ['OT','Otros','Otros'],
+  ];
+  {
+    const ins = db.prepare('INSERT OR IGNORE INTO rrhh_categorias (codigo,descripcion,grupo) VALUES (?,?,?)');
+    for (const [c,d,g] of CATS_RRHH) ins.run(c,d,g);
+  }
+
+  // ── Seed RRHH: empleados (idempotente) ────────────────────────────────────────
+  // Internos = personal E-INTRA (hoja Selección del Form 43)
+  // Contratistas = empleados externos del historial
+  const EMPS_RRHH = [
+    ['ARTURO JIMENEZ','interno'],
+    ['GUSTAVO ORTEGA','interno'],
+    ['DANIEL CORRADO','interno'],
+    ['DANIEL RODRIGUEZ','interno'],
+    ['NICOLAS RODRIGUEZ','interno'],
+    ['MAXIMILIANO SERRANO','interno'],
+    ['NICOLAS SAAVEDRA','interno'],
+    ['JOE LUIS RODRIGUEZ','interno'],
+    ['OSCAR PIÑANGO','interno'],
+    ['JUAN EDER','interno'],
+    ['JOSE LOPEZ','interno'],
+    ['IAN SALAZAR','interno'],
+    ['FABIAN GARELLI','interno'],
+    ['YONATHAN VALIENTE','interno'],
+    ['AGUSTIN GANDULFO','contratista'],
+    ['AGUSTIN QUEVEDO','contratista'],
+    ['ALAN TORRES','contratista'],
+    ['ALEJO LUCIANO','contratista'],
+    ['BASUALDO GONZALO','contratista'],
+    ['BUTEX MATIAS','contratista'],
+    ['CASTILLO GUSTAVO','contratista'],
+    ['CESAR FERNANDEZ','contratista'],
+    ['CESAR JIMENEZ','contratista'],
+    ['CRISTIAN RAMIREZ','contratista'],
+    ['GUSTAVO TOMADIN','contratista'],
+    ['LARREA EMILIANO','contratista'],
+    ['LUCAS ALBELO','contratista'],
+    ['LUCAS QUEVEDO','contratista'],
+    ['LUIS CARRERA','contratista'],
+    ['LUIS QUEVEDO','contratista'],
+    ['MARCOS FIORIO','contratista'],
+    ['OSWALDO RODRIGUEZ','contratista'],
+    ['PABLO ESCOBAR','contratista'],
+    ['PABLO ZAGARI','contratista'],
+    ['REYES JORGE','contratista'],
+    ['RUBEN HURTADO','contratista'],
+  ];
+  {
+    const ins = db.prepare('INSERT OR IGNORE INTO rrhh_empleados (nombre,tipo) VALUES (?,?)');
+    for (const [n,t] of EMPS_RRHH) ins.run(n,t);
+  }
 
   // Seed inicial si no hay usuarios
   const hay = db.prepare('SELECT COUNT(*) as c FROM usuarios').get();

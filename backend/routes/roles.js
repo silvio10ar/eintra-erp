@@ -71,6 +71,25 @@ router.put('/:id/permisos', verificarToken, soloAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Permisos directos de un usuario ───────────────────────────────────────────
+router.get('/usuario/:userId/permisos', verificarToken, (req, res) => {
+  const rows = db.prepare('SELECT * FROM usuario_permisos WHERE usuario_id=?').all(req.params.userId);
+  res.json(Object.fromEntries(rows.map(r => [r.modulo, { leer: !!r.puede_leer, escribir: !!r.puede_escribir }])));
+});
+
+router.put('/usuario/:userId/permisos', verificarToken, soloAdmin, (req, res) => {
+  const userId = req.params.userId;
+  const del = db.prepare('DELETE FROM usuario_permisos WHERE usuario_id=?');
+  const ins = db.prepare('INSERT INTO usuario_permisos (usuario_id,modulo,puede_leer,puede_escribir) VALUES (?,?,?,?)');
+  db.transaction(() => {
+    del.run(userId);
+    for (const [modulo, p] of Object.entries(req.body)) {
+      if (p && typeof p === 'object') ins.run(userId, modulo, p.leer ? 1 : 0, p.escribir ? 1 : 0);
+    }
+  })();
+  res.json({ ok: true });
+});
+
 // ── Roles de un usuario ────────────────────────────────────────────────────────
 router.get('/usuario/:userId', verificarToken, (req, res) => {
   const rows = db.prepare(`
