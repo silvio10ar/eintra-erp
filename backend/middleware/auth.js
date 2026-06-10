@@ -17,7 +17,12 @@ function getPermisosEfectivos(userId, rol) {
     WHERE  ur.usuario_id = ?
     GROUP  BY rp.modulo
   `).all(userId);
-  return Object.fromEntries(rows.map(r => [r.modulo, { leer: !!r.leer, escribir: !!r.escribir }]));
+  const permisos = Object.fromEntries(rows.map(r => [r.modulo, { leer: !!r.leer, escribir: !!r.escribir }]));
+  const directos = db.prepare('SELECT * FROM usuario_permisos WHERE usuario_id=?').all(userId);
+  for (const d of directos) {
+    permisos[d.modulo] = { leer: !!d.puede_leer, escribir: !!d.puede_escribir };
+  }
+  return permisos;
 }
 
 function verificarToken(req, res, next) {

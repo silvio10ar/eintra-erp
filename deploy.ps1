@@ -44,11 +44,12 @@ $kb = [math]::Round((Get-Item $TMP_TAR).Length / 1KB)
 OK "Paquete listo ($kb KB)"
 
 # ─── 3. Subir y extraer en el servidor ───────────────────────────────────────
-Paso 3 "Subiendo archivos al servidor..."
-ssh @O $SSH "mkdir -p $RUTA_REMOTA/backend/routes $RUTA_REMOTA/backend/middleware $RUTA_REMOTA/backend/db $RUTA_REMOTA/frontend/src $RUTA_REMOTA/uploads"
+Paso 3 "Subiendo archivos al servidor (ingresar contrasena)..."
+$dirs = "$RUTA_REMOTA/backend/routes $RUTA_REMOTA/backend/middleware $RUTA_REMOTA/backend/db $RUTA_REMOTA/frontend/src $RUTA_REMOTA/uploads"
 scp @O -q $TMP_TAR "${SSH}:${RUTA_REMOTA}/deploy.tar.gz"
 if ($LASTEXITCODE -ne 0) { Fallo "Error al subir el paquete" }
-ssh @O $SSH "cd $RUTA_REMOTA && tar -xzf deploy.tar.gz && rm deploy.tar.gz"
+ssh @O $SSH "mkdir -p $dirs && cd $RUTA_REMOTA && tar -xzf deploy.tar.gz && rm deploy.tar.gz"
+if ($LASTEXITCODE -ne 0) { Fallo "Error al extraer en el servidor" }
 OK "Archivos en $RUTA_REMOTA"
 
 # ─── 4. Script de configuracion remota ───────────────────────────────────────

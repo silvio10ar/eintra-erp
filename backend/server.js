@@ -31,6 +31,7 @@ app.use('/api/v1/dashboard',  require('./routes/dashboard'));
 app.use('/api/v1/roles',         require('./routes/roles'));
 app.use('/api/v1/mantenimiento', require('./routes/mantenimiento'));
 app.use('/api/v1/evaluaciones',  require('./routes/evaluaciones'));
+app.use('/api/v1/rrhh',          require('./routes/rrhh'));
 
 const frontendDist = isProd
   ? (process.env.FRONTEND_DIST || path.resolve(__dirname, '../frontend/dist'))
