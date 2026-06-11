@@ -44,6 +44,12 @@ export default function RRHH() {
   const [modalDisp,  setModalDisp]  = useState(null)
   const [verInactivos, setVerInactivos] = useState(false)
 
+  // parte diario
+  const [parteEmp,     setParteEmp]     = useState('')
+  const [parteDate,    setParteDate]    = useState(new Date().toISOString().split('T')[0])
+  const [parteFilas,   setParteFilas]   = useState([])
+  const [savingParte,  setSavingParte]  = useState(false)
+
   // asistencia
   const [asistencia,   setAsistencia]   = useState([])
   const [dispositivos, setDispositivos] = useState([])
@@ -54,6 +60,16 @@ export default function RRHH() {
   const [fAsistFecha,  setFAsistFecha]  = useState(new Date().toISOString().split('T')[0])
   const [fAsistEmp,    setFAsistEmp]    = useState('')
   const [empDispositivo, setEmpDispositivo] = useState([])
+
+  // informes
+  const hoy = new Date().toISOString().split('T')[0]
+  const primerDiaMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+  const [infTab,        setInfTab]        = useState('asistencia')
+  const [infDesde,      setInfDesde]      = useState(primerDiaMes)
+  const [infHasta,      setInfHasta]      = useState(hoy)
+  const [infEmpleado,   setInfEmpleado]   = useState('')
+  const [infData,       setInfData]       = useState(null)
+  const [infLoading,    setInfLoading]    = useState(false)
 
   // ── datos maestros ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -655,6 +671,280 @@ export default function RRHH() {
     )
   }
 
+  // ── tab parte diario ──────────────────────────────────────────────────────
+  function TabParteDiario() {
+    const GRUPOS = [
+      { grupo:'Granallado',            color:'#6c757d' },
+      { grupo:'Mano de obra Herreria', color:'#8B4513' },
+      { grupo:'Terminaciones y Montaje', color:'#dc3545' },
+      { grupo:'Electrico',             color:'#0d6efd' },
+      { grupo:'Infraestructura',       color:'#198754' },
+      { grupo:'Ingenieria',            color:'#6f42c1' },
+      { grupo:'General',               color:'#20c997' },
+    ]
+
+    const addFila = (cat) => setParteFilas(fs => [...fs, {
+      _key: Date.now() + Math.random(),
+      cat_id: cat?.id || '', ini: '', fin: '', horas: '',
+      proyecto_id: '', descripcion: '',
+    }])
+
+    const updFila = (key, field, val) => setParteFilas(fs => fs.map(f => {
+      if (f._key !== key) return f
+      const u = { ...f, [field]: val }
+      if (field === 'ini' || field === 'fin') {
+        const h = calcHoras(field === 'ini' ? val : f.ini, field === 'fin' ? val : f.fin)
+        if (h !== null) u.horas = h
+      }
+      return u
+    }))
+
+    const setCat = (key, catId) => setParteFilas(fs => fs.map(f =>
+      f._key !== key ? f : { ...f, cat_id: catId ? Number(catId) : '' }
+    ))
+
+    const delFila = (key) => setParteFilas(fs => fs.filter(f => f._key !== key))
+
+    const totalHoras = parteFilas.reduce((s, f) => s + (parseFloat(f.horas) || 0), 0)
+
+    // Insertar separador de almuerzo entre filas que cruzan 13:00 → 14:00
+    const filasMostradas = []
+    for (let i = 0; i < parteFilas.length; i++) {
+      if (i > 0) {
+        const prev = parteFilas[i - 1], curr = parteFilas[i]
+        if (prev.fin && prev.fin <= '13:01' && curr.ini && curr.ini >= '13:59')
+          filasMostradas.push({ _almuerzo: true, _key: 'alm' })
+      }
+      filasMostradas.push(parteFilas[i])
+    }
+
+    const gruposCats = categorias.reduce((acc, c) => {
+      if (!acc[c.grupo]) acc[c.grupo] = []
+      acc[c.grupo].push(c)
+      return acc
+    }, {})
+
+    async function guardarParte() {
+      if (!parteEmp)  { alert('Seleccioná un empleado'); return }
+      if (!parteDate) { alert('Seleccioná una fecha');   return }
+      const validas = parteFilas.filter(f => f.cat_id && f.ini && f.fin && parseFloat(f.horas) > 0)
+      if (validas.length === 0) { alert('Completá al menos una fila con código, INI y FIN'); return }
+      setSavingParte(true)
+      try {
+        const registros = validas.map(f => ({
+          fecha: parteDate, empleado_id: Number(parteEmp),
+          categoria_id: f.cat_id || null, proyecto_id: f.proyecto_id || null,
+          hora_inicio: f.ini, hora_fin: f.fin, horas: parseFloat(f.horas),
+          modulo: '', descripcion: f.descripcion || '',
+        }))
+        const r = await api.post('/rrhh/registros/batch', { registros })
+        alert(`${r.data.insertados} registros guardados correctamente`)
+        setParteFilas([])
+        if (tab === 'registros') cargarReg()
+        if (tab === 'dashboard') cargarDash()
+      } catch (e) {
+        alert(e.response?.data?.error || 'Error al guardar')
+      } finally { setSavingParte(false) }
+    }
+
+    return (
+      <div>
+        {/* Cabecera */}
+        <div className="card mb-3">
+          <div className="card-body py-2">
+            <div className="d-flex gap-3 align-items-end flex-wrap">
+              <div style={{minWidth:240}}>
+                <label className="form-label small mb-1 fw-semibold">Empleado</label>
+                <select className="form-select form-select-sm" value={parteEmp}
+                  onChange={e => setParteEmp(e.target.value)}>
+                  <option value="">— seleccionar —</option>
+                  <optgroup label="E-INTRA">
+                    {empleados.filter(e => e.activo && e.tipo === 'interno').map(e =>
+                      <option key={e.id} value={e.id}>{e.nombre}</option>
+                    )}
+                  </optgroup>
+                  <optgroup label="Contratistas">
+                    {empleados.filter(e => e.activo && e.tipo === 'contratista').map(e =>
+                      <option key={e.id} value={e.id}>{e.nombre}</option>
+                    )}
+                  </optgroup>
+                </select>
+              </div>
+              <div>
+                <label className="form-label small mb-1 fw-semibold">Fecha</label>
+                <input type="date" className="form-control form-control-sm" style={{width:150}}
+                  value={parteDate} onChange={e => setParteDate(e.target.value)}/>
+              </div>
+              <div className="ms-auto text-muted small align-self-center">
+                <i className="bi bi-file-earmark-text me-1"/>Form 42 · Parte Diario
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Grilla de códigos */}
+        <div className="card mb-3">
+          <div className="card-header py-2 small fw-semibold">
+            <i className="bi bi-grid-3x3 me-1"/>Códigos de actividad — clic para agregar fila
+          </div>
+          <div className="card-body py-2 px-3">
+            <div className="row g-2">
+              {GRUPOS.map(({ grupo, color }) => {
+                const cats = categorias.filter(c => c.grupo === grupo)
+                if (!cats.length) return null
+                return (
+                  <div key={grupo} className="col-12 col-lg-6">
+                    <div className="d-flex align-items-center gap-1 flex-wrap">
+                      <span className="badge me-1 text-white"
+                        style={{background: color, minWidth:100, fontSize:'0.7rem'}}>
+                        {grupo}
+                      </span>
+                      {cats.map(c => (
+                        <button key={c.id}
+                          className="btn btn-sm py-0 px-2 border"
+                          style={{fontSize:'0.75rem', background:'#f8f9fa'}}
+                          title={c.descripcion}
+                          onClick={() => addFila(c)}>
+                          <strong>{c.codigo}</strong>
+                          <span className="text-muted ms-1 d-none d-md-inline"
+                            style={{fontSize:'0.68rem'}}>{c.descripcion}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Tabla de filas */}
+        <div className="card">
+          <div className="card-header py-2 d-flex align-items-center justify-content-between">
+            <span className="fw-semibold small">
+              <i className="bi bi-table me-1"/>Filas del parte
+              {parteFilas.length > 0 &&
+                <span className="badge bg-secondary ms-2">{parteFilas.length}</span>}
+            </span>
+            <button className="btn btn-sm btn-outline-primary" onClick={() => addFila(null)}>
+              <i className="bi bi-plus-lg me-1"/>Agregar fila
+            </button>
+          </div>
+          <div className="table-responsive">
+            <table className="table table-sm mb-0 align-middle">
+              <thead className="table-light">
+                <tr>
+                  <th style={{minWidth:170}}>Código</th>
+                  <th style={{width:88}}>INI</th>
+                  <th style={{width:88}}>FIN</th>
+                  <th style={{width:64}} className="text-center">Horas</th>
+                  <th style={{minWidth:150}}>Proyecto</th>
+                  <th>Descripción de la tarea</th>
+                  <th style={{width:36}}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {parteFilas.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="text-center text-muted py-5">
+                      <i className="bi bi-file-earmark-plus d-block fs-2 mb-2 opacity-25"/>
+                      Clic en un código de actividad o en "Agregar fila"
+                    </td>
+                  </tr>
+                ) : filasMostradas.map(item => {
+                  if (item._almuerzo) return (
+                    <tr key="almuerzo" className="table-warning">
+                      <td colSpan={7} className="text-center py-1 fw-semibold small text-warning-emphasis">
+                        <i className="bi bi-cup-hot me-2"/>ALMUERZO · 13:00 – 14:00
+                      </td>
+                    </tr>
+                  )
+                  const f = item
+                  return (
+                    <tr key={f._key}>
+                      <td>
+                        <select className="form-select form-select-sm" style={{fontSize:'0.78rem'}}
+                          value={f.cat_id}
+                          onChange={e => setCat(f._key, e.target.value)}>
+                          <option value="">— seleccionar —</option>
+                          {Object.entries(gruposCats).map(([g, cats]) => (
+                            <optgroup key={g} label={g}>
+                              {cats.map(c =>
+                                <option key={c.id} value={c.id}>{c.codigo} – {c.descripcion}</option>
+                              )}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <input type="time" className="form-control form-control-sm"
+                          value={f.ini} onChange={e => updFila(f._key, 'ini', e.target.value)}/>
+                      </td>
+                      <td>
+                        <input type="time" className="form-control form-control-sm"
+                          value={f.fin} onChange={e => updFila(f._key, 'fin', e.target.value)}/>
+                      </td>
+                      <td className="text-center fw-semibold text-primary">
+                        {f.horas ? `${parseFloat(f.horas).toFixed(1)}h` : '—'}
+                      </td>
+                      <td>
+                        <select className="form-select form-select-sm" style={{fontSize:'0.78rem'}}
+                          value={f.proyecto_id}
+                          onChange={e => updFila(f._key, 'proyecto_id', e.target.value)}>
+                          <option value="">—</option>
+                          {proyectos.filter(p => p.activo).map(p =>
+                            <option key={p.id} value={p.id}>{p.nombre}</option>
+                          )}
+                        </select>
+                      </td>
+                      <td>
+                        <input type="text" className="form-control form-control-sm"
+                          placeholder="Módulo / descripción de la tarea"
+                          value={f.descripcion}
+                          onChange={e => updFila(f._key, 'descripcion', e.target.value)}/>
+                      </td>
+                      <td>
+                        <button className="btn btn-sm btn-outline-danger py-0"
+                          onClick={() => delFila(f._key)}>
+                          <i className="bi bi-x-lg"/>
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+              {parteFilas.length > 0 && (
+                <tfoot className="table-light">
+                  <tr>
+                    <td colSpan={3} className="text-end text-muted small fw-semibold">Total horas:</td>
+                    <td className="text-center fw-bold text-primary">
+                      {totalHoras > 0 ? `${parseFloat(totalHoras.toFixed(1))}h` : '—'}
+                    </td>
+                    <td colSpan={3}/>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+          {parteFilas.length > 0 && (
+            <div className="card-footer d-flex justify-content-between align-items-center">
+              <button className="btn btn-sm btn-outline-secondary"
+                onClick={() => { if (confirm('¿Limpiar todas las filas?')) setParteFilas([]) }}>
+                <i className="bi bi-trash me-1"/>Limpiar
+              </button>
+              <button className="btn btn-primary" disabled={savingParte || !parteEmp}
+                onClick={guardarParte}>
+                {savingParte
+                  ? <><span className="spinner-border spinner-border-sm me-1"/>Guardando...</>
+                  : <><i className="bi bi-check-lg me-1"/>Guardar parte ({parteFilas.filter(f => f.cat_id && f.horas).length} filas)</>}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   // ── tab asistencia ────────────────────────────────────────────────────────
   function TabAsistencia() {
     const disp = dispositivos[0]
@@ -762,7 +1052,9 @@ export default function RRHH() {
               </thead>
               <tbody>
                 {asistencia.map((a, i) => {
-                  const soloUna = a.n_lecturas === 1
+                  const soloUna          = a.n_lecturas === 1
+                  const tardeLlegada     = a.horario_entrada && a.entrada && a.entrada > a.horario_entrada
+                  const retiroAnticipado = !soloUna && a.horario_salida && a.salida && a.salida < a.horario_salida
                   return (
                     <tr key={i}>
                       <td>
@@ -783,12 +1075,20 @@ export default function RRHH() {
                           : '—'}
                       </td>
                       <td className="text-center">
-                        <span className="fw-semibold text-success">{a.entrada || '—'}</span>
+                        <span className={`fw-semibold ${tardeLlegada ? 'text-danger' : 'text-success'}`}
+                              title={tardeLlegada ? `Horario: ${a.horario_entrada}` : ''}>
+                          {a.entrada || '—'}
+                          {tardeLlegada && <i className="bi bi-exclamation-circle ms-1" style={{fontSize:'0.75rem'}}/>}
+                        </span>
                       </td>
                       <td className="text-center">
                         {soloUna
                           ? <span className="text-muted small">sin salida</span>
-                          : <span className="fw-semibold text-danger">{a.salida}</span>}
+                          : <span className={`fw-semibold ${retiroAnticipado ? 'text-danger' : 'text-secondary'}`}
+                                  title={retiroAnticipado ? `Horario: ${a.horario_salida}` : ''}>
+                              {a.salida}
+                              {retiroAnticipado && <i className="bi bi-exclamation-circle ms-1" style={{fontSize:'0.75rem'}}/>}
+                            </span>}
                       </td>
                       <td className="text-center">
                         {a.horas != null
@@ -1040,6 +1340,19 @@ export default function RRHH() {
                     placeholder="Nº de empleado en el dispositivo (ej: 1, 5, 123)"/>
                   <div className="form-text">Para vincular registros de asistencia automáticamente.</div>
                 </div>
+                <div className="col-12"><hr className="my-1"/><small className="text-muted fw-semibold">Horario</small></div>
+                <div className="col-md-6">
+                  <label className="form-label fw-semibold">Entrada esperada</label>
+                  <input type="time" className="form-control form-control-sm"
+                    value={m.horario_entrada||''} onChange={e => upd('horario_entrada', e.target.value)}/>
+                  <div className="form-text">Llegadas posteriores se marcarán en rojo.</div>
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label fw-semibold">Salida esperada</label>
+                  <input type="time" className="form-control form-control-sm"
+                    value={m.horario_salida||''} onChange={e => upd('horario_salida', e.target.value)}/>
+                  <div className="form-text">Salidas anteriores se marcarán en rojo.</div>
+                </div>
               </div>
             </div>
             <div className="modal-footer">
@@ -1170,7 +1483,175 @@ export default function RRHH() {
     )
   }
 
-  // ── render ─────────────────────────────────────────────────────────────────
+  // ── TabInformes ─────────────────────────────────────────────────────────────
+  function TabInformes() {
+    function exportarCSV(titulo) {
+      if (!infData || infData.length === 0) return
+      const keys   = Object.keys(infData[0])
+      const header = keys.join(';')
+      const rowsCSV = infData.map(r =>
+        keys.map(k => {
+          const v = r[k] ?? ''
+          const s = String(v).replace(/"/g, '""')
+          return s.includes(';') || s.includes('\n') ? `"${s}"` : s
+        }).join(';')
+      )
+      const csv  = '﻿' + [header, ...rowsCSV].join('\r\n')
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href = url
+      a.download = `${titulo}_${infDesde}_${infHasta}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+
+    async function consultar() {
+      if (!infDesde || !infHasta) { alert('Seleccioná fechas'); return }
+      setInfLoading(true)
+      setInfData(null)
+      try {
+        const params = { desde: infDesde, hasta: infHasta }
+        if (infEmpleado) params.empleado_id = infEmpleado
+        const ep = infTab === 'asistencia' ? '/rrhh/informes/asistencia' : '/rrhh/informes/tareas'
+        const r  = await api.get(ep, { params })
+        setInfData(r.data)
+      } catch (e) {
+        alert(e.response?.data?.error || 'Error al consultar')
+      } finally { setInfLoading(false) }
+    }
+
+    const COLS_ASIST = [
+      { k:'empleado',      l:'Empleado'   },
+      { k:'fecha',         l:'Fecha'      },
+      { k:'entrada',       l:'Entrada'    },
+      { k:'salida',        l:'Salida'     },
+      { k:'horas_fichada', l:'Hs Fichada' },
+      { k:'horas_parte',   l:'Hs Parte'   },
+      { k:'diferencia',    l:'Diferencia' },
+    ]
+    const COLS_TAREAS = [
+      { k:'empleado',    l:'Empleado'    },
+      { k:'fecha',       l:'Fecha'       },
+      { k:'proyecto',    l:'Proyecto'    },
+      { k:'codigo',      l:'Código'      },
+      { k:'tarea',       l:'Tarea'       },
+      { k:'grupo',       l:'Grupo'       },
+      { k:'hora_inicio', l:'Inicio'      },
+      { k:'hora_fin',    l:'Fin'         },
+      { k:'horas',       l:'Horas'       },
+      { k:'observacion', l:'Observación' },
+    ]
+    const cols = infTab === 'asistencia' ? COLS_ASIST : COLS_TAREAS
+
+    return (
+      <div>
+        <div className="card mb-3">
+          <div className="card-body py-2">
+            <div className="d-flex gap-2 align-items-end flex-wrap">
+              <div>
+                <label className="form-label small mb-1 fw-semibold">Informe</label>
+                <select className="form-select form-select-sm" style={{width:185}}
+                  value={infTab} onChange={e => { setInfTab(e.target.value); setInfData(null) }}>
+                  <option value="asistencia">Asistencia</option>
+                  <option value="tareas">Tareas / Proyectos</option>
+                </select>
+              </div>
+              <div>
+                <label className="form-label small mb-1 fw-semibold">Desde</label>
+                <input type="date" className="form-control form-control-sm"
+                  value={infDesde} onChange={e => setInfDesde(e.target.value)} />
+              </div>
+              <div>
+                <label className="form-label small mb-1 fw-semibold">Hasta</label>
+                <input type="date" className="form-control form-control-sm"
+                  value={infHasta} onChange={e => setInfHasta(e.target.value)} />
+              </div>
+              <div>
+                <label className="form-label small mb-1 fw-semibold">Empleado</label>
+                <select className="form-select form-select-sm" style={{width:200}}
+                  value={infEmpleado} onChange={e => setInfEmpleado(e.target.value)}>
+                  <option value="">— Todos —</option>
+                  {empleados.filter(e => e.activo).map(e =>
+                    <option key={e.id} value={e.id}>{e.nombre}</option>)}
+                </select>
+              </div>
+              <button className="btn btn-primary btn-sm align-self-end" onClick={consultar} disabled={infLoading}>
+                {infLoading
+                  ? <><span className="spinner-border spinner-border-sm me-1"/>Consultando…</>
+                  : <><i className="bi bi-search me-1"/>Consultar</>}
+              </button>
+              {infData && infData.length > 0 && (
+                <button className="btn btn-success btn-sm align-self-end"
+                  onClick={() => exportarCSV(infTab === 'asistencia' ? 'asistencia' : 'tareas')}>
+                  <i className="bi bi-file-earmark-excel me-1"/>Exportar Excel
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {infData === null && !infLoading && (
+          <div className="text-center text-muted py-5">
+            <i className="bi bi-file-earmark-bar-graph d-block fs-2 mb-2 opacity-25"/>
+            Seleccioná parámetros y presioná Consultar
+          </div>
+        )}
+        {infData && infData.length === 0 && (
+          <div className="alert alert-info">Sin datos para el período seleccionado.</div>
+        )}
+        {infData && infData.length > 0 && (
+          <div className="card">
+            <div className="card-header py-1 d-flex justify-content-between align-items-center">
+              <span className="small fw-semibold">
+                {infData.length} registro{infData.length !== 1 ? 's' : ''} · {infDesde} → {infHasta}
+              </span>
+              <span className="text-muted small">
+                {infTab === 'asistencia'
+                  ? `Fichado: ${infData.reduce((s,r)=>s+(+r.horas_fichada||0),0).toFixed(1)}h · Parte: ${infData.reduce((s,r)=>s+(+r.horas_parte||0),0).toFixed(1)}h`
+                  : `Total: ${infData.reduce((s,r)=>s+(+r.horas||0),0).toFixed(1)}h`}
+              </span>
+            </div>
+            <div className="table-responsive" style={{maxHeight:520, overflowY:'auto'}}>
+              <table className="table table-sm table-hover mb-0" style={{fontSize:'0.8rem'}}>
+                <thead className="table-dark" style={{position:'sticky', top:0}}>
+                  <tr>{cols.map(c => <th key={c.k}>{c.l}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {infData.map((row, i) => {
+                    const sinParte = infTab === 'asistencia' && !row.horas_parte && row.horas_fichada !== ''
+                    return (
+                      <tr key={i} className={sinParte ? 'table-warning' : ''}>
+                        {cols.map(c => {
+                          let v = row[c.k] ?? ''
+                          if (c.k === 'fecha' && v) {
+                            const [yy,mm,dd] = v.split('-')
+                            return <td key={c.k}>{dd}/{mm}/{yy}</td>
+                          }
+                          if ((c.k==='horas_fichada'||c.k==='horas'||c.k==='horas_parte') && v !== '') {
+                            return <td key={c.k}>{(+v).toFixed(1)}h</td>
+                          }
+                          if (c.k === 'diferencia' && v !== '') {
+                            const n = +v
+                            return <td key={c.k} className={Math.abs(n)>1?'text-danger fw-semibold':'text-success'}>
+                              {n>0?`+${n.toFixed(1)}h`:`${n.toFixed(1)}h`}
+                            </td>
+                          }
+                          return <td key={c.k}>{v===''?'—':v}</td>
+                        })}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── render ───────────────────────────────────────────────────────────────────
   return (
     <div>
       <div className="d-flex align-items-center justify-content-between mb-3">
@@ -1201,11 +1682,13 @@ export default function RRHH() {
       {/* Tabs */}
       <ul className="nav nav-tabs mb-3">
         {[
-          { id:'dashboard',  icon:'speedometer2',   label:'Dashboard'   },
-          { id:'asistencia', icon:'person-check',   label:'Asistencia'  },
-          { id:'registros',  icon:'clock-history',  label:'Horas'       },
-          { id:'empleados',  icon:'people',          label:'Empleados'   },
-          { id:'proyectos',  icon:'kanban',           label:'Proyectos'  },
+          { id:'dashboard',  icon:'speedometer2',           label:'Dashboard'   },
+          { id:'parte',      icon:'file-earmark-text',      label:'Parte Diario'},
+          { id:'asistencia', icon:'person-check',           label:'Asistencia'  },
+          { id:'registros',  icon:'clock-history',          label:'Horas'       },
+          { id:'empleados',  icon:'people',                  label:'Empleados'  },
+          { id:'proyectos',  icon:'kanban',                  label:'Proyectos'  },
+          { id:'informes',   icon:'file-earmark-bar-graph', label:'Informes'    },
         ].map(t => (
           <li key={t.id} className="nav-item">
             <button className={`nav-link ${tab===t.id?'active':''}`} onClick={() => setTab(t.id)}>
@@ -1217,10 +1700,12 @@ export default function RRHH() {
 
       {/* Contenido */}
       {tab==='dashboard'  && TabDashboard()}
+      {tab==='parte'      && TabParteDiario()}
       {tab==='asistencia' && TabAsistencia()}
       {tab==='registros'  && TabRegistros()}
       {tab==='empleados'  && TabEmpleados()}
       {tab==='proyectos'  && TabProyectos()}
+      {tab==='informes'   && TabInformes()}
 
       {/* Modales */}
       {ModalRegistro()}

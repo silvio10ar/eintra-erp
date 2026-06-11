@@ -176,6 +176,34 @@ router.post('/registros', verificarToken, (req, res) => {
   res.json({ id: r.lastInsertRowid });
 });
 
+router.post('/registros/batch', verificarToken, (req, res) => {
+  const puedeCargar = req.usuario?.rol === 'admin'
+    || !!(req.permisos?.rrhh?.escribir)
+    || !!(req.permisos?.partes?.escribir);
+  if (!puedeCargar) return res.status(403).json({ error: 'Sin permiso' });
+  const { registros } = req.body;
+  if (!Array.isArray(registros) || registros.length === 0)
+    return res.status(400).json({ error: 'Se requiere un array de registros' });
+
+  const ins = db.prepare(`
+    INSERT INTO rrhh_registros
+      (fecha,empleado_id,proyecto_id,categoria_id,hora_inicio,hora_fin,horas,modulo,descripcion)
+    VALUES (?,?,?,?,?,?,?,?,?)
+  `);
+
+  let insertados = 0;
+  db.transaction(() => {
+    for (const r of registros) {
+      if (!r.fecha || !r.empleado_id || !r.horas) continue;
+      ins.run(r.fecha, r.empleado_id, r.proyecto_id || null, r.categoria_id || null,
+              r.hora_inicio || '', r.hora_fin || '', Number(r.horas), r.modulo || '', r.descripcion || '');
+      insertados++;
+    }
+  })();
+
+  res.json({ ok: true, insertados });
+});
+
 router.put('/registros/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
   const { fecha, empleado_id, proyecto_id, categoria_id, hora_inicio, hora_fin, horas, modulo, descripcion } = req.body;
@@ -221,11 +249,14 @@ router.post('/empleados', verificarToken, (req, res) => {
 
 router.put('/empleados/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
-  const { nombre, tipo, empresa, activo, id_dispositivo } = req.body;
-  db.prepare(`UPDATE rrhh_empleados SET nombre=?,tipo=?,empresa=?,activo=?,id_dispositivo=? WHERE id=?`)
+  const { nombre, tipo, empresa, activo, id_dispositivo, horario_entrada, horario_salida } = req.body;
+  db.prepare(`UPDATE rrhh_empleados SET nombre=?,tipo=?,empresa=?,activo=?,id_dispositivo=?,horario_entrada=?,horario_salida=? WHERE id=?`)
     .run(nombre.trim().toUpperCase(), tipo || 'interno', empresa || '',
          activo !== undefined ? Number(activo) : 1,
-         id_dispositivo || '', req.params.id);
+         id_dispositivo || '',
+         horario_entrada || '',
+         horario_salida  || '',
+         req.params.id);
   res.json({ ok: true });
 });
 
@@ -342,7 +373,71 @@ router.post('/dispositivos/:id/debug-acs', verificarToken, async (req, res) => {
   }
 });
 
-// ── Sincronizar asistencia ────────────────────────────────────────────────────
+// ── Helper: sincroniza un dispositivo para un rango de fechas ────────────────
+async function syncDispositivo(disp, desde, hasta, empMap, ins) {
+  let insertados = 0, duplicados = 0, position = 0, paginas = 0;
+  const PAGE = 50, MAX_PAG = 200;
+  const acsPath = '/ISAPI/AccessControl/AcsEvent?format=json';
+
+  while (paginas < MAX_PAG) {
+    const body = {
+      AcsEventCond: {
+        searchID: '1', searchResultPosition: position, maxResults: PAGE,
+        major: 5, minor: 0,
+        startTime: `${desde}T00:00:00`,
+        endTime:   `${hasta}T23:59:59`,
+      }
+    };
+
+    const data = await hikRequest(disp.ip, disp.puerto, 'POST', acsPath, body, disp.usuario, disp.password);
+    if (position === 0) {
+      const evt0 = data?.AcsEvent;
+      console.log('[ACS debug] status:', evt0?.responseStatusStrg, '| total:', evt0?.totalNum, '| items:', evt0?.InfoList?.length);
+      if (evt0?.InfoList?.[0]) console.log('[ACS item0]', JSON.stringify(evt0.InfoList[0]));
+      if (!evt0) console.log('[ACS raw]', JSON.stringify(data).substring(0, 400));
+    }
+
+    const evt = data?.AcsEvent;
+    if (!evt) break;
+
+    const items = evt.InfoList || [];
+    if (items.length === 0) break;
+
+    for (const item of items) {
+      const timeStr = item.time || '';
+      const fecha   = timeStr.substring(0, 10);
+      const hora    = timeStr.substring(11, 16);
+      if (!fecha || fecha.length !== 10) continue;
+
+      const empExt = item.employeeNoString || item.cardNo || '';
+      if (!empExt) continue;
+
+      const empId = empMap[empExt] || null;
+      const vt    = item.verifyType;
+      const tipo  = vt === 20 ? 'Facial'
+        : vt === 1  ? 'Tarjeta'
+        : vt === 2  ? 'Tarjeta+PIN'
+        : vt === 21 ? 'Facial+Tarjeta'
+        : vt === 15 ? 'Código QR'
+        : vt != null ? `Tipo ${vt}` : '';
+      const temp = item.temperature > 0 ? item.temperature : null;
+
+      const r = ins.run(disp.id, empId, item.name || '', empExt, fecha, hora, tipo, temp);
+      if (r.changes > 0) insertados++; else duplicados++;
+    }
+
+    position += items.length;
+    paginas++;
+    if (evt.responseStatusStrg !== 'MORE') break;
+  }
+
+  db.prepare('UPDATE rrhh_dispositivos SET ultima_sync=? WHERE id=?')
+    .run(new Date().toISOString().replace('T', ' ').substring(0, 16), disp.id);
+
+  return { insertados, duplicados, paginas };
+}
+
+// ── Sincronizar asistencia (un dispositivo) ───────────────────────────────────
 router.post('/dispositivos/:id/sync', verificarToken, async (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
   const disp = db.prepare('SELECT * FROM rrhh_dispositivos WHERE id=?').get(req.params.id);
@@ -352,86 +447,61 @@ router.post('/dispositivos/:id/sync', verificarToken, async (req, res) => {
   const desde = req.body.desde || hoy;
   const hasta = req.body.hasta || hoy;
 
-  let insertados = 0, duplicados = 0, position = 0, paginas = 0;
-  const PAGE = 50, MAX_PAG = 200;
-  const path = '/ISAPI/AccessControl/AcsEvent?format=json';
+  const empMap = {};
+  for (const e of db.prepare("SELECT id, id_dispositivo FROM rrhh_empleados WHERE id_dispositivo != ''").all()) {
+    empMap[e.id_dispositivo] = e.id;
+  }
+  const ins = db.prepare(`
+    INSERT OR IGNORE INTO rrhh_asistencia
+      (dispositivo_id, empleado_id, empleado_nombre, empleado_ext, fecha, hora, tipo_acceso, temperatura)
+    VALUES (?,?,?,?,?,?,?,?)
+  `);
 
   try {
-    // Mapa de id_dispositivo → empleado_id
-    const empMap = {};
-    for (const e of db.prepare("SELECT id, id_dispositivo FROM rrhh_empleados WHERE id_dispositivo != ''").all()) {
-      empMap[e.id_dispositivo] = e.id;
-    }
-
-    const ins = db.prepare(`
-      INSERT OR IGNORE INTO rrhh_asistencia
-        (dispositivo_id, empleado_id, empleado_nombre, empleado_ext,
-         fecha, hora, tipo_acceso, temperatura)
-      VALUES (?,?,?,?,?,?,?,?)
-    `);
-
-    while (paginas < MAX_PAG) {
-      const body = {
-        AcsEventCond: {
-          searchID:             '1',
-          searchResultPosition: position,
-          maxResults:           PAGE,
-          major:                5,
-          minor:                0,
-          startTime:            `${desde}T00:00:00`,
-          endTime:              `${hasta}T23:59:59`,
-        }
-      };
-
-      const data = await hikRequest(disp.ip, disp.puerto, 'POST', path, body, disp.usuario, disp.password);
-      if (position === 0) {
-        const evt0 = data?.AcsEvent;
-        console.log('[ACS debug] status:', evt0?.responseStatusStrg, '| total:', evt0?.totalNum, '| items:', evt0?.InfoList?.length);
-        if (evt0?.InfoList?.[0]) console.log('[ACS item0]', JSON.stringify(evt0.InfoList[0]));
-        if (!evt0) console.log('[ACS raw]', JSON.stringify(data).substring(0, 400));
-      }
-      const evt  = data?.AcsEvent;
-      if (!evt) break;
-
-      const items = evt.InfoList || [];
-      if (items.length === 0) break;
-
-      for (const item of items) {
-        const timeStr = item.time || '';
-        const fecha   = timeStr.substring(0, 10);    // "2024-01-15"
-        const hora    = timeStr.substring(11, 16);   // "08:30"
-        if (!fecha || fecha.length !== 10) continue;
-
-        const empExt  = item.employeeNoString || item.cardNo || '';
-        if (!empExt) continue;  // ignorar eventos de puerta sin empleado
-
-        const empId   = empMap[empExt] || null;
-        const vt      = item.verifyType;
-        const tipo    = vt === 20 ? 'Facial'
-          : vt === 1  ? 'Tarjeta'
-          : vt === 2  ? 'Tarjeta+PIN'
-          : vt === 21 ? 'Facial+Tarjeta'
-          : vt === 15 ? 'Código QR'
-          : vt != null ? `Tipo ${vt}` : '';
-        const temp = item.temperature > 0 ? item.temperature : null;
-
-        const r = ins.run(disp.id, empId, item.name || '', empExt, fecha, hora, tipo, temp);
-        if (r.changes > 0) insertados++; else duplicados++;
-      }
-
-      position += items.length;
-      paginas++;
-      if (evt.responseStatusStrg !== 'MORE') break;  // el dispositivo dice que no hay más
-    }
-
-    db.prepare('UPDATE rrhh_dispositivos SET ultima_sync=? WHERE id=?')
-      .run(new Date().toISOString().replace('T',' ').substring(0,16), disp.id);
-
-    res.json({ ok: true, insertados, duplicados, paginas });
+    const result = await syncDispositivo(disp, desde, hasta, empMap, ins);
+    res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[RRHH sync]', err.message);
     res.status(500).json({ error: err.message || 'Error al comunicarse con el dispositivo' });
   }
+});
+
+// ── Sincronizar todos los dispositivos activos ────────────────────────────────
+router.post('/dispositivos/sync-todos', verificarToken, async (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  const dispositivos = db.prepare('SELECT * FROM rrhh_dispositivos WHERE activo=1').all();
+  if (dispositivos.length === 0) return res.json({ ok: true, insertados: 0, duplicados: 0, dispositivos: [] });
+
+  const hoy   = new Date().toISOString().split('T')[0];
+  const desde = req.body.desde || hoy;
+  const hasta = req.body.hasta || hoy;
+
+  const empMap = {};
+  for (const e of db.prepare("SELECT id, id_dispositivo FROM rrhh_empleados WHERE id_dispositivo != ''").all()) {
+    empMap[e.id_dispositivo] = e.id;
+  }
+  const ins = db.prepare(`
+    INSERT OR IGNORE INTO rrhh_asistencia
+      (dispositivo_id, empleado_id, empleado_nombre, empleado_ext, fecha, hora, tipo_acceso, temperatura)
+    VALUES (?,?,?,?,?,?,?,?)
+  `);
+
+  let totalInsertados = 0, totalDuplicados = 0;
+  const resultados = [];
+
+  for (const disp of dispositivos) {
+    try {
+      const r = await syncDispositivo(disp, desde, hasta, empMap, ins);
+      totalInsertados += r.insertados;
+      totalDuplicados += r.duplicados;
+      resultados.push({ id: disp.id, nombre: disp.nombre, ...r, error: null });
+    } catch (err) {
+      console.error(`[RRHH sync-todos] ${disp.nombre}:`, err.message);
+      resultados.push({ id: disp.id, nombre: disp.nombre, insertados: 0, duplicados: 0, error: err.message });
+    }
+  }
+
+  res.json({ ok: true, insertados: totalInsertados, duplicados: totalDuplicados, dispositivos: resultados });
 });
 
 // ── Empleados detectados en el fichador ───────────────────────────────────────
@@ -489,7 +559,9 @@ router.get('/asistencia/resumen', verificarToken, (req, res) => {
       a.empleado_id,
       a.empleado_ext,
       COALESCE(e.nombre, a.empleado_nombre, a.empleado_ext) AS nombre,
-      e.tipo  AS emp_tipo,
+      e.tipo            AS emp_tipo,
+      e.horario_entrada AS horario_entrada,
+      e.horario_salida  AS horario_salida,
       MIN(a.hora) AS entrada,
       MAX(a.hora) AS salida,
       COUNT(*)    AS n_lecturas,
@@ -530,6 +602,312 @@ router.get('/asistencia', verificarToken, (req, res) => {
     LIMIT 3000
   `).all(...params);
   res.json(rows);
+});
+
+// ── Partes: resumen semanal por empleado ──────────────────────────────────────
+router.get('/partes/semana', verificarToken, (req, res) => {
+  const dias = Math.min(Math.max(parseInt(req.query.dias) || 7, 1), 30);
+  const fechas = [];
+  for (let i = dias - 1; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    fechas.push(d.toISOString().split('T')[0]);
+  }
+  const desde = fechas[0], hasta = fechas[fechas.length - 1];
+
+  const empleados = db.prepare(
+    `SELECT id, nombre, tipo FROM rrhh_empleados WHERE activo=1 ORDER BY tipo, nombre`
+  ).all();
+
+  const partes = db.prepare(`
+    SELECT empleado_id, fecha,
+           ROUND(SUM(horas), 2) AS horas_parte,
+           COUNT(*) AS n_registros
+    FROM rrhh_registros
+    WHERE fecha BETWEEN ? AND ?
+    GROUP BY empleado_id, fecha
+  `).all(desde, hasta);
+
+  const fichadas = db.prepare(`
+    SELECT a.empleado_id, a.fecha,
+           MIN(a.hora) AS entrada, MAX(a.hora) AS salida,
+           CASE WHEN MIN(a.hora) != MAX(a.hora) THEN
+             ROUND((
+               (CAST(SUBSTR(MAX(a.hora),1,2) AS REAL)*60 + CAST(SUBSTR(MAX(a.hora),4,2) AS REAL))
+             - (CAST(SUBSTR(MIN(a.hora),1,2) AS REAL)*60 + CAST(SUBSTR(MIN(a.hora),4,2) AS REAL))
+             - CASE WHEN MIN(a.hora) <= '13:00' AND MAX(a.hora) >= '14:00' THEN 60 ELSE 0 END
+             ) / 60.0, 2)
+           ELSE NULL END AS horas_fichada
+    FROM rrhh_asistencia a
+    WHERE a.fecha BETWEEN ? AND ? AND a.empleado_id IS NOT NULL
+    GROUP BY a.empleado_id, a.fecha
+  `).all(desde, hasta);
+
+  const partesMap = {};
+  for (const p of partes) partesMap[`${p.empleado_id}_${p.fecha}`] = p;
+  const fichadasMap = {};
+  for (const f of fichadas) fichadasMap[`${f.empleado_id}_${f.fecha}`] = f;
+
+  const resultado = empleados.map(emp => ({
+    ...emp,
+    dias: Object.fromEntries(fechas.map(fecha => {
+      const p = partesMap[`${emp.id}_${fecha}`];
+      const f = fichadasMap[`${emp.id}_${fecha}`];
+      return [fecha, {
+        horas_parte:   p ? +p.horas_parte : 0,
+        n_registros:   p ? p.n_registros  : 0,
+        tiene_parte:   !!p,
+        horas_fichada: f ? f.horas_fichada : null,
+        entrada:       f ? f.entrada       : null,
+        salida:        f ? f.salida        : null,
+      }];
+    })),
+  }));
+
+  res.json({ fechas, empleados: resultado });
+});
+
+// ── Partes: horas por proyecto activo desglosadas por tarea ──────────────────
+router.get('/partes/proyectos', verificarToken, (req, res) => {
+  const dias = Math.min(Math.max(parseInt(req.query.dias) || 7, 1), 90);
+  const hasta = new Date().toISOString().split('T')[0];
+  const desdeD = new Date(); desdeD.setDate(desdeD.getDate() - (dias - 1));
+  const desde = desdeD.toISOString().split('T')[0];
+
+  const rows = db.prepare(`
+    SELECT
+      p.id   AS proyecto_id, p.nombre AS proyecto_nombre,
+      c.codigo AS cat_codigo, c.descripcion AS cat_descripcion,
+      c.grupo  AS cat_grupo,
+      ROUND(SUM(r.horas), 2) AS horas
+    FROM rrhh_registros r
+    JOIN rrhh_proyectos p ON p.id = r.proyecto_id AND p.activo = 1
+    LEFT JOIN rrhh_categorias c ON c.id = r.categoria_id
+    WHERE r.fecha BETWEEN ? AND ?
+    GROUP BY p.id, r.categoria_id
+    ORDER BY p.nombre, horas DESC
+  `).all(desde, hasta);
+
+  const proyMap = {};
+  for (const row of rows) {
+    if (!proyMap[row.proyecto_id]) {
+      proyMap[row.proyecto_id] = {
+        id: row.proyecto_id, nombre: row.proyecto_nombre,
+        total_horas: 0, tareas: [],
+      };
+    }
+    proyMap[row.proyecto_id].total_horas =
+      +(proyMap[row.proyecto_id].total_horas + row.horas).toFixed(2);
+    proyMap[row.proyecto_id].tareas.push({
+      cat_codigo:      row.cat_codigo      || 'OT',
+      cat_descripcion: row.cat_descripcion || 'Sin categoría',
+      cat_grupo:       row.cat_grupo       || '',
+      horas:           row.horas,
+    });
+  }
+
+  res.json(Object.values(proyMap).sort((a, b) => b.total_horas - a.total_horas));
+});
+
+// ── Informes ──────────────────────────────────────────────────────────────────
+
+router.get('/informes/asistencia', verificarToken, (req, res) => {
+  const { desde, hasta, empleado_id } = req.query;
+  if (!desde || !hasta) return res.status(400).json({ error: 'Requerido: desde, hasta' });
+
+  const where  = ['a.fecha BETWEEN ? AND ?', 'a.empleado_id IS NOT NULL']
+  const params = [desde, hasta]
+  if (empleado_id) { where.push('e.id = ?'); params.push(empleado_id) }
+
+  const fichadas = db.prepare(`
+    SELECT e.id AS empleado_id, e.nombre AS empleado, a.fecha,
+           MIN(a.hora) AS entrada, MAX(a.hora) AS salida,
+           CASE WHEN MIN(a.hora) != MAX(a.hora) THEN
+             ROUND((
+               (CAST(SUBSTR(MAX(a.hora),1,2) AS REAL)*60 + CAST(SUBSTR(MAX(a.hora),4,2) AS REAL))
+             - (CAST(SUBSTR(MIN(a.hora),1,2) AS REAL)*60 + CAST(SUBSTR(MIN(a.hora),4,2) AS REAL))
+             - CASE WHEN MIN(a.hora) <= '13:00' AND MAX(a.hora) >= '14:00' THEN 60 ELSE 0 END
+             ) / 60.0, 2)
+           ELSE NULL END AS horas_fichada
+    FROM rrhh_asistencia a
+    JOIN rrhh_empleados e ON e.id = a.empleado_id
+    WHERE ${where.join(' AND ')}
+    GROUP BY a.empleado_id, a.fecha
+    ORDER BY e.nombre, a.fecha
+  `).all(...params);
+
+  const pParams = [desde, hasta]
+  if (empleado_id) pParams.push(empleado_id)
+  const partes = db.prepare(`
+    SELECT empleado_id, fecha, ROUND(SUM(horas), 2) AS horas_parte
+    FROM rrhh_registros
+    WHERE fecha BETWEEN ? AND ?
+    ${empleado_id ? 'AND empleado_id = ?' : ''}
+    GROUP BY empleado_id, fecha
+  `).all(...pParams);
+  const pm = Object.fromEntries(partes.map(p => [`${p.empleado_id}_${p.fecha}`, p.horas_parte]));
+
+  res.json(fichadas.map(f => ({
+    empleado:      f.empleado,
+    fecha:         f.fecha,
+    entrada:       f.entrada      || '',
+    salida:        f.salida       || '',
+    horas_fichada: f.horas_fichada ?? '',
+    horas_parte:   pm[`${f.empleado_id}_${f.fecha}`] ?? 0,
+    diferencia:    f.horas_fichada != null
+      ? +(f.horas_fichada - (pm[`${f.empleado_id}_${f.fecha}`] ?? 0)).toFixed(2)
+      : '',
+  })));
+});
+
+router.get('/informes/tareas', verificarToken, (req, res) => {
+  const { desde, hasta, empleado_id } = req.query;
+  if (!desde || !hasta) return res.status(400).json({ error: 'Requerido: desde, hasta' });
+
+  const where  = ['r.fecha BETWEEN ? AND ?']
+  const params = [desde, hasta]
+  if (empleado_id) { where.push('r.empleado_id = ?'); params.push(empleado_id) }
+
+  const rows = db.prepare(`
+    SELECT e.nombre AS empleado, r.fecha,
+           COALESCE(p.nombre, '') AS proyecto,
+           COALESCE(c.codigo, '') AS codigo,
+           COALESCE(c.descripcion, '') AS tarea,
+           COALESCE(c.grupo, '') AS grupo,
+           COALESCE(r.hora_inicio, '') AS hora_inicio,
+           COALESCE(r.hora_fin, '')    AS hora_fin,
+           r.horas,
+           COALESCE(r.descripcion, '') AS observacion
+    FROM rrhh_registros r
+    JOIN rrhh_empleados e ON e.id = r.empleado_id
+    LEFT JOIN rrhh_proyectos  p ON p.id = r.proyecto_id
+    LEFT JOIN rrhh_categorias c ON c.id = r.categoria_id
+    WHERE ${where.join(' AND ')}
+    ORDER BY e.nombre, r.fecha, r.hora_inicio
+  `).all(...params);
+
+  res.json(rows);
+});
+
+// ── Resumen ayer (para admin/rrhh en dashboard) ───────────────────────────────
+
+router.get('/resumen-ayer', verificarToken, (req, res) => {
+  const puedeVer = req.usuario?.rol === 'admin'
+    || !!(req.permisos?.rrhh?.leer)
+    || !!(req.permisos?.partes?.leer);
+  if (!puedeVer) return res.status(403).json({ error: 'Sin permiso' });
+
+  const ayer = new Date();
+  ayer.setDate(ayer.getDate() - 1);
+  const fecha = ayer.toISOString().slice(0, 10);
+
+  const fichadas = db.prepare(`
+    SELECT e.id, e.nombre,
+           MIN(a.hora) AS entrada, MAX(a.hora) AS salida,
+           CASE WHEN MIN(a.hora) != MAX(a.hora) THEN
+             ROUND((
+               (CAST(SUBSTR(MAX(a.hora),1,2) AS REAL)*60 + CAST(SUBSTR(MAX(a.hora),4,2) AS REAL))
+             - (CAST(SUBSTR(MIN(a.hora),1,2) AS REAL)*60 + CAST(SUBSTR(MIN(a.hora),4,2) AS REAL))
+             - CASE WHEN MIN(a.hora) <= '13:00' AND MAX(a.hora) >= '14:00' THEN 60 ELSE 0 END
+             ) / 60.0, 2)
+           ELSE NULL END AS horas_fichada
+    FROM rrhh_asistencia a
+    JOIN rrhh_empleados e ON e.id = a.empleado_id
+    WHERE a.fecha = ? AND a.empleado_id IS NOT NULL AND e.activo = 1
+    GROUP BY a.empleado_id
+    ORDER BY e.nombre
+  `).all(fecha);
+
+  const partes = db.prepare(`
+    SELECT empleado_id, ROUND(SUM(horas), 2) AS horas_parte, COUNT(*) AS n
+    FROM rrhh_registros WHERE fecha = ?
+    GROUP BY empleado_id
+  `).all(fecha);
+  const partesMap = Object.fromEntries(partes.map(p => [p.empleado_id, p]));
+
+  res.json({
+    fecha,
+    empleados: fichadas.map(f => ({
+      ...f,
+      tiene_parte:  !!partesMap[f.id],
+      horas_parte:  partesMap[f.id]?.horas_parte || 0,
+    })),
+  });
+});
+
+// ── Mi Ayer ───────────────────────────────────────────────────────────────────
+
+router.get('/mi-ayer', verificarToken, (req, res) => {
+  const u = db.prepare('SELECT rrhh_empleado_id FROM usuarios WHERE id=?').get(req.usuario.id);
+  if (!u?.rrhh_empleado_id) return res.json(null);
+
+  const ayer = new Date();
+  ayer.setDate(ayer.getDate() - 1);
+  const fecha = ayer.toISOString().slice(0, 10);
+
+  const fichada = db.prepare(`
+    SELECT MIN(hora) AS entrada, MAX(hora) AS salida,
+      CASE WHEN MIN(hora) != MAX(hora) THEN
+        ROUND((
+          (CAST(SUBSTR(MAX(hora),1,2) AS REAL)*60 + CAST(SUBSTR(MAX(hora),4,2) AS REAL))
+        - (CAST(SUBSTR(MIN(hora),1,2) AS REAL)*60 + CAST(SUBSTR(MIN(hora),4,2) AS REAL))
+        - CASE WHEN MIN(hora) <= '13:00' AND MAX(hora) >= '14:00' THEN 60 ELSE 0 END
+        ) / 60.0, 2)
+      ELSE NULL END AS horas_fichada
+    FROM rrhh_asistencia
+    WHERE empleado_id = ? AND fecha = ?
+  `).get(u.rrhh_empleado_id, fecha);
+
+  const parte = db.prepare(`
+    SELECT COUNT(*) AS n, ROUND(COALESCE(SUM(horas), 0), 2) AS horas_parte
+    FROM rrhh_registros
+    WHERE empleado_id = ? AND fecha = ?
+  `).get(u.rrhh_empleado_id, fecha);
+
+  res.json({
+    fecha,
+    entrada:       fichada?.entrada       || null,
+    salida:        fichada?.salida        || null,
+    horas_fichada: fichada?.horas_fichada || null,
+    tiene_parte:   (parte?.n || 0) > 0,
+    horas_parte:   parte?.horas_parte     || 0,
+  });
+});
+
+// ── Mi Parte ──────────────────────────────────────────────────────────────────
+
+router.get('/mi-parte', verificarToken, (req, res) => {
+  const u = db.prepare('SELECT rrhh_empleado_id FROM usuarios WHERE id=?').get(req.usuario.id);
+  if (!u?.rrhh_empleado_id) return res.json(null);
+  const fecha = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const rows = db.prepare(`
+    SELECT r.*, c.codigo AS cat_codigo, c.descripcion AS cat_descripcion, c.grupo AS cat_grupo,
+           p.nombre AS proyecto_nombre
+    FROM rrhh_registros r
+    LEFT JOIN rrhh_categorias c ON c.id = r.categoria_id
+    LEFT JOIN rrhh_proyectos  p ON p.id = r.proyecto_id
+    WHERE r.empleado_id = ? AND r.fecha = ?
+    ORDER BY r.hora_inicio
+  `).all(u.rrhh_empleado_id, fecha);
+  res.json(rows);
+});
+
+router.post('/mi-parte', verificarToken, (req, res) => {
+  const u = db.prepare('SELECT rrhh_empleado_id FROM usuarios WHERE id=?').get(req.usuario.id);
+  if (!u?.rrhh_empleado_id)
+    return res.status(400).json({ error: 'Tu usuario no tiene empleado asociado. Pedile al administrador que lo configure.' });
+  const { registros } = req.body;
+  if (!Array.isArray(registros) || registros.length === 0)
+    return res.status(400).json({ error: 'Sin registros' });
+  const ins = db.prepare('INSERT INTO rrhh_registros (fecha,empleado_id,proyecto_id,categoria_id,hora_inicio,hora_fin,horas,modulo,descripcion) VALUES (?,?,?,?,?,?,?,?,?)');
+  let insertados = 0;
+  db.transaction(() => {
+    for (const r of registros) {
+      ins.run(r.fecha, u.rrhh_empleado_id, r.proyecto_id || null, r.categoria_id || null,
+              r.hora_inicio || null, r.hora_fin || null, r.horas, r.modulo || '', r.descripcion || '');
+      insertados++;
+    }
+  })();
+  res.json({ ok: true, insertados });
 });
 
 module.exports = router;

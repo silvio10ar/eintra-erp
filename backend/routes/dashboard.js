@@ -61,6 +61,23 @@ router.get('/resumen', verificarToken, (req, res) => {
     "SELECT id,numero,fecha,proveedor_nombre,estado FROM ordenes_compra WHERE estado IN ('Emitida','Parcial') ORDER BY fecha ASC LIMIT 6"
   ).all();
 
+  // ── Fichadas del día ───────────────────────────────────────────────────────
+  let fichadas_hoy = [];
+  try {
+    fichadas_hoy = db.prepare(`
+      SELECT
+        COALESCE(e.nombre, a.empleado_nombre, a.empleado_ext) AS nombre,
+        MIN(a.hora)        AS hora_entrada,
+        MAX(a.tipo_acceso) AS tipo_acceso,
+        e.horario_entrada  AS horario_entrada
+      FROM rrhh_asistencia a
+      LEFT JOIN rrhh_empleados e ON e.id = a.empleado_id
+      WHERE a.fecha = ? AND a.empleado_ext != ''
+      GROUP BY COALESCE(CAST(a.empleado_id AS TEXT), a.empleado_ext)
+      ORDER BY MIN(a.hora)
+    `).all(hoy);
+  } catch (_) {}
+
   res.json({
     stock:     { alertas: alertasStock, total: totalProductos },
     compras:   { abiertas: ocAbiertas, mes: ocMes },
@@ -69,6 +86,7 @@ router.get('/resumen', verificarToken, (req, res) => {
     produccion:{ abiertas: otAbiertas, urgentes: otUrgentes, vencidas: otVencidas },
     finanzas:  { ingresos_mes: finRow.ingresos_mes, egresos_mes: finRow.egresos_mes, saldo_total: saldoTotal },
     alertas:   { ots_urgentes, stock_bajo, oc_pendientes },
+    fichadas_hoy,
   });
 });
 
