@@ -49,9 +49,20 @@
           "pos_hasta": 5
         },
         {
-          "pregunta_id": "soldar_p6_7",
+          "pregunta_id": "soldar_p6_7_bridas",
           "pos_desde": 6,
-          "pos_hasta": 7
+          "pos_hasta": 7,
+          "si": {
+            "pregunta_id": "soldar_p2_3",
+            "en": [
+              "70",
+              "71",
+              "72",
+              "73",
+              "74",
+              "75"
+            ]
+          }
         },
         {
           "pregunta_id": "soldar_libre_8_10",
@@ -135,7 +146,7 @@
           "pos_hasta": 3
         },
         {
-          "pregunta_id": "buloneria_p4_5",
+          "pregunta_id": "buloneria_p4_5_letra_codigo",
           "pos_desde": 4,
           "pos_hasta": 5
         },
@@ -216,7 +227,7 @@
           "pos_hasta": 3
         },
         {
-          "pregunta_id": "pasarelas_p4_4",
+          "pregunta_id": "pasarelas_p4_4_mano_punto",
           "pos_desde": 4,
           "pos_hasta": 4
         },
@@ -253,159 +264,336 @@
           "pos_hasta": 5
         },
         {
-          "pregunta_id": "mat_electrico_p6_7",
+          "pregunta_id": "mat_electrico_p6_7_pulsadores",
           "pos_desde": 6,
-          "pos_hasta": 7
+          "pos_hasta": 7,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "Q0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p6_7",
+          "pregunta_id": "mat_electrico_p6_7_sensor_de_temp",
           "pos_desde": 6,
-          "pos_hasta": 7
+          "pos_hasta": 7,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "50"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p6_6",
-          "pos_desde": 6,
-          "pos_hasta": 6
-        },
-        {
-          "pregunta_id": "mat_electrico_p6_6",
-          "pos_desde": 6,
-          "pos_hasta": 6
-        },
-        {
-          "pregunta_id": "mat_electrico_p6_6",
-          "pos_desde": 6,
-          "pos_hasta": 6
-        },
-        {
-          "pregunta_id": "mat_electrico_p6_6",
+          "pregunta_id": "mat_electrico_p6_6_indicador_led",
           "pos_desde": 6,
           "pos_hasta": 6
         },
         {
-          "pregunta_id": "mat_electrico_p6_6",
+          "pregunta_id": "mat_electrico_p6_6_medidor_ph_y_conductivida",
           "pos_desde": 6,
-          "pos_hasta": 6
+          "pos_hasta": 6,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "X0",
+              "X1"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p6_6",
+          "pregunta_id": "mat_electrico_p6_6_termica_disyuntor_y_llave",
           "pos_desde": 6,
-          "pos_hasta": 6
+          "pos_hasta": 6,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "T0",
+              "D0",
+              "N0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p6_6",
+          "pregunta_id": "mat_electrico_p6_6_contactor",
           "pos_desde": 6,
-          "pos_hasta": 6
+          "pos_hasta": 6,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "00"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p6_10",
+          "pregunta_id": "mat_electrico_p6_6_modulo_p_selectora",
           "pos_desde": 6,
-          "pos_hasta": 10
+          "pos_hasta": 6,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "M0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p6_6",
+          "pregunta_id": "mat_electrico_p6_6_cajas_de_metal",
           "pos_desde": 6,
-          "pos_hasta": 6
+          "pos_hasta": 6,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "C0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p6_6",
+          "pregunta_id": "mat_electrico_p6_6_transformadores",
           "pos_desde": 6,
-          "pos_hasta": 6
+          "pos_hasta": 6,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "H0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p7_7",
+          "pregunta_id": "mat_electrico_p6_10_boya_de_nivel",
+          "pos_desde": 6,
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "40"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "mat_electrico_p6_6_sensor_de_nivel",
+          "pos_desde": 6,
+          "pos_hasta": 6,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "60"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "mat_electrico_p7_7_conector_metal",
           "pos_desde": 7,
-          "pos_hasta": 7
+          "pos_hasta": 7,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "94",
+              "95",
+              "96"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p7_7",
+          "pregunta_id": "mat_electrico_p7_7_prensacable",
           "pos_desde": 7,
-          "pos_hasta": 7
+          "pos_hasta": 7,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "C3",
+              "P0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p7_7",
+          "pregunta_id": "mat_electrico_p7_7_sensor_de_nivel",
           "pos_desde": 7,
-          "pos_hasta": 7
+          "pos_hasta": 7,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "60"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p8_10",
+          "pregunta_id": "mat_electrico_p8_10_sensor_de_temp",
           "pos_desde": 8,
-          "pos_hasta": 10
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "50"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p8_8",
+          "pregunta_id": "mat_electrico_p8_8_llave_selectora",
           "pos_desde": 8,
-          "pos_hasta": 8
+          "pos_hasta": 8,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "S0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p8_8",
+          "pregunta_id": "mat_electrico_p8_8_gabinete",
           "pos_desde": 8,
-          "pos_hasta": 8
+          "pos_hasta": 8,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "A0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p8_8",
+          "pregunta_id": "mat_electrico_p8_8_cajas_de_conexion",
           "pos_desde": 8,
-          "pos_hasta": 8
+          "pos_hasta": 8,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "U0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p8_8",
+          "pregunta_id": "mat_electrico_p8_8_bornes",
           "pos_desde": 8,
-          "pos_hasta": 8
+          "pos_hasta": 8,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "B0",
+              "B1"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p8_8",
+          "pregunta_id": "mat_electrico_p8_8_sensor_de_nivel",
           "pos_desde": 8,
-          "pos_hasta": 8
+          "pos_hasta": 8,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "60"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p9_9",
+          "pregunta_id": "mat_electrico_p9_9_transformador",
           "pos_desde": 9,
-          "pos_hasta": 9
+          "pos_hasta": 9,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "H0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p9_9",
+          "pregunta_id": "mat_electrico_p9_9_llave_selectora",
           "pos_desde": 9,
-          "pos_hasta": 9
+          "pos_hasta": 9,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "S0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p9_9",
+          "pregunta_id": "mat_electrico_p9_9_gabinete",
           "pos_desde": 9,
-          "pos_hasta": 9
+          "pos_hasta": 9,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "A0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p9_9",
+          "pregunta_id": "mat_electrico_p9_9_cajas_de_conexion",
           "pos_desde": 9,
-          "pos_hasta": 9
+          "pos_hasta": 9,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "U0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p9_9",
+          "pregunta_id": "mat_electrico_p9_9_resistencias",
           "pos_desde": 9,
-          "pos_hasta": 9
+          "pos_hasta": 9,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "J0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p9_9",
+          "pregunta_id": "mat_electrico_p9_9_sensor_de_nivel",
           "pos_desde": 9,
-          "pos_hasta": 9
+          "pos_hasta": 9,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "60"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p10_10",
+          "pregunta_id": "mat_electrico_p10_10_llave_selectora",
           "pos_desde": 10,
-          "pos_hasta": 10
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "S0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p10_10",
+          "pregunta_id": "mat_electrico_p10_10_gabinete",
           "pos_desde": 10,
-          "pos_hasta": 10
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "A0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p10_10",
+          "pregunta_id": "mat_electrico_p10_10_cajas_de_conexion",
           "pos_desde": 10,
-          "pos_hasta": 10
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "U0"
+            ]
+          }
         },
         {
-          "pregunta_id": "mat_electrico_p10_10",
+          "pregunta_id": "mat_electrico_p10_10_resistencia_y_transformad",
           "pos_desde": 10,
-          "pos_hasta": 10
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "J0",
+              "H0"
+            ]
+          }
         }
       ]
     },
@@ -543,7 +731,7 @@
           "pos_hasta": 3
         },
         {
-          "pregunta_id": "estructura_p3_3",
+          "pregunta_id": "estructura_p3_3_tipo_de_aforador",
           "pos_desde": 3,
           "pos_hasta": 3
         },
@@ -553,16 +741,6 @@
           "pos_hasta": 4
         },
         {
-          "pregunta_id": "estructura_p4_4",
-          "pos_desde": 4,
-          "pos_hasta": 4
-        },
-        {
-          "pregunta_id": "estructura_p5_5",
-          "pos_desde": 5,
-          "pos_hasta": 5
-        },
-        {
           "pregunta_id": "estructura_p5_5",
           "pos_desde": 5,
           "pos_hasta": 5
@@ -573,19 +751,18 @@
           "pos_hasta": 6
         },
         {
-          "pregunta_id": "estructura_p6_6",
-          "pos_desde": 6,
-          "pos_hasta": 6
-        },
-        {
-          "pregunta_id": "estructura_p6_6",
-          "pos_desde": 6,
-          "pos_hasta": 6
-        },
-        {
-          "pregunta_id": "estructura_p7_10",
+          "pregunta_id": "estructura_p7_10_chapas",
           "pos_desde": 7,
-          "pos_hasta": 10
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "estructura_p2_3",
+            "en": [
+              "1",
+              "A",
+              "B",
+              "F"
+            ]
+          }
         },
         {
           "pregunta_id": "estructura_p7_10",
@@ -603,12 +780,7 @@
           "pos_hasta": 10
         },
         {
-          "pregunta_id": "estructura_p10_10",
-          "pos_desde": 10,
-          "pos_hasta": 10
-        },
-        {
-          "pregunta_id": "estructura_p10_10",
+          "pregunta_id": "estructura_p10_10_peso_por_metro",
           "pos_desde": 10,
           "pos_hasta": 10
         }
@@ -630,14 +802,9 @@
           "pos_hasta": 3
         },
         {
-          "pregunta_id": "filtros_y_membranas_p3_3",
+          "pregunta_id": "filtros_y_membranas_p3_3_filtros_sopladores_o_comp",
           "pos_desde": 3,
           "pos_hasta": 3
-        },
-        {
-          "pregunta_id": "filtros_y_membranas_p4_4",
-          "pos_desde": 4,
-          "pos_hasta": 4
         },
         {
           "pregunta_id": "filtros_y_membranas_p4_4",
@@ -655,24 +822,43 @@
           "pos_hasta": 7
         },
         {
-          "pregunta_id": "filtros_y_membranas_p8_10",
+          "pregunta_id": "filtros_y_membranas_p8_10_cartucho_filtrante",
+          "pos_desde": 8,
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "filtros_y_membranas_p2_3",
+            "en": [
+              "1"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "filtros_y_membranas_p8_10_carcasa_filtrante",
           "pos_desde": 8,
           "pos_hasta": 10
         },
         {
-          "pregunta_id": "filtros_y_membranas_p8_10",
+          "pregunta_id": "filtros_y_membranas_p8_8_tubo_porta_membrana",
           "pos_desde": 8,
-          "pos_hasta": 10
+          "pos_hasta": 8,
+          "si": {
+            "pregunta_id": "filtros_y_membranas_p2_3",
+            "en": [
+              "0"
+            ]
+          }
         },
         {
-          "pregunta_id": "filtros_y_membranas_p8_8",
-          "pos_desde": 8,
-          "pos_hasta": 8
-        },
-        {
-          "pregunta_id": "filtros_y_membranas_p9_10",
+          "pregunta_id": "filtros_y_membranas_p9_10_tubo_portamembrana",
           "pos_desde": 9,
-          "pos_hasta": 10
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "filtros_y_membranas_p2_3",
+            "en": [
+              "0",
+              "3"
+            ]
+          }
         }
       ]
     },
@@ -783,11 +969,6 @@
           "pos_hasta": 4
         },
         {
-          "pregunta_id": "accesorios_mecanicos_p4_4",
-          "pos_desde": 4,
-          "pos_hasta": 4
-        },
-        {
           "pregunta_id": "accesorios_mecanicos_p4_6",
           "pos_desde": 4,
           "pos_hasta": 6
@@ -866,7 +1047,7 @@
   ],
   "preguntas": {
     "galvanizado_p2_3": {
-      "label": "ACCESORIOS (pos. segundo y tercer digito)",
+      "label": "ACCESORIOS",
       "tipo": "opcion",
       "opciones": [
         {
@@ -1142,7 +1323,7 @@
       ]
     },
     "galvanizado_p5_5": {
-      "label": "ANGULO/RADIO/LONGITUD (pos. quinto digito)",
+      "label": "ANGULO/RADIO/LONGITUD",
       "tipo": "opcion",
       "opciones": [
         {
@@ -1165,7 +1346,7 @@
       "longitud": 5
     },
     "soldar_p2_3": {
-      "label": "ACCESORIOS (pos. segundo y tercer digito)",
+      "label": "ACCESORIOS",
       "tipo": "opcion",
       "opciones": [
         {
@@ -1441,7 +1622,7 @@
       ]
     },
     "soldar_p5_5": {
-      "label": "ANGULO/RADIO/LONGITUD (pos. quinto digito)",
+      "label": "ANGULO/RADIO/LONGITUD",
       "tipo": "opcion",
       "opciones": [
         {
@@ -1458,8 +1639,8 @@
         }
       ]
     },
-    "soldar_p6_7": {
-      "label": "SERIE DE LAS BRIDAS (pos. sexto y septimo digito)",
+    "soldar_p6_7_bridas": {
+      "label": "SERIE DE LAS BRIDAS (bridas)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -1478,7 +1659,7 @@
       "longitud": 3
     },
     "epoxi_p2_3": {
-      "label": "ACCESORIOS (pos. segundo y tercer digito)",
+      "label": "ACCESORIOS",
       "tipo": "opcion",
       "opciones": [
         {
@@ -1754,7 +1935,7 @@
       ]
     },
     "epoxi_p5_5": {
-      "label": "ANGULO/RADIO/LONGITUD (pos. quinto digito)",
+      "label": "ANGULO/RADIO/LONGITUD",
       "tipo": "opcion",
       "opciones": [
         {
@@ -1777,7 +1958,7 @@
       "longitud": 5
     },
     "valvulas_p2_2": {
-      "label": "VALVULAS (pos. segundo digito tipo de)",
+      "label": "VALVULAS",
       "tipo": "opcion",
       "opciones": [
         {
@@ -1995,7 +2176,7 @@
       ]
     },
     "valvulas_p5_5": {
-      "label": "TENSION (pos. quinto digito)",
+      "label": "TENSION",
       "tipo": "opcion",
       "opciones": [
         {
@@ -2038,7 +2219,7 @@
       "longitud": 5
     },
     "buloneria_p2_2": {
-      "label": "PIEZA (pos. segundo digito)",
+      "label": "PIEZA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -2100,7 +2281,7 @@
       ]
     },
     "buloneria_p3_3": {
-      "label": "MATERIAL (pos. tercer digito)",
+      "label": "MATERIAL",
       "tipo": "opcion",
       "opciones": [
         {
@@ -2145,8 +2326,8 @@
         }
       ]
     },
-    "buloneria_p4_5": {
-      "label": "GRAL (pos. cuarto y quinto digito)",
+    "buloneria_p4_5_letra_codigo": {
+      "label": "GRAL (letra codigo)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -2265,7 +2446,7 @@
       "longitud": 5
     },
     "pvc_p2_3": {
-      "label": "ACCESORIOS (pos. segundo y tercer digito)",
+      "label": "ACCESORIOS",
       "tipo": "opcion",
       "opciones": [
         {
@@ -2541,7 +2722,7 @@
       ]
     },
     "pvc_p5_5": {
-      "label": "ANGULO/RADIO/LONGITUD (pos. quinto digito)",
+      "label": "ANGULO/RADIO/LONGITUD",
       "tipo": "opcion",
       "opciones": [
         {
@@ -2564,7 +2745,7 @@
       "longitud": 5
     },
     "polipropileno_p2_3": {
-      "label": "ACCESORIOS (pos. segundo y tercer digito)",
+      "label": "ACCESORIOS",
       "tipo": "opcion",
       "opciones": [
         {
@@ -2840,7 +3021,7 @@
       ]
     },
     "polipropileno_p5_5": {
-      "label": "ANGULO/RADIO/LONGITUD (pos. quinto digito)",
+      "label": "ANGULO/RADIO/LONGITUD",
       "tipo": "opcion",
       "opciones": [
         {
@@ -2922,7 +3103,7 @@
       ]
     },
     "pasarelas_p2_3": {
-      "label": "COMPLEMENTO (pos. segundo y tercer digito)",
+      "label": "COMPLEMENTO",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3019,8 +3200,8 @@
         }
       ]
     },
-    "pasarelas_p4_4": {
-      "label": "TERMINADO (pos. cuarto digito)",
+    "pasarelas_p4_4_mano_punto": {
+      "label": "TERMINADO (mano/punto/)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3066,7 +3247,7 @@
       ]
     },
     "pasarelas_p5_5": {
-      "label": "PROVEEDOR (pos. quinto digito)",
+      "label": "PROVEEDOR",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3080,7 +3261,7 @@
       ]
     },
     "pasarelas_p10_10": {
-      "label": "ANCHO DE PASARELA/ALTO DE BARANDA/ANGULO PATA (pos. decimo digito)",
+      "label": "ANCHO DE PASARELA/ALTO DE BARANDA/ANGULO PATA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3127,7 +3308,7 @@
       "longitud": 4
     },
     "mat_electrico_p2_3": {
-      "label": "TIPO DE MATERIAL (pos. segundo y tercer digito)",
+      "label": "TIPO DE MATERIAL",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3658,8 +3839,8 @@
         }
       ]
     },
-    "mat_electrico_p6_7": {
-      "label": "TIPO DE PULSADOR (pos. sexto y septimo digito)",
+    "mat_electrico_p6_7_pulsadores": {
+      "label": "TIPO DE PULSADOR (pulsadores)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3720,8 +3901,26 @@
         }
       ]
     },
-    "mat_electrico_p8_10": {
-      "label": "RANGO (pos. octavo a decimo digito)",
+    "mat_electrico_p6_7_sensor_de_temp": {
+      "label": "TIPO (sensor de temp.)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "01",
+          "descripcion": "DE CONTACTO"
+        },
+        {
+          "codigo": "SALIDAS ANAG  POR CORRIENTE",
+          "descripcion": "CANT SALIDAS ANAG POR TENSION"
+        },
+        {
+          "codigo": "1",
+          "descripcion": ""
+        }
+      ]
+    },
+    "mat_electrico_p8_10_sensor_de_temp": {
+      "label": "RANGO (sensor de temp.)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3730,8 +3929,8 @@
         }
       ]
     },
-    "mat_electrico_p6_6": {
-      "label": "TIPO (pos. sexto digito)",
+    "mat_electrico_p6_6_indicador_led": {
+      "label": "TIPO (indicador led)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3744,8 +3943,140 @@
         }
       ]
     },
-    "mat_electrico_p6_10": {
-      "label": "MEDIDA EN MM (pos. sexto a decimo digito)",
+    "mat_electrico_p6_6_medidor_ph_y_conductivida": {
+      "label": "TENSION (medidor ph y conductividad)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "A",
+          "descripcion": "12 VCA"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "12 VCC"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "24 VCA"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "24 VCC"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "110 VCA"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "220 VCA"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "380 VCA"
+        }
+      ]
+    },
+    "mat_electrico_p6_6_termica_disyuntor_y_llave": {
+      "label": "CANTIDAD DE POLOS (termica, disyuntor y llave termomagnetica)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "UNIPOLAR"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "BIPOLAR"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "TRIPOLAR"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "TETRAPOLAR"
+        }
+      ]
+    },
+    "mat_electrico_p6_6_contactor": {
+      "label": "CONTACTO AUXILIAR (contactor)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "NORMAL ABIERTO - NA"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "NORMAL CERRADO - NC"
+        }
+      ]
+    },
+    "mat_electrico_p6_6_modulo_p_selectora": {
+      "label": "POSICIONES (modulo p/ selectora)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": "NORMAL CERRADO - NC"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "NORMAL ABIERTO - NA"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "2 NORMAL CERRADO - 2NC"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "2 NORMAL ABIERTO - 2NA"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "1NA+1NC"
+        }
+      ]
+    },
+    "mat_electrico_p6_6_cajas_de_metal": {
+      "label": "FORMA/TIPO (cajas de metal)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "X",
+          "descripcion": "TIPO X"
+        },
+        {
+          "codigo": "L",
+          "descripcion": "TIPO L"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "TIPO B"
+        }
+      ]
+    },
+    "mat_electrico_p6_6_transformadores": {
+      "label": "TENSION ENTRADA (transformadores)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "220V"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "380V"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "380T"
+        }
+      ]
+    },
+    "mat_electrico_p6_10_boya_de_nivel": {
+      "label": "MEDIDA EN MM (boya de nivel)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3758,8 +4089,8 @@
         }
       ]
     },
-    "mat_electrico_p7_7": {
-      "label": "ANGULO (pos. septimo digito)",
+    "mat_electrico_p7_7_conector_metal": {
+      "label": "ANGULO (conector metal)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3772,8 +4103,22 @@
         }
       ]
     },
-    "mat_electrico_p9_9": {
-      "label": "TENSION (pos. septimo a noveno digito)",
+    "mat_electrico_p7_7_prensacable": {
+      "label": "TIPO (prensacable)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "E",
+          "descripcion": "ELECTRICO"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "GAS"
+        }
+      ]
+    },
+    "mat_electrico_p9_9_transformador": {
+      "label": "TENSION (transformador)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3798,8 +4143,8 @@
         }
       ]
     },
-    "mat_electrico_p8_8": {
-      "label": "GRADOS (pos. octavo digito)",
+    "mat_electrico_p8_8_llave_selectora": {
+      "label": "GRADOS (llave selectora)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3812,8 +4157,198 @@
         }
       ]
     },
-    "mat_electrico_p10_10": {
-      "label": "RETENCION (pos. decimo digito)",
+    "mat_electrico_p8_8_gabinete": {
+      "label": "ALTO (gabinete)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "2",
+          "descripcion": "200"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "300"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "400"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "500"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "600"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "900"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "1200"
+        }
+      ]
+    },
+    "mat_electrico_p8_8_cajas_de_conexion": {
+      "label": "ALTO (cajas de conexion)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "A",
+          "descripcion": "70"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "50"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "100"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "130"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "150"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "200"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "210"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "250"
+        }
+      ]
+    },
+    "mat_electrico_p8_8_bornes": {
+      "label": "TIPO (bornes)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "UKM"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "BPN"
+        }
+      ]
+    },
+    "mat_electrico_p9_9_llave_selectora": {
+      "label": "POSICION (llave selectora)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "2",
+          "descripcion": "2 POSICIONES"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "3 POSICIONES"
+        }
+      ]
+    },
+    "mat_electrico_p9_9_gabinete": {
+      "label": "ANCHO (gabinete)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "3",
+          "descripcion": "300"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "400"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "500"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "600"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "900"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "1200"
+        }
+      ]
+    },
+    "mat_electrico_p9_9_cajas_de_conexion": {
+      "label": "ANCHO (cajas de conexión)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "A",
+          "descripcion": "70"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "50"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "100"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "130"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "150"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "200"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "210"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "250"
+        },
+        {
+          "codigo": "I",
+          "descripcion": "300"
+        }
+      ]
+    },
+    "mat_electrico_p9_9_resistencias": {
+      "label": "CANTIDAD RESISTENCIAS (resistencias)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "1 RESISTENCIA"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "2 RESISTENCIAS"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "3 RESISTENCIAS"
+        }
+      ]
+    },
+    "mat_electrico_p10_10_llave_selectora": {
+      "label": "RETENCION (llave selectora)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3834,8 +4369,222 @@
         }
       ]
     },
+    "mat_electrico_p10_10_gabinete": {
+      "label": "PROFUNDIDAD (gabinete)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "A",
+          "descripcion": "160"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "210"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "225"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "260"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "450"
+        }
+      ]
+    },
+    "mat_electrico_p10_10_cajas_de_conexion": {
+      "label": "PROFUNDIDAD (cajas de conexion)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "A",
+          "descripcion": "70"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "50"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "100"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "130"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "150"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "200"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "210"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "250"
+        }
+      ]
+    },
+    "mat_electrico_p10_10_resistencia_y_transformad": {
+      "label": "POTENCIA (resistencia y transformador)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "25/30 W"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "50 W"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "75 W"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "100 W"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "150 W"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "200 W"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "250 W"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "300 W"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "400 W"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "500 W"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "750 W"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "1000 W"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "1500 W"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "3000 W (3kW)"
+        }
+      ]
+    },
+    "mat_electrico_p6_6_sensor_de_nivel": {
+      "label": "TECNOLOGIA (sensor de nivel)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "1",
+          "descripcion": "RADAR"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ELECTROMAGNETICA"
+        },
+        {
+          "codigo": "3",
+          "descripcion": ""
+        }
+      ]
+    },
+    "mat_electrico_p7_7_sensor_de_nivel": {
+      "label": "CANT SALIDAS DIGITALES (sensor de nivel)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "1",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2",
+          "descripcion": ""
+        },
+        {
+          "codigo": "3",
+          "descripcion": ""
+        }
+      ]
+    },
+    "mat_electrico_p8_8_sensor_de_nivel": {
+      "label": "CANT SALIDAS ANALOGICAS POR CORRIENTE (sensor de nivel)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "1",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2",
+          "descripcion": ""
+        },
+        {
+          "codigo": "3",
+          "descripcion": ""
+        }
+      ]
+    },
+    "mat_electrico_p9_9_sensor_de_nivel": {
+      "label": "CANT SALIDAS ANALOGICAS POR TENSION (sensor de nivel)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "1",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2",
+          "descripcion": ""
+        },
+        {
+          "codigo": "3",
+          "descripcion": ""
+        }
+      ]
+    },
     "bombas_p2_2": {
-      "label": "TIPO DE BOMBA (pos. segundo digito)",
+      "label": "TIPO DE BOMBA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3885,7 +4634,7 @@
       ]
     },
     "bombas_p3_3": {
-      "label": "CLASE DE BOMBA (pos. tercer digito)",
+      "label": "CLASE DE BOMBA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3915,7 +4664,7 @@
       ]
     },
     "bombas_p4_4": {
-      "label": "MARCA (pos. cuarto digito)",
+      "label": "MARCA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3953,7 +4702,7 @@
       ]
     },
     "bombas_p5_5": {
-      "label": "TIPO DE CONEXIÓN (pos. quinto digito)",
+      "label": "TIPO DE CONEXIÓN",
       "tipo": "opcion",
       "opciones": [
         {
@@ -3979,7 +4728,7 @@
       ]
     },
     "bombas_p6_7": {
-      "label": "POTENCIA (pos. sexto y septimo digito)",
+      "label": "POTENCIA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4017,7 +4766,7 @@
       ]
     },
     "bombas_p8_10": {
-      "label": "CAUDAL (pos. octavo, noveno y decimo digito)",
+      "label": "CAUDAL",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4111,7 +4860,7 @@
       ]
     },
     "bombas_p6_10": {
-      "label": "MEDIDA DE AUTOACOPLAMIENTO (pos. sexto a decimo digito)",
+      "label": "MEDIDA DE AUTOACOPLAMIENTO",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4121,7 +4870,7 @@
       ]
     },
     "equip_electromecani_p2_2": {
-      "label": "ACCESORIO (pos. segundo digito)",
+      "label": "ACCESORIO",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4167,7 +4916,7 @@
       ]
     },
     "equip_electromecani_p3_3": {
-      "label": "FABRICANTE (pos. tercer digito)",
+      "label": "FABRICANTE",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4277,7 +5026,7 @@
       ]
     },
     "equip_electromecani_p4_5": {
-      "label": "POTENCIA (pos. cuarto y quinto digito)",
+      "label": "POTENCIA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4355,7 +5104,7 @@
       ]
     },
     "equip_electromecani_p6_6": {
-      "label": "TIPO/MONTAJE (pos. sexto digito)",
+      "label": "TIPO/MONTAJE",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4401,7 +5150,7 @@
       ]
     },
     "equip_electromecani_p7_10": {
-      "label": "MEDIDA / TENSION / RELACION (pos. septimo al decimo digito)",
+      "label": "MEDIDA / TENSION / RELACION",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4415,7 +5164,7 @@
       ]
     },
     "mangueras_p2_2": {
-      "label": "MATERIAL (pos. segundo digito)",
+      "label": "MATERIAL",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4445,7 +5194,7 @@
       ]
     },
     "mangueras_p3_3": {
-      "label": "TERMINAL (pos. tercer digito)",
+      "label": "TERMINAL",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4464,7 +5213,7 @@
       "longitud": 7
     },
     "difusores_p2_2": {
-      "label": "ACCESORIO (pos. segundo digito)",
+      "label": "ACCESORIO",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4482,7 +5231,7 @@
       ]
     },
     "difusores_p3_3": {
-      "label": "FABRICANTE DIFUSOR (pos. tercer digito)",
+      "label": "FABRICANTE DIFUSOR",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4509,7 +5258,7 @@
       "longitud": 7
     },
     "estructura_p2_2": {
-      "label": "COMPONENTE (pos. segundo digito)",
+      "label": "COMPONENTE",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4599,7 +5348,7 @@
       ]
     },
     "estructura_p3_3": {
-      "label": "MATERIAL (pos. tercer digito)",
+      "label": "MATERIAL",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4637,7 +5386,7 @@
       ]
     },
     "estructura_p4_4": {
-      "label": "FABRICANTE (pos. cuarto digito aislacion)",
+      "label": "FABRICANTE",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4655,7 +5404,7 @@
       ]
     },
     "estructura_p5_5": {
-      "label": "ESPESOR (pos. quinto digito)",
+      "label": "ESPESOR",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4725,7 +5474,7 @@
       ]
     },
     "estructura_p6_6": {
-      "label": "LAMINAS (pos. sexto digito asilacion)",
+      "label": "LAMINAS",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4750,8 +5499,8 @@
         }
       ]
     },
-    "estructura_p7_10": {
-      "label": "LARGO (pos. septimo a decimo digito)",
+    "estructura_p7_10_chapas": {
+      "label": "LARGO (chapas)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4780,8 +5529,22 @@
         }
       ]
     },
+    "estructura_p7_10": {
+      "label": "LARGO DE MARCO DE TAPAS",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "2700",
+          "descripcion": ""
+        },
+        {
+          "codigo": "850",
+          "descripcion": ""
+        }
+      ]
+    },
     "estructura_p9_10": {
-      "label": "LARGO PERFILES ANGULOS Y UPN (pos. noveno y decimo digito)",
+      "label": "LARGO PERFILES ANGULOS Y UPN",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4799,7 +5562,7 @@
       ]
     },
     "estructura_p10_10": {
-      "label": "LARGO DE CHAPA (pos. decimo digito chapas plegadas)",
+      "label": "LARGO DE CHAPA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4808,8 +5571,32 @@
         }
       ]
     },
+    "estructura_p10_10_peso_por_metro": {
+      "label": "CHAPA DESPLEGADA (peso por metro)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "10"
+        }
+      ]
+    },
+    "estructura_p3_3_tipo_de_aforador": {
+      "label": "CAJA DE AFORO (tipo de aforador)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "V",
+          "descripcion": "EN V"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "AISLACION"
+        }
+      ]
+    },
     "filtros_y_membranas_p2_2": {
-      "label": "ESPECIFICACION (pos. segundo digito)",
+      "label": "ESPECIFICACION",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4843,7 +5630,7 @@
       ]
     },
     "filtros_y_membranas_p3_3": {
-      "label": "MEDIDA Ø (pos. tercer digito)",
+      "label": "MEDIDA Ø",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4869,7 +5656,7 @@
       ]
     },
     "filtros_y_membranas_p4_4": {
-      "label": "MEDIDA LARGO CARTUCHOS Y CARCASAS FILTRANTES (pos. cuarto digito)",
+      "label": "MEDIDA LARGO CARTUCHOS Y CARCASAS FILTRANTES",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4895,7 +5682,7 @@
       ]
     },
     "filtros_y_membranas_p5_5": {
-      "label": "MATERIAL (pos. quinto digito)",
+      "label": "MATERIAL",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4940,8 +5727,8 @@
         }
       ]
     },
-    "filtros_y_membranas_p8_10": {
-      "label": "MICRONAJE (pos. octavo, noveno y decimo digito)",
+    "filtros_y_membranas_p8_10_cartucho_filtrante": {
+      "label": "MICRONAJE (cartucho filtrante)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4970,8 +5757,18 @@
         }
       ]
     },
-    "filtros_y_membranas_p8_8": {
-      "label": "CANT MEMBRANAS (pos. octavo digito)",
+    "filtros_y_membranas_p8_10_carcasa_filtrante": {
+      "label": "MEDIDA CONEXIÓN (carcasa filtrante)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "112",
+          "descripcion": "1 1/2\""
+        }
+      ]
+    },
+    "filtros_y_membranas_p8_8_tubo_porta_membrana": {
+      "label": "CANT MEMBRANAS (tubo porta membrana)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4984,8 +5781,8 @@
         }
       ]
     },
-    "filtros_y_membranas_p9_10": {
-      "label": "LARGO MEMBRANA (pos. noveno y decimo digito)",
+    "filtros_y_membranas_p9_10_tubo_portamembrana": {
+      "label": "LARGO MEMBRANA (tubo portamembrana)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4998,13 +5795,31 @@
         }
       ]
     },
+    "filtros_y_membranas_p3_3_filtros_sopladores_o_comp": {
+      "label": "FABRICANTE (filtros sopladores o compresor)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "D",
+          "descripcion": "DOSIVAC"
+        },
+        {
+          "codigo": "R",
+          "descripcion": "REPICKY"
+        },
+        {
+          "codigo": "K",
+          "descripcion": "KAESER"
+        }
+      ]
+    },
     "filtros_y_membranas_libre_6_7": {
       "label": "Medida / código libre (2 carácteres)",
       "tipo": "libre",
       "longitud": 2
     },
     "tanques_p2_2": {
-      "label": "FORMA (pos. segundo digito)",
+      "label": "FORMA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5038,7 +5853,7 @@
       ]
     },
     "tanques_p3_3": {
-      "label": "TIPO DE TAPA (pos. tercer digito)",
+      "label": "TIPO DE TAPA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5056,7 +5871,7 @@
       ]
     },
     "tanques_p4_4": {
-      "label": "MATERIAL (pos. cuarto digito)",
+      "label": "MATERIAL",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5074,7 +5889,7 @@
       ]
     },
     "tanques_p5_5": {
-      "label": "FABRICANTE (pos. quinto digito)",
+      "label": "FABRICANTE",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5230,7 +6045,7 @@
       "longitud": 6
     },
     "termofusion_p2_3": {
-      "label": "ACCESORIOS (pos. segundo y tercer digito)",
+      "label": "ACCESORIOS",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5506,7 +6321,7 @@
       ]
     },
     "termofusion_p5_5": {
-      "label": "ANGULO/RADIO/LONGITUD (pos. quinto digito)",
+      "label": "ANGULO/RADIO/LONGITUD",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5529,7 +6344,7 @@
       "longitud": 5
     },
     "accesorios_mecanicos_p2_2": {
-      "label": "ACCESORIOS (pos. segundo digito)",
+      "label": "ACCESORIOS",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5571,7 +6386,7 @@
       ]
     },
     "accesorios_mecanicos_p3_3": {
-      "label": "FABRICANTE (pos. tercer digito)",
+      "label": "FABRICANTE",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5589,7 +6404,7 @@
       ]
     },
     "accesorios_mecanicos_p4_4": {
-      "label": "TIPO (de cada uno) (pos. cuarto digito cadena y acoplamiento elastico)",
+      "label": "TIPO (de cada uno)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5611,7 +6426,7 @@
       ]
     },
     "accesorios_mecanicos_p3_5": {
-      "label": "ØCAÑO DEL EJE (pos. tercer a quinto digito)",
+      "label": "ØCAÑO DEL EJE",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5633,7 +6448,7 @@
       ]
     },
     "accesorios_mecanicos_p5_8": {
-      "label": "LARGO DE LA PALETA (en mm) (pos. quinto a octavo digito)",
+      "label": "LARGO DE LA PALETA (en mm)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5643,7 +6458,7 @@
       ]
     },
     "accesorios_mecanicos_p9_9": {
-      "label": "ALTO DE LA PALETA (en cm) (pos. noveno digito)",
+      "label": "ALTO DE LA PALETA (en cm)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5653,7 +6468,7 @@
       ]
     },
     "accesorios_mecanicos_p10_10": {
-      "label": "ANCHO DE LA PALETA (pos. decimo digito)",
+      "label": "ANCHO DE LA PALETA",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5671,7 +6486,7 @@
       ]
     },
     "accesorios_mecanicos_p4_6": {
-      "label": "Ø DEL EJE (pos. cuarto a sexto digito)",
+      "label": "Ø DEL EJE",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5693,7 +6508,7 @@
       ]
     },
     "accesorios_mecanicos_p7_8": {
-      "label": "ANCHO BASE (en mm) (pos. septimo y octavo digito)",
+      "label": "ANCHO BASE (en mm)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5715,7 +6530,7 @@
       ]
     },
     "accesorios_mecanicos_p9_10": {
-      "label": "LARGO BASE (en cm) (pos. noveno y decimo digito)",
+      "label": "LARGO BASE (en cm)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -5729,7 +6544,7 @@
       ]
     },
     "acero_inox_p2_3": {
-      "label": "ACCESORIOS (pos. segundo y tercer digito)",
+      "label": "ACCESORIOS",
       "tipo": "opcion",
       "opciones": [
         {
@@ -6005,7 +6820,7 @@
       ]
     },
     "acero_inox_p5_5": {
-      "label": "ANGULO/RADIO/LONGITUD (pos. quinto digito)",
+      "label": "ANGULO/RADIO/LONGITUD",
       "tipo": "opcion",
       "opciones": [
         {
@@ -6028,7 +6843,7 @@
       "longitud": 5
     },
     "materiales_poco_usuales_p3_5": {
-      "label": "COMPONENTE (pos. tercer, cuarto y quinto digito)",
+      "label": "COMPONENTE",
       "tipo": "opcion",
       "opciones": [
         {

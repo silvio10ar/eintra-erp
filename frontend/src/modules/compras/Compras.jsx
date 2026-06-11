@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
 import Form49 from './Form49'
+import { Asistente } from '../codificacion/AsistenteCore'
 
 const ESTADOS = [
   { v:'Emitida',   c:'warning' },
@@ -79,6 +80,15 @@ export default function Compras() {
   const [nroRemito, setNroRemito]   = useState('')
   const [savRec, setSavRec]         = useState(false)
 
+  /* ── Modal nuevo material ───────────────────────────────────────── */
+  const [codConfig,      setCodConfig]     = useState(null)
+  const [modalNuevoMat,  setModalNuevoMat] = useState(null)  // null | { idx }
+  const [pasoNuevoMat,   setPasoNuevoMat]  = useState('codigo')  // 'codigo' | 'datos'
+  const [codNuevoMat,    setCodNuevoMat]   = useState('')
+  const [formNuevoMat,   setFormNuevoMat]  = useState({ descripcion:'', categoria:'', unidad:'UND.', precio_costo:0, ubicacion:'', stock_minimo:0 })
+  const [savNuevoMat,    setSavNuevoMat]   = useState(false)
+  const [errNuevoMat,    setErrNuevoMat]   = useState('')
+
   /* ── Modal proveedor ────────────────────────────────────────────── */
   const [modalProv, setModalProv] = useState(null)
   const [formProv, setFormProv]   = useState(FORM_PROV)
@@ -113,6 +123,7 @@ export default function Compras() {
   useEffect(() => {
     api.get('/compras/proveedores').then(r => setProvs(r.data)).catch(() => {})
     api.get('/stock/productos').then(r => setProductos(r.data)).catch(() => {})
+    api.get('/codificacion/config').then(r => setCodConfig(r.data)).catch(() => {})
   }, [])
 
   /* ── Detalle OC ─────────────────────────────────────────────────── */
@@ -205,8 +216,11 @@ export default function Compras() {
   const buscarProductoItem = (idx, txt) => {
     setItem(idx, 'descripcion', txt)
     if (!txt) { setSugsItem({ idx: null, list: [] }); return }
-    const q = txt.toLowerCase()
-    setSugsItem({ idx, list: productos.filter(p => p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q)).slice(0,8) })
+    const words = txt.toLowerCase().split(/\s+/).filter(Boolean)
+    setSugsItem({ idx, list: productos.filter(p => {
+      const hay = (p.codigo + ' ' + p.descripcion).toLowerCase()
+      return words.every(w => hay.includes(w))
+    }).slice(0, 12) })
   }
 
   const selProductoItem = (idx, prod) => {
@@ -216,12 +230,42 @@ export default function Compras() {
     setSugsItem({ idx: null, list: [] })
   }
 
+  const abrirNuevoMat = idx => {
+    setSugsItem({ idx: null, list: [] })
+    setModalNuevoMat({ idx })
+    setPasoNuevoMat('codigo')
+    setCodNuevoMat('')
+    setFormNuevoMat({ descripcion:'', categoria:'', unidad:'UND.', precio_costo:0, ubicacion:'', stock_minimo:0 })
+    setErrNuevoMat('')
+  }
+
+  const usarCodigoNuevoMat = codigo => {
+    setCodNuevoMat(codigo)
+    setPasoNuevoMat('datos')
+  }
+
+  const guardarNuevoMat = async () => {
+    setSavNuevoMat(true); setErrNuevoMat('')
+    try {
+      const r = await api.post('/stock/productos', { codigo: codNuevoMat, ...formNuevoMat, stock_actual: 0 })
+      const nuevo = r.data
+      const lista = await api.get('/stock/productos')
+      setProductos(lista.data)
+      selProductoItem(modalNuevoMat.idx, nuevo)
+      setModalNuevoMat(null)
+    } catch(err) {
+      setErrNuevoMat(err.response?.data?.error ?? 'Error al guardar')
+    } finally {
+      setSavNuevoMat(false)
+    }
+  }
+
   const buscarProvOC = txt => {
     setFormOC(p => ({ ...p, proveedor_nombre: txt, proveedor_id: '' }))
     setProvInfoOC(null)
     if (!txt) { setSugsP([]); return }
     const q = txt.toLowerCase()
-    setSugsP(provs.filter(p => p.nombre.toLowerCase().includes(q)).slice(0,6))
+    setSugsP(provs.filter(p => p.nombre.toLowerCase().includes(q) || (p.cuit||'').includes(q)).slice(0,10))
   }
 
   /* ── Proveedor ──────────────────────────────────────────────────── */
@@ -610,132 +654,108 @@ export default function Compras() {
               <div className="modal-body">
                 {errOC && <div className="alert alert-danger py-2 small">{errOC}</div>}
 
-                {/* ── Dos paneles: Datos OC | Proveedor ───────────────── */}
-                <div className="row g-2 mb-3">
+                {/* ── Cabecera compacta en 2 filas ───────────────────── */}
+                <div className="border rounded px-3 pt-2 pb-2 mb-2" style={{background:'#f8f9fa'}}>
 
-                  {/* Panel izquierdo: Datos de la OC */}
-                  <div className="col-md-5">
-                    <div className="card h-100 border-secondary">
-                      <div className="card-header py-1 bg-dark text-white small fw-bold">Datos de la OC</div>
-                      <div className="card-body py-2 px-3">
-                        <div className="row g-2">
-                          <div className="col-6">
-                            <label className="form-label small fw-medium mb-1">Fecha *</label>
-                            <input type="date" className="form-control form-control-sm" value={formOC.fecha} required onChange={e=>setFormOC(p=>({...p,fecha:e.target.value}))}/>
-                          </div>
-                          <div className="col-4">
-                            <label className="form-label small fw-medium mb-1">Moneda</label>
-                            <select className="form-select form-select-sm" value={formOC.moneda} onChange={e=>setFormOC(p=>({...p,moneda:e.target.value}))}>
-                              <option>DÓLAR</option><option>PESOS</option><option>EURO</option>
-                            </select>
-                          </div>
-                          <div className="col-2">
-                            <label className="form-label small fw-medium mb-1">TC</label>
-                            <input type="number" className="form-control form-control-sm" value={formOC.tasa_cambio} min="0" step="any" onChange={e=>setFormOC(p=>({...p,tasa_cambio:e.target.value}))}/>
-                          </div>
-                          <div className="col-12">
-                            <label className="form-label small fw-medium mb-1">Cond. de Pago</label>
-                            <input className="form-control form-control-sm" value={formOC.condicion_pago} onChange={e=>setFormOC(p=>({...p,condicion_pago:e.target.value}))}/>
-                          </div>
-                          <div className="col-12">
-                            <label className="form-label small fw-medium mb-1">Lugar de Entrega</label>
-                            <input className="form-control form-control-sm" value={formOC.lugar_entrega} onChange={e=>setFormOC(p=>({...p,lugar_entrega:e.target.value}))}/>
-                          </div>
-                          <div className="col-6">
-                            <label className="form-label small fw-medium mb-1">Presupuesto N°</label>
-                            <input className="form-control form-control-sm" value={formOC.presupuesto_n} onChange={e=>setFormOC(p=>({...p,presupuesto_n:e.target.value}))}/>
-                          </div>
-                          <div className="col-6">
-                            <label className="form-label small fw-medium mb-1">Fecha Entrega Est.</label>
-                            <input type="date" className="form-control form-control-sm" value={formOC.fecha_entrega_est} onChange={e=>setFormOC(p=>({...p,fecha_entrega_est:e.target.value}))}/>
-                          </div>
-                          <div className="col-6">
-                            <label className="form-label small fw-medium mb-1">Estado Doc. (Form 17)</label>
-                            <select className="form-select form-select-sm" value={formOC.estado_doc} onChange={e=>setFormOC(p=>({...p,estado_doc:e.target.value}))}>
-                              {ESTADOS_DOC.map(s => <option key={s} value={s}>{s||'— Sin estado —'}</option>)}
-                            </select>
-                          </div>
-                          <div className="col-6">
-                            <label className="form-label small fw-medium mb-1">Elaborado por</label>
-                            <input className="form-control form-control-sm" value={formOC.elaborado_por} onChange={e=>setFormOC(p=>({...p,elaborado_por:e.target.value}))}/>
-                          </div>
-                          <div className="col-6">
-                            <label className="form-label small fw-medium mb-1">Autorizado por</label>
-                            <input className="form-control form-control-sm" value={formOC.autorizado_por} onChange={e=>setFormOC(p=>({...p,autorizado_por:e.target.value}))}/>
-                          </div>
-                          <div className="col-12">
-                            <label className="form-label small fw-medium mb-1">Observaciones</label>
-                            <input className="form-control form-control-sm" value={formOC.observaciones} onChange={e=>setFormOC(p=>({...p,observaciones:e.target.value}))}/>
-                          </div>
+                  {/* Fila 1: Proveedor + datos principales */}
+                  <div className="row g-2 mb-2">
+                    <div className="col-md-4 position-relative">
+                      <label className="form-label small fw-medium mb-1">Proveedor *</label>
+                      <input className="form-control form-control-sm" value={formOC.proveedor_nombre} required
+                        placeholder="Buscar o escribir proveedor…" onChange={e => buscarProvOC(e.target.value)}/>
+                      {sugsP.length > 0 && (
+                        <div className="border rounded shadow-sm position-absolute bg-white" style={{zIndex:9999,top:'100%',left:0,width:'100%',maxHeight:360,overflowY:'auto'}}>
+                          {sugsP.map(p => (
+                            <div key={p.id} className="px-3 py-2 border-bottom" style={{cursor:'pointer',fontSize:'0.83rem'}}
+                              onMouseEnter={e=>e.currentTarget.classList.add('bg-light')}
+                              onMouseLeave={e=>e.currentTarget.classList.remove('bg-light')}
+                              onClick={() => { setFormOC(prev=>({...prev,proveedor_id:p.id,proveedor_nombre:p.nombre,proveedor_cuit:p.cuit||''})); setSugsP([]); setProvInfoOC(p) }}>
+                              <strong>{p.nombre}</strong>{p.cuit && <span className="text-muted ms-2 small">{p.cuit}</span>}
+                            </div>
+                          ))}
                         </div>
-                      </div>
+                      )}
+                    </div>
+                    <div className="col-md-2">
+                      <label className="form-label small fw-medium mb-1">CUIT</label>
+                      <input className="form-control form-control-sm" value={formOC.proveedor_cuit}
+                        onChange={e=>setFormOC(p=>({...p,proveedor_cuit:e.target.value}))}/>
+                    </div>
+                    <div className="col-md-2">
+                      <label className="form-label small fw-medium mb-1">Fecha *</label>
+                      <input type="date" className="form-control form-control-sm" value={formOC.fecha} required
+                        onChange={e=>setFormOC(p=>({...p,fecha:e.target.value}))}/>
+                    </div>
+                    <div className="col-md-2">
+                      <label className="form-label small fw-medium mb-1">Moneda</label>
+                      <select className="form-select form-select-sm" value={formOC.moneda}
+                        onChange={e=>setFormOC(p=>({...p,moneda:e.target.value}))}>
+                        <option>DÓLAR</option><option>PESOS</option><option>EURO</option>
+                      </select>
+                    </div>
+                    <div className="col-md-1">
+                      <label className="form-label small fw-medium mb-1">TC</label>
+                      <input type="number" className="form-control form-control-sm" value={formOC.tasa_cambio}
+                        min="0" step="any" onChange={e=>setFormOC(p=>({...p,tasa_cambio:e.target.value}))}/>
+                    </div>
+                    <div className="col-md-1">
+                      <label className="form-label small fw-medium mb-1">Cond. Pago</label>
+                      <input className="form-control form-control-sm" value={formOC.condicion_pago}
+                        onChange={e=>setFormOC(p=>({...p,condicion_pago:e.target.value}))}/>
                     </div>
                   </div>
 
-                  {/* Panel derecho: Proveedor */}
-                  <div className="col-md-7">
-                    <div className="card h-100 border-secondary">
-                      <div className="card-header py-1 bg-dark text-white small fw-bold">Proveedor</div>
-                      <div className="card-body py-2 px-3">
-                        <div className="row g-2">
-                          {/* Búsqueda */}
-                          <div className="col-8 position-relative">
-                            <label className="form-label small fw-medium mb-1">Nombre *</label>
-                            <input className="form-control form-control-sm" value={formOC.proveedor_nombre} required
-                              placeholder="Buscar o escribir proveedor…" onChange={e => buscarProvOC(e.target.value)}/>
-                            {sugsP.length > 0 && (
-                              <div className="border rounded shadow-sm position-absolute bg-white" style={{zIndex:9999,top:'100%',width:'100%',maxHeight:200,overflowY:'auto'}}>
-                                {sugsP.map(p => (
-                                  <div key={p.id} className="px-3 py-2 border-bottom" style={{cursor:'pointer',fontSize:'0.83rem'}}
-                                    onMouseEnter={e=>e.currentTarget.classList.add('bg-light')}
-                                    onMouseLeave={e=>e.currentTarget.classList.remove('bg-light')}
-                                    onClick={() => { setFormOC(prev=>({...prev,proveedor_id:p.id,proveedor_nombre:p.nombre,proveedor_cuit:p.cuit||''})); setSugsP([]); setProvInfoOC(p) }}>
-                                    <strong>{p.nombre}</strong>{p.cuit && <span className="text-muted ms-2">{p.cuit}</span>}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <div className="col-4">
-                            <label className="form-label small fw-medium mb-1">CUIT</label>
-                            <input className="form-control form-control-sm" value={formOC.proveedor_cuit}
-                              onChange={e=>setFormOC(p=>({...p,proveedor_cuit:e.target.value}))}/>
-                          </div>
-                          {/* Datos de contacto (solo lectura, vienen del registro del proveedor) */}
-                          <div className="col-6">
-                            <label className="form-label small fw-medium mb-1">Localidad</label>
-                            <input className="form-control form-control-sm bg-light" readOnly
-                              value={provInfoOC?.localidad || ''} placeholder="—"/>
-                          </div>
-                          <div className="col-6">
-                            <label className="form-label small fw-medium mb-1">C.P.</label>
-                            <input className="form-control form-control-sm bg-light" readOnly
-                              value={provInfoOC?.cp || ''} placeholder="—"/>
-                          </div>
-                          <div className="col-12">
-                            <label className="form-label small fw-medium mb-1">Dirección</label>
-                            <input className="form-control form-control-sm bg-light" readOnly
-                              value={provInfoOC?.direccion || ''} placeholder="—"/>
-                          </div>
-                          <div className="col-6">
-                            <label className="form-label small fw-medium mb-1">Teléfono</label>
-                            <input className="form-control form-control-sm bg-light" readOnly
-                              value={provInfoOC?.telefono || ''} placeholder="—"/>
-                          </div>
-                          <div className="col-6">
-                            <label className="form-label small fw-medium mb-1">E-Mail</label>
-                            <input className="form-control form-control-sm bg-light" readOnly
-                              value={provInfoOC?.email || ''} placeholder="—"/>
-                          </div>
-                          <div className="col-12">
-                            <label className="form-label small fw-medium mb-1">Vendedor</label>
-                            <input className="form-control form-control-sm bg-light" readOnly
-                              value={provInfoOC?.vendedor || ''} placeholder="—"/>
-                          </div>
-                        </div>
-                      </div>
+                  {/* Fila 2: campos secundarios */}
+                  <div className="row g-2">
+                    <div className="col-md-2">
+                      <label className="form-label small fw-medium mb-1">Lugar Entrega</label>
+                      <input className="form-control form-control-sm" value={formOC.lugar_entrega}
+                        onChange={e=>setFormOC(p=>({...p,lugar_entrega:e.target.value}))}/>
+                    </div>
+                    <div className="col-md-2">
+                      <label className="form-label small fw-medium mb-1">Presupuesto N°</label>
+                      <input className="form-control form-control-sm" value={formOC.presupuesto_n}
+                        onChange={e=>setFormOC(p=>({...p,presupuesto_n:e.target.value}))}/>
+                    </div>
+                    <div className="col-md-2">
+                      <label className="form-label small fw-medium mb-1">Fecha Entrega Est.</label>
+                      <input type="date" className="form-control form-control-sm" value={formOC.fecha_entrega_est}
+                        onChange={e=>setFormOC(p=>({...p,fecha_entrega_est:e.target.value}))}/>
+                    </div>
+                    <div className="col-md-2">
+                      <label className="form-label small fw-medium mb-1">Estado Doc.</label>
+                      <select className="form-select form-select-sm" value={formOC.estado_doc}
+                        onChange={e=>setFormOC(p=>({...p,estado_doc:e.target.value}))}>
+                        {ESTADOS_DOC.map(s => <option key={s} value={s}>{s||'— Sin estado —'}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-md-2">
+                      <label className="form-label small fw-medium mb-1">Elaborado por</label>
+                      <input className="form-control form-control-sm" value={formOC.elaborado_por}
+                        onChange={e=>setFormOC(p=>({...p,elaborado_por:e.target.value}))}/>
+                    </div>
+                    <div className="col-md-1">
+                      <label className="form-label small fw-medium mb-1">Autorizado</label>
+                      <input className="form-control form-control-sm" value={formOC.autorizado_por}
+                        onChange={e=>setFormOC(p=>({...p,autorizado_por:e.target.value}))}/>
+                    </div>
+                    <div className="col-md-1">
+                      <label className="form-label small fw-medium mb-1">Observaciones</label>
+                      <input className="form-control form-control-sm" value={formOC.observaciones}
+                        onChange={e=>setFormOC(p=>({...p,observaciones:e.target.value}))}/>
                     </div>
                   </div>
+
+                  {/* Info del proveedor — tira de texto cuando hay uno seleccionado */}
+                  {provInfoOC && (
+                    <div className="mt-2 pt-1 border-top d-flex flex-wrap gap-3" style={{fontSize:'0.73rem',color:'#555'}}>
+                      {provInfoOC.localidad && <span><i className="bi bi-geo-alt me-1 text-muted"/>{provInfoOC.localidad}{provInfoOC.cp ? ` (CP ${provInfoOC.cp})` : ''}</span>}
+                      {provInfoOC.direccion && <span><i className="bi bi-house me-1 text-muted"/>{provInfoOC.direccion}</span>}
+                      {provInfoOC.telefono  && <span><i className="bi bi-telephone me-1 text-muted"/>{provInfoOC.telefono}</span>}
+                      {provInfoOC.email     && <span><i className="bi bi-envelope me-1 text-muted"/>{provInfoOC.email}</span>}
+                      {provInfoOC.vendedor  && <span><i className="bi bi-person me-1 text-muted"/>Vendedor: {provInfoOC.vendedor}</span>}
+                    </div>
+                  )}
                 </div>
 
                 {/* Ítems */}
@@ -769,18 +789,49 @@ export default function Compras() {
                           <td className="text-muted text-center align-middle">{idx+1}</td>
                           <td className="position-relative">
                             <input className="form-control form-control-sm border-0 p-0 px-1" value={it.descripcion}
-                              onChange={e => buscarProductoItem(idx, e.target.value)}/>
-                            {sugsItem.idx === idx && sugsItem.list.length > 0 && (
-                              <div className="border rounded shadow-sm position-absolute bg-white" style={{zIndex:9999,top:'100%',left:0,width:340,maxHeight:200,overflowY:'auto'}}>
-                                {sugsItem.list.map(p => (
-                                  <div key={p.id} className="px-2 py-1 border-bottom" style={{cursor:'pointer',fontSize:'0.8rem'}}
-                                    onMouseEnter={e=>e.currentTarget.classList.add('bg-light')}
-                                    onMouseLeave={e=>e.currentTarget.classList.remove('bg-light')}
-                                    onClick={() => selProductoItem(idx, p)}>
-                                    <strong>{p.codigo}</strong> — {p.descripcion}
-                                    <span className="text-muted ms-2">Stock: {fmtN(p.stock_actual)}</span>
+                              onChange={e => buscarProductoItem(idx, e.target.value)}
+                              onBlur={() => setTimeout(() => setSugsItem({ idx: null, list: [] }), 150)}/>
+                            {sugsItem.idx === idx && (
+                              <div className="border rounded shadow position-absolute bg-white"
+                                style={{zIndex:9999, top:'100%', left:0, minWidth:440, maxWidth:600}}>
+                                {/* lista scrollable */}
+                                <div style={{maxHeight:480, overflowY:'auto'}}>
+                                  {sugsItem.list.length === 0
+                                    ? <div className="px-3 py-2 text-muted small fst-italic">Sin coincidencias</div>
+                                    : sugsItem.list.map(p => (
+                                        <div key={p.id}
+                                          className="d-flex align-items-center gap-2 px-2 py-2 border-bottom"
+                                          style={{cursor:'pointer'}}
+                                          onMouseEnter={e=>e.currentTarget.classList.add('bg-light')}
+                                          onMouseLeave={e=>e.currentTarget.classList.remove('bg-light')}
+                                          onClick={() => selProductoItem(idx, p)}>
+                                          <span className="badge bg-dark text-white flex-shrink-0"
+                                            style={{fontFamily:'monospace', fontSize:'0.72rem', minWidth:72, letterSpacing:0.5}}>
+                                            {p.codigo}
+                                          </span>
+                                          <span className="flex-grow-1 text-truncate" style={{fontSize:'0.82rem'}}>
+                                            {p.descripcion}
+                                          </span>
+                                          <span className="d-flex flex-column align-items-end flex-shrink-0 gap-0"
+                                            style={{fontSize:'0.7rem', lineHeight:'1.2'}}>
+                                            <span className="text-muted">{p.unidad || 'UND.'}</span>
+                                            <span className={p.stock_actual > 0 ? 'text-success fw-semibold' : 'text-danger'}>
+                                              stock: {fmtN(p.stock_actual)}
+                                            </span>
+                                          </span>
+                                        </div>
+                                      ))
+                                  }
+                                </div>
+                                {/* botón siempre visible, fuera del scroll */}
+                                {codConfig && (
+                                  <div className="px-2 py-2 border-top d-flex align-items-center gap-2"
+                                    style={{background:'#eef2ff', cursor:'pointer'}}
+                                    onMouseDown={e => { e.preventDefault(); abrirNuevoMat(idx) }}>
+                                    <i className="bi bi-plus-circle-fill text-primary"/>
+                                    <span className="small text-primary fw-semibold">Crear nuevo material en stock</span>
                                   </div>
-                                ))}
+                                )}
                               </div>
                             )}
                           </td>
@@ -949,6 +1000,100 @@ export default function Compras() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ══ MODAL: NUEVO MATERIAL ═══════════════════════════════════════ */}
+      {modalNuevoMat && codConfig && (
+        <div className="modal show d-block" style={{background:'rgba(0,0,0,.6)', zIndex:1100}}>
+          <div className="modal-dialog modal-xl modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header py-2 bg-dark text-white">
+                <h5 className="modal-title small fw-bold">
+                  <i className="bi bi-plus-circle me-2"/>
+                  Nuevo material en stock
+                  {pasoNuevoMat === 'datos' && (
+                    <span className="badge bg-success ms-2" style={{fontFamily:'monospace', fontSize:'0.78rem'}}>{codNuevoMat}</span>
+                  )}
+                </h5>
+                <button className="btn-close btn-close-white" onClick={() => setModalNuevoMat(null)}/>
+              </div>
+
+              {/* Indicador de pasos */}
+              <div className="px-3 pt-2 pb-0 d-flex gap-3 border-bottom" style={{fontSize:'0.8rem'}}>
+                <span className={`pb-2 border-bottom border-2 ${pasoNuevoMat==='codigo' ? 'border-primary text-primary fw-semibold' : 'border-transparent text-muted'}`}
+                  style={{borderColor: pasoNuevoMat==='codigo' ? undefined : 'transparent!important'}}>
+                  1. Generar código
+                </span>
+                <span className={`pb-2 border-bottom border-2 ${pasoNuevoMat==='datos' ? 'border-primary text-primary fw-semibold' : 'text-muted'}`}>
+                  2. Completar datos
+                </span>
+              </div>
+
+              <div className="modal-body">
+                {pasoNuevoMat === 'codigo' && (
+                  <Asistente config={codConfig} onUsar={usarCodigoNuevoMat} />
+                )}
+
+                {pasoNuevoMat === 'datos' && (
+                  <div>
+                    <div className="alert alert-success py-2 d-flex align-items-center gap-3 mb-3">
+                      <span className="fw-semibold small">Código generado:</span>
+                      <span className="badge bg-dark fs-6" style={{fontFamily:'monospace', letterSpacing:2}}>{codNuevoMat}</span>
+                      <button className="btn btn-sm btn-outline-secondary ms-auto" onClick={() => setPasoNuevoMat('codigo')}>
+                        <i className="bi bi-arrow-left me-1"/>Volver a generar
+                      </button>
+                    </div>
+                    <div className="row g-3">
+                      <div className="col-md-12">
+                        <label className="form-label small fw-medium">Descripción *</label>
+                        <input className="form-control" required value={formNuevoMat.descripcion}
+                          placeholder="Descripción completa del material"
+                          onChange={e => setFormNuevoMat(p => ({...p, descripcion: e.target.value}))}/>
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small fw-medium">Unidad</label>
+                        <input className="form-control" value={formNuevoMat.unidad}
+                          onChange={e => setFormNuevoMat(p => ({...p, unidad: e.target.value}))}/>
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small fw-medium">Categoría</label>
+                        <input className="form-control" value={formNuevoMat.categoria}
+                          onChange={e => setFormNuevoMat(p => ({...p, categoria: e.target.value}))}/>
+                      </div>
+                      <div className="col-md-2">
+                        <label className="form-label small fw-medium">Precio costo</label>
+                        <input type="number" className="form-control" min="0" step="any" value={formNuevoMat.precio_costo}
+                          onChange={e => setFormNuevoMat(p => ({...p, precio_costo: parseFloat(e.target.value)||0}))}/>
+                      </div>
+                      <div className="col-md-2">
+                        <label className="form-label small fw-medium">Stock mínimo</label>
+                        <input type="number" className="form-control" min="0" step="any" value={formNuevoMat.stock_minimo}
+                          onChange={e => setFormNuevoMat(p => ({...p, stock_minimo: parseFloat(e.target.value)||0}))}/>
+                      </div>
+                      <div className="col-md-2">
+                        <label className="form-label small fw-medium">Ubicación</label>
+                        <input className="form-control" value={formNuevoMat.ubicacion}
+                          onChange={e => setFormNuevoMat(p => ({...p, ubicacion: e.target.value}))}/>
+                      </div>
+                    </div>
+                    {errNuevoMat && <div className="alert alert-danger py-2 mt-3 small">{errNuevoMat}</div>}
+                  </div>
+                )}
+              </div>
+
+              {pasoNuevoMat === 'datos' && (
+                <div className="modal-footer py-2">
+                  <button className="btn btn-secondary btn-sm" onClick={() => setModalNuevoMat(null)}>Cancelar</button>
+                  <button className="btn btn-success btn-sm" disabled={savNuevoMat || !formNuevoMat.descripcion.trim()}
+                    onClick={guardarNuevoMat}>
+                    {savNuevoMat ? <span className="spinner-border spinner-border-sm me-1"/> : <i className="bi bi-check-circle me-1"/>}
+                    Guardar material y agregar a OC
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
