@@ -69,9 +69,13 @@ const OT_ESTADO_COLOR = {
 
 /* ── Component ──────────────────────────────────────────────────── */
 export default function Dashboard() {
-  const [data, setData]       = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState('')
+  const [data, setData]               = useState(null)
+  const [loading, setLoading]         = useState(true)
+  const [syncing, setSyncing]         = useState(false)
+  const [error, setError]             = useState('')
+  const [miAyer, setMiAyer]           = useState(undefined)
+  const [resumenAyer, setResumenAyer] = useState(null)
+  const [tabFichadas, setTabFichadas] = useState('hoy')
   const user     = getUser()
   const rol      = user?.rol ?? 'solo_lectura'
   const permisos = getPermisos()
@@ -85,12 +89,24 @@ export default function Dashboard() {
     return tieneAcceso(mapa[s] ?? s)
   }
 
-  useEffect(() => {
+  const cargar = () =>
     api.get('/dashboard/resumen')
-      .then(r => setData(r.data))
+      .then(r => { setData(r.data); setError('') })
       .catch(() => setError('No se pudo cargar el dashboard. Verificá la conexión con el servidor.'))
       .finally(() => setLoading(false))
+
+  useEffect(() => {
+    cargar()
+    api.get('/rrhh/mi-ayer').then(r => setMiAyer(r.data)).catch(() => setMiAyer(null))
+    api.get('/rrhh/resumen-ayer').then(r => setResumenAyer(r.data)).catch(() => {})
   }, [])
+
+  const handleActualizar = async () => {
+    setSyncing(true)
+    try { await api.post('/rrhh/dispositivos/sync-todos') } catch (_) {}
+    await cargar()
+    setSyncing(false)
+  }
 
   if (loading) return (
     <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '60vh' }}>
@@ -105,7 +121,7 @@ export default function Dashboard() {
     <div className="alert alert-danger"><i className="bi bi-exclamation-triangle-fill me-2" />{error}</div>
   )
 
-  const { stock, compras, ventas, proyectos, produccion, finanzas, alertas } = data
+  const { stock, compras, ventas, proyectos, produccion, finanzas, alertas, fichadas_hoy = [] } = data
 
   const visAlertas = [verAlerta('ots_urgentes'), verAlerta('stock_bajo'), verAlerta('oc_pendientes')]
   const hayAlertas = visAlertas.some(Boolean)
@@ -116,6 +132,49 @@ export default function Dashboard() {
   const colStock = numAlertas === 1 ? 'col-12' : numAlertas === 2 ? 'col-12 col-xl-6' : 'col-12 col-md-6 col-xl-4'
   const colOC    = numAlertas === 1 ? 'col-12' : numAlertas === 2 ? 'col-12 col-xl-6' : 'col-12 col-md-6 col-xl-3'
 
+  // ── Widget "mi ayer" ─────────────────────────────────────────────
+  let ayerWidget = null
+  if (miAyer) {
+    const d         = new Date(miAyer.fecha + 'T12:00:00')
+    const dLabel    = d.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
+    const sinFichada = !miAyer.entrada
+    const sinParte   = !miAyer.tiene_parte
+    const diff       = miAyer.horas_fichada != null && miAyer.tiene_parte
+      ? Math.abs(miAyer.horas_parte - miAyer.horas_fichada) : null
+    const color = sinParte
+      ? (sinFichada ? 'secondary' : 'warning')
+      : (diff != null && diff > 1 ? 'warning' : 'success')
+    const iconColor = color === 'success' ? 'text-success' : color === 'warning' ? 'text-warning' : 'text-secondary'
+
+    ayerWidget = (
+      <div className={`alert alert-${color} d-flex align-items-center gap-3 mb-4 py-2 px-3`}
+        style={{ fontSize: '0.85rem' }}>
+        <i className={`bi bi-calendar2-check fs-5 flex-shrink-0 ${iconColor}`} />
+        <div className="flex-grow-1">
+          <span className="fw-semibold text-capitalize">{dLabel}:</span>
+          {sinFichada ? (
+            <span className="ms-2 text-muted">Sin fichada registrada</span>
+          ) : (
+            <span className="ms-2">
+              Entrada <strong>{miAyer.entrada}</strong>
+              {' · '}
+              Salida <strong>{miAyer.salida}</strong>
+              {miAyer.horas_fichada != null &&
+                <span className="ms-1 text-muted">({miAyer.horas_fichada}h)</span>}
+            </span>
+          )}
+          {!sinFichada && (
+            <span className="ms-3">
+              {sinParte
+                ? <span className="badge bg-danger ms-1"><i className="bi bi-exclamation-triangle me-1" />Sin parte</span>
+                : <span className="badge bg-success ms-1"><i className="bi bi-check-lg me-1" />{miAyer.horas_parte}h parte cargado</span>}
+            </span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       {/* ── Encabezado ───────────────────────────────── */}
@@ -124,10 +183,20 @@ export default function Dashboard() {
           <h5 className="mb-0 fw-bold">Dashboard</h5>
           <small className="text-muted">Resumen operativo en tiempo real</small>
         </div>
-        <button className="btn btn-sm btn-outline-secondary" onClick={() => window.location.reload()}>
-          <i className="bi bi-arrow-clockwise me-1" />Actualizar
+        <button
+          className="btn btn-sm btn-outline-secondary"
+          onClick={handleActualizar}
+          disabled={syncing}
+        >
+          {syncing
+            ? <><span className="spinner-border spinner-border-sm me-1" />Sincronizando…</>
+            : <><i className="bi bi-arrow-clockwise me-1" />Actualizar</>
+          }
         </button>
       </div>
+
+      {/* ── Mi ayer ──────────────────────────────────── */}
+      {ayerWidget}
 
       {/* ── KPIs ─────────────────────────────────────── */}
       <div className="row g-3 mb-4">
@@ -192,6 +261,158 @@ export default function Dashboard() {
           />
         )}
       </div>
+
+      {/* ── Fichadas hoy / ayer ──────────────────────── */}
+      {(tieneAcceso('rrhh') || resumenAyer) && (
+        <div className="row g-3 mb-4">
+          <div className="col-12">
+            <div className="card border-0 shadow-sm">
+              <div className="card-body">
+                <div className="d-flex align-items-center justify-content-between mb-3">
+                  <div className="d-flex align-items-center gap-2">
+                    <i className="bi bi-person-badge text-primary" style={{ fontSize: '1.1rem' }} />
+                    <h6 className="mb-0 fw-semibold text-secondary text-uppercase"
+                      style={{ fontSize: '0.78rem', letterSpacing: '0.8px' }}>
+                      Fichadas de personal
+                    </h6>
+                  </div>
+                  <ul className="nav nav-pills nav-sm" style={{ '--bs-nav-pills-border-radius': '0.4rem' }}>
+                    <li className="nav-item">
+                      <button
+                        className={`nav-link py-0 px-2 ${tabFichadas === 'hoy' ? 'active' : 'text-secondary'}`}
+                        style={{ fontSize: '0.78rem' }}
+                        onClick={() => setTabFichadas('hoy')}>
+                        <i className="bi bi-calendar-check me-1" />Hoy ({fichadas_hoy.length})
+                      </button>
+                    </li>
+                    <li className="nav-item">
+                      <button
+                        className={`nav-link py-0 px-2 ${tabFichadas === 'ayer' ? 'active' : 'text-secondary'}`}
+                        style={{ fontSize: '0.78rem' }}
+                        onClick={() => setTabFichadas('ayer')}>
+                        <i className="bi bi-calendar2-day me-1" />Ayer
+                        {resumenAyer && (
+                          <span className="ms-1">
+                            ({resumenAyer.empleados.filter(e => !e.tiene_parte).length > 0
+                              ? <span className="text-danger fw-bold">
+                                  {resumenAyer.empleados.filter(e => !e.tiene_parte).length} sin parte
+                                </span>
+                              : <span className="text-success">OK</span>})
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Tab Hoy */}
+                {tabFichadas === 'hoy' && (
+                  fichadas_hoy.length === 0 ? (
+                    <div className="text-muted text-center py-3 small">
+                      <i className="bi bi-clock me-1" />Sin fichadas registradas hoy
+                      {syncing && <span className="ms-2">— sincronizando…</span>}
+                    </div>
+                  ) : (
+                    <div className="table-responsive">
+                      <table className="table table-sm table-hover mb-0" style={{ fontSize: '0.83rem' }}>
+                        <thead className="table-light">
+                          <tr>
+                            <th style={{ width: '2rem' }}>#</th>
+                            <th>Empleado</th>
+                            <th style={{ width: '6rem' }}>Entrada</th>
+                            <th style={{ width: '8rem' }}>Tipo</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fichadas_hoy.map((f, i) => {
+                            const tarde = f.horario_entrada && f.hora_entrada > f.horario_entrada
+                            return (
+                              <tr key={i} className={tarde ? 'table-danger' : ''}>
+                                <td className="text-muted">{i + 1}</td>
+                                <td className="fw-semibold">{f.nombre}</td>
+                                <td className="text-nowrap fw-semibold">
+                                  <span className={tarde ? 'text-danger' : 'text-success'}>
+                                    {f.hora_entrada}
+                                  </span>
+                                  {tarde && (
+                                    <span className="ms-1 text-danger" style={{ fontSize: '0.72rem' }}
+                                      title={`Horario: ${f.horario_entrada}`}>
+                                      <i className="bi bi-clock-history" />
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="text-muted text-nowrap">{f.tipo_acceso || '—'}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                )}
+
+                {/* Tab Ayer */}
+                {tabFichadas === 'ayer' && (
+                  !resumenAyer || resumenAyer.empleados.length === 0 ? (
+                    <div className="text-muted text-center py-3 small">
+                      <i className="bi bi-calendar2 me-1" />Sin fichadas registradas ayer
+                    </div>
+                  ) : (
+                    <>
+                      <div className="d-flex gap-2 mb-2">
+                        <span className="badge bg-success">
+                          {resumenAyer.empleados.filter(e => e.tiene_parte).length} con parte
+                        </span>
+                        {resumenAyer.empleados.filter(e => !e.tiene_parte).length > 0 && (
+                          <span className="badge bg-danger">
+                            {resumenAyer.empleados.filter(e => !e.tiene_parte).length} sin parte
+                          </span>
+                        )}
+                      </div>
+                      <div className="table-responsive">
+                        <table className="table table-sm table-hover mb-0" style={{ fontSize: '0.83rem' }}>
+                          <thead className="table-light">
+                            <tr>
+                              <th style={{ width: '2rem' }}>#</th>
+                              <th>Empleado</th>
+                              <th style={{ width: '6rem' }}>Entrada</th>
+                              <th style={{ width: '6rem' }}>Salida</th>
+                              <th style={{ width: '5rem' }}>Horas</th>
+                              <th style={{ width: '9rem' }}>Parte</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {resumenAyer.empleados.map((e, i) => {
+                              const diff     = e.horas_fichada != null && e.tiene_parte
+                                ? Math.abs(e.horas_parte - e.horas_fichada) : null
+                              const rowClass = !e.tiene_parte ? 'table-warning'
+                                : (diff != null && diff > 1 ? 'table-warning' : '')
+                              return (
+                                <tr key={e.id} className={rowClass}>
+                                  <td className="text-muted">{i + 1}</td>
+                                  <td className="fw-semibold">{e.nombre}</td>
+                                  <td className="text-success fw-semibold">{e.entrada || '—'}</td>
+                                  <td className="text-muted">{e.salida || '—'}</td>
+                                  <td className="text-muted">{e.horas_fichada != null ? `${e.horas_fichada}h` : '—'}</td>
+                                  <td>
+                                    {e.tiene_parte
+                                      ? <span className="badge bg-success"><i className="bi bi-check-lg me-1" />{e.horas_parte}h</span>
+                                      : <span className="badge bg-danger"><i className="bi bi-exclamation-triangle me-1" />Sin parte</span>}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Alertas ──────────────────────────────────── */}
       {hayAlertas && (

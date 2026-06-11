@@ -454,30 +454,8 @@ function inicializar() {
     CREATE INDEX IF NOT EXISTS idx_mant_ot_activo  ON mant_ot(activo_id);
   `);
 
-  // ── Sistema de roles con permisos ────────────────────────────────────────────
+  // ── Permisos directos de usuario ─────────────────────────────────────────────
   db.exec(`
-    CREATE TABLE IF NOT EXISTS roles (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      nombre      TEXT UNIQUE NOT NULL,
-      descripcion TEXT DEFAULT '',
-      activo      INTEGER DEFAULT 1,
-      created_at  TEXT DEFAULT (datetime('now','localtime'))
-    );
-
-    CREATE TABLE IF NOT EXISTS rol_permisos (
-      rol_id         INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-      modulo         TEXT NOT NULL,
-      puede_leer     INTEGER DEFAULT 0,
-      puede_escribir INTEGER DEFAULT 0,
-      PRIMARY KEY (rol_id, modulo)
-    );
-
-    CREATE TABLE IF NOT EXISTS usuario_roles (
-      usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
-      rol_id     INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-      PRIMARY KEY (usuario_id, rol_id)
-    );
-
     CREATE TABLE IF NOT EXISTS usuario_permisos (
       usuario_id     INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
       modulo         TEXT    NOT NULL,
@@ -710,40 +688,49 @@ function inicializar() {
   `);
 
   // id_dispositivo en empleados (para vincular con el nro de empleado del terminal)
-  try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN id_dispositivo TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN id_dispositivo  TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN horario_entrada TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN horario_salida  TEXT DEFAULT ''`); } catch(e) {}
+
+  // Asociación usuario ↔ empleado RRHH
+  try { db.exec(`ALTER TABLE usuarios ADD COLUMN rrhh_empleado_id INTEGER REFERENCES rrhh_empleados(id) ON DELETE SET NULL`); } catch(e) {}
 
   // Índice único en nombre para evitar duplicados al reiniciar
   try { db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rrhh_emp_nombre ON rrhh_empleados(nombre)`); } catch(e) {}
 
   // ── Seed RRHH: categorías (idempotente) ──────────────────────────────────────
   const CATS_RRHH = [
-    ['CP','Chapas y perfiles','Granallado'],
-    ['LM','Limpieza Manual','Mano de obra Herreria'],
-    ['PM','Pintura/Marcado','Mano de obra Herreria'],
-    ['MM','Movimiento Materiales','Mano de obra Herreria'],
-    ['PC','Preparacion de Chapa','Mano de obra Herreria'],
+    ['CP','Chapas y perfiles',              'Granallado'],
+    ['LM','Limpieza Manual',                'Granallado'],
+    ['PM','Pintura/Marcado',                'Granallado'],
+    ['MM','Movimiento Materiales',          'Granallado'],
+    ['PC','Preparacion de Chapa',           'Mano de obra Herreria'],
     ['LC','Preparacion de Canos y Perfiles','Mano de obra Herreria'],
-    ['SO','Soldadura','Mano de obra Herreria'],
-    ['LR','Limpieza y retoque de pintura','Terminaciones y Montaje'],
-    ['PI','Pintura interior/exterior','Terminaciones y Montaje'],
-    ['MC','Montaje de Canerias','Terminaciones y Montaje'],
-    ['ME','Montaje de Equipos','Terminaciones y Montaje'],
-    ['AM','Aislaciones y Molduras','Terminaciones y Montaje'],
-    ['CT','Construccion de Tablero','Electrico'],
-    ['IE','Instalacion Electrica','Electrico'],
-    ['PP','Programacion de Software','Electrico'],
-    ['MI','Mantenimiento edilicio','Infraestructura'],
-    ['EP','Mantenimiento equipos propios','Infraestructura'],
-    ['ET','Reparacion de equipos terceros','Infraestructura'],
-    ['AL','Almacen de materiales','Ingenieria'],
-    ['GC','Gestion de calidad documentos','Ingenieria'],
-    ['DC','Dibujo CAD','Ingenieria'],
-    ['CC','Medicion y Control de Calidad','Ingenieria'],
-    ['OT','Otros','Otros'],
+    ['SO','Soldadura',                      'Mano de obra Herreria'],
+    ['LR','Limpieza y retoque de pintura',  'Terminaciones y Montaje'],
+    ['PI','Pintura interior/exterior',      'Terminaciones y Montaje'],
+    ['MC','Montaje de Canerias',            'Terminaciones y Montaje'],
+    ['ME','Montaje de Equipos',             'Terminaciones y Montaje'],
+    ['AM','Aislaciones y Molduras',         'Terminaciones y Montaje'],
+    ['CT','Construccion de Tablero',        'Electrico'],
+    ['IE','Instalacion Electrica',          'Electrico'],
+    ['PP','Programacion de Software',       'Electrico'],
+    ['MI','Mantenimiento edilicio',         'Infraestructura'],
+    ['EP','Mantenimiento equipos propios',  'Infraestructura'],
+    ['ET','Reparacion de equipos terceros', 'Infraestructura'],
+    ['AL','Almacen de materiales',          'Ingenieria'],
+    ['GC','Gestion de calidad documentos',  'Ingenieria'],
+    ['DC','Dibujo CAD',                     'Ingenieria'],
+    ['CC','Medicion y Control de Calidad',  'Ingenieria'],
+    ['OT','Otros',                          'General'],
   ];
   {
     const ins = db.prepare('INSERT OR IGNORE INTO rrhh_categorias (codigo,descripcion,grupo) VALUES (?,?,?)');
     for (const [c,d,g] of CATS_RRHH) ins.run(c,d,g);
+    // Corregir grupos que quedaron mal en instancias anteriores
+    db.prepare("UPDATE rrhh_categorias SET grupo='Granallado'           WHERE codigo IN ('LM','PM','MM')").run();
+    db.prepare("UPDATE rrhh_categorias SET grupo='Mano de obra Herreria' WHERE codigo IN ('PC','LC','SO')").run();
+    db.prepare("UPDATE rrhh_categorias SET grupo='General'              WHERE codigo='OT'").run();
   }
 
   // ── Seed RRHH: empleados (idempotente) ────────────────────────────────────────

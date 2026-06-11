@@ -33,6 +33,7 @@ tar -czf $TMP_TAR `
   "backend/routes" `
   "backend/middleware" `
   "backend/db/database.js" `
+  "backend/data" `
   "frontend/src" `
   "frontend/package.json" `
   "frontend/vite.config.js" `

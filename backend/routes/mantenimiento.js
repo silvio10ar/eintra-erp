@@ -273,6 +273,10 @@ router.put('/correctivas/:id', verificarToken, (req, res) => {
       db.prepare("UPDATE mant_equipos SET estado='baja', fecha_baja=date('now'), motivo_baja=? WHERE id=?")
         .run(motivo, ic.equipo_id);
       logEstado(ic.equipo_id, eqAntes?.estado || 'activo', 'baja', motivo);
+    } else if (nuevoResultado === 'pendiente' && ic.resultado !== 'pendiente') {
+      // Reabrir: volver el equipo a en_reparacion
+      db.prepare("UPDATE mant_equipos SET estado='en_reparacion' WHERE id=? AND estado='activo'").run(ic.equipo_id);
+      if (eqAntes?.estado === 'activo') logEstado(ic.equipo_id, 'activo', 'en_reparacion', `Correctiva #${req.params.id} reabierta`);
     } else if (nuevoResultado !== 'pendiente' && ic.resultado === 'pendiente') {
       const pendientes = db.prepare(
         "SELECT COUNT(*) as c FROM mant_intervenciones_correctivas WHERE equipo_id=? AND resultado='pendiente' AND id!=?"
@@ -285,6 +289,104 @@ router.put('/correctivas/:id', verificarToken, (req, res) => {
     }
   })();
   res.json(db.prepare('SELECT * FROM mant_intervenciones_correctivas WHERE id=?').get(req.params.id));
+});
+
+// ── HISTORIAL COMPLETO DE MANTENIMIENTO ──────────────────────────────────────
+
+router.get('/historial', verificarToken, (req, res) => {
+  const { equipo_id, desde, hasta, tipo, estado_equipo } = req.query;
+
+  const mkWhere = conds => conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+
+  const baseInsp = [], baseCorr = [], basePrev = [], baseHist = [];
+  const pInsp = [], pCorr = [], pPrev = [], pHist = [];
+
+  if (equipo_id) {
+    baseInsp.push('i.equipo_id=?');   pInsp.push(equipo_id);
+    baseCorr.push('ic.equipo_id=?');  pCorr.push(equipo_id);
+    basePrev.push('ep.equipo_id=?');  pPrev.push(equipo_id);
+    baseHist.push('hs.equipo_id=?');  pHist.push(equipo_id);
+  }
+  if (desde) {
+    baseInsp.push('i.fecha>=?');              pInsp.push(desde);
+    baseCorr.push('ic.fecha_deteccion>=?');   pCorr.push(desde);
+    basePrev.push('ep.fecha>=?');             pPrev.push(desde);
+    baseHist.push('hs.fecha>=?');             pHist.push(desde);
+  }
+  if (hasta) {
+    baseInsp.push('i.fecha<=?');              pInsp.push(hasta);
+    baseCorr.push('ic.fecha_deteccion<=?');   pCorr.push(hasta);
+    basePrev.push('ep.fecha<=?');             pPrev.push(hasta);
+    baseHist.push('hs.fecha<=?');             pHist.push(hasta);
+  }
+  if (estado_equipo) {
+    baseInsp.push('e.estado=?');  pInsp.push(estado_equipo);
+    baseCorr.push('e.estado=?');  pCorr.push(estado_equipo);
+    basePrev.push('e.estado=?');  pPrev.push(estado_equipo);
+    baseHist.push('e.estado=?');  pHist.push(estado_equipo);
+  }
+
+  const cols = `id, equipo_id, fecha, estado_general, observaciones, responsable,
+                created_at, tipo, codigo, equipo_nombre, categoria, equipo_estado,
+                estado_anterior, accion_realizada, fecha_fin, tarea_info`;
+
+  const inspSql = `
+    SELECT i.id, i.equipo_id, i.fecha, i.estado_general,
+           i.observaciones, i.responsable, i.created_at,
+           'inspeccion' AS tipo,
+           e.codigo, e.nombre AS equipo_nombre, e.categoria, e.estado AS equipo_estado,
+           NULL AS estado_anterior, NULL AS accion_realizada, NULL AS fecha_fin,
+           NULL AS tarea_info
+    FROM mant_inspecciones i
+    JOIN mant_equipos e ON e.id = i.equipo_id
+    ${mkWhere(baseInsp)}`;
+
+  const corrSql = `
+    SELECT ic.id, ic.equipo_id, ic.fecha_deteccion AS fecha,
+           ic.resultado AS estado_general,
+           ic.descripcion_falla AS observaciones, ic.responsable, ic.created_at,
+           'correctiva' AS tipo,
+           e.codigo, e.nombre AS equipo_nombre, e.categoria, e.estado AS equipo_estado,
+           NULL AS estado_anterior, ic.accion_realizada, ic.fecha_fin,
+           NULL AS tarea_info
+    FROM mant_intervenciones_correctivas ic
+    JOIN mant_equipos e ON e.id = ic.equipo_id
+    ${mkWhere(baseCorr)}`;
+
+  const prevSql = `
+    SELECT ep.id, ep.equipo_id, ep.fecha,
+           ep.resultado AS estado_general,
+           ep.observaciones, ep.responsable, ep.created_at,
+           'preventiva' AS tipo,
+           e.codigo, e.nombre AS equipo_nombre, e.categoria, e.estado AS equipo_estado,
+           NULL AS estado_anterior, NULL AS accion_realizada, NULL AS fecha_fin,
+           (COALESCE(tp.componente,'') || ' — ' || COALESCE(tp.accion,'')) AS tarea_info
+    FROM mant_ejecuciones_preventivas ep
+    JOIN mant_equipos e ON e.id = ep.equipo_id
+    LEFT JOIN mant_tareas_preventivas tp ON tp.id = ep.tarea_id
+    ${mkWhere(basePrev)}`;
+
+  const histSql = `
+    SELECT hs.id, hs.equipo_id, hs.fecha,
+           hs.estado_nuevo AS estado_general,
+           hs.motivo AS observaciones, NULL AS responsable, hs.created_at,
+           'estado' AS tipo,
+           e.codigo, e.nombre AS equipo_nombre, e.categoria, e.estado AS equipo_estado,
+           hs.estado_anterior, NULL AS accion_realizada, NULL AS fecha_fin,
+           NULL AS tarea_info
+    FROM mant_historial_estados hs
+    JOIN mant_equipos e ON e.id = hs.equipo_id
+    ${mkWhere(baseHist)}`;
+
+  const PARTES = { inspeccion: [inspSql, pInsp], correctiva: [corrSql, pCorr], preventiva: [prevSql, pPrev], estado: [histSql, pHist] };
+  const seleccionados = tipo && PARTES[tipo] ? [tipo] : ['inspeccion','correctiva','preventiva','estado'];
+
+  const sqls   = seleccionados.map(t => PARTES[t][0]);
+  const params = seleccionados.flatMap(t => PARTES[t][1]);
+
+  res.json(db.prepare(
+    `SELECT ${cols} FROM (${sqls.join(' UNION ALL ')}) ORDER BY fecha DESC, id DESC`
+  ).all(...params));
 });
 
 // ── INSPECCIONES ──────────────────────────────────────────────────────────────

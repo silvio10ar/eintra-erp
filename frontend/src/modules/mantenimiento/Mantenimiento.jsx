@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import api from '../../api/client'
-import { puedeEscribir } from '../../store/authStore'
+import { puedeEscribir, getUser } from '../../store/authStore'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -23,6 +23,7 @@ const FORM_CIERRE = { fecha_fin: hoy(), accion_realizada: '', tipo_servicio: 'in
 
 export default function Mantenimiento() {
   const canWrite = puedeEscribir('mantenimiento')
+  const userResponsable = (() => { const u = getUser(); return u?.empleado_nombre || u?.nombre || '' })()
   const [tab, setTab]   = useState('dashboard')
   const [meta, setMeta] = useState({ categorias: [], ubicaciones: ['MIGUENS', 'POGGIO'] })
 
@@ -78,7 +79,7 @@ export default function Mantenimiento() {
   // ── Historial F14 ──────────────────────────────────────────────────────────
   const [histInsp, setHistInsp]       = useState([])
   const [loadHistInsp, setLoadHistInsp] = useState(false)
-  const [filtHistInsp, setFiltHistInsp] = useState({ desde: '', hasta: '', estado: '', ubicacion: '', buscar: '', estado_alerta: '', estado_equipo: '' })
+  const [filtHistInsp, setFiltHistInsp] = useState({ desde: '', hasta: '', tipo: '', estado_equipo: '', buscar: '' })
   const [detalleHistorial, setDetalleHistorial] = useState(null)
 
   // ── Historial equipo ───────────────────────────────────────────────────────
@@ -129,13 +130,11 @@ export default function Mantenimiento() {
   const cargarHistorialInspecciones = useCallback(() => {
     setLoadHistInsp(true)
     const p = {}
-    if (filtHistInsp.desde)          p.desde         = filtHistInsp.desde
-    if (filtHistInsp.hasta)          p.hasta         = filtHistInsp.hasta
-    if (filtHistInsp.estado)         p.estado        = filtHistInsp.estado
-    if (filtHistInsp.ubicacion)      p.ubicacion     = filtHistInsp.ubicacion
-    if (filtHistInsp.estado_alerta)  p.estado_alerta = filtHistInsp.estado_alerta
-    if (filtHistInsp.estado_equipo)  p.estado_equipo = filtHistInsp.estado_equipo
-    api.get('/mantenimiento/inspecciones', { params: p })
+    if (filtHistInsp.desde)         p.desde         = filtHistInsp.desde
+    if (filtHistInsp.hasta)         p.hasta         = filtHistInsp.hasta
+    if (filtHistInsp.tipo)          p.tipo          = filtHistInsp.tipo
+    if (filtHistInsp.estado_equipo) p.estado_equipo = filtHistInsp.estado_equipo
+    api.get('/mantenimiento/historial', { params: p })
       .then(r => setHistInsp(r.data))
       .finally(() => setLoadHistInsp(false))
   }, [filtHistInsp])
@@ -187,7 +186,7 @@ export default function Mantenimiento() {
   // ══════════════════════════════════════════════════════════════════════════
 
   function abrirRegistrarEjecucion(tarea) {
-    setModalEjec(tarea); setFormEjec(FORM_EJEC); setNokCorrec(false); setErrEjec('')
+    setModalEjec(tarea); setFormEjec({ ...FORM_EJEC, responsable: userResponsable }); setNokCorrec(false); setErrEjec('')
   }
 
   async function guardarEjecucion() {
@@ -293,6 +292,15 @@ export default function Mantenimiento() {
       if (formCierre.resultado === 'derivado_baja') cargarEquipos()
     } catch(e) { setErrCo(e.response?.data?.error || 'Error al cerrar') }
     finally { setSavCo(false) }
+  }
+
+  async function reabrirCorrectiva(c) {
+    if (!window.confirm(`¿Reabrir la correctiva de "${c.equipo_nombre}"? Volverá al estado Pendiente.`)) return
+    try {
+      await api.put(`/mantenimiento/correctivas/${c.id}`, { resultado: 'pendiente', fecha_fin: null })
+      cargarCorrectivas()
+      cargarEquipos()
+    } catch(e) { alert(e.response?.data?.error || 'Error al reabrir') }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -993,7 +1001,7 @@ export default function Mantenimiento() {
           </select>
           <button className="btn btn-outline-secondary" onClick={cargarCorrectivas}>Filtrar</button>
           {canWrite && (
-            <button className="btn btn-primary ms-auto" onClick={() => { setFormCo(FORM_CORREC); setErrCo(''); setSugsEq([]); setModalCo('nueva') }}>
+            <button className="btn btn-primary ms-auto" onClick={() => { setFormCo({ ...FORM_CORREC, responsable: userResponsable }); setErrCo(''); setSugsEq([]); setModalCo('nueva') }}>
               <i className="bi bi-plus me-1" />Nueva correctiva
             </button>
           )}
@@ -1004,7 +1012,7 @@ export default function Mantenimiento() {
         <div className="table-responsive">
           <table className="table table-sm table-hover">
             <thead className="table-dark">
-              <tr><th>Equipo</th><th>Detección</th><th>Falla</th><th>Tipo</th><th>Responsable</th><th>Estado</th><th style={{width:42}}></th>{canWrite && <th style={{width:80}}></th>}</tr>
+              <tr><th>Equipo</th><th>Detección</th><th>Falla</th><th>Acción realizada</th><th>Tipo</th><th>Responsable</th><th>Estado</th><th style={{width:42}}></th>{canWrite && <th style={{width:110}}></th>}</tr>
             </thead>
             <tbody>
               {correctivas.length === 0 && !loadCo && (
@@ -1015,6 +1023,11 @@ export default function Mantenimiento() {
                   <td><strong>{c.codigo}</strong><br/><small>{c.equipo_nombre}</small></td>
                   <td>{fmtF(c.fecha_deteccion)}</td>
                   <td>{c.descripcion_falla}</td>
+                  <td className="text-muted small" style={{maxWidth:160}}>
+                    {c.accion_realizada
+                      ? <span title={c.accion_realizada}>{c.accion_realizada.length > 50 ? c.accion_realizada.slice(0,50)+'…' : c.accion_realizada}</span>
+                      : <span className="fst-italic">—</span>}
+                  </td>
                   <td><span className="badge bg-secondary">{c.tipo_servicio}</span></td>
                   <td>{c.responsable||'—'}</td>
                   <td><span className={`badge bg-${BADGE_RESULTADO[c.resultado]||'secondary'}`}>{c.resultado}</span></td>
@@ -1026,11 +1039,18 @@ export default function Mantenimiento() {
                   </td>
                   {canWrite && (
                     <td>
-                      {c.resultado === 'pendiente' && (
-                        <button className="btn btn-sm btn-outline-success" onClick={() => { setCorrectivaSel(c); setFormCierre({ ...FORM_CIERRE, tipo_servicio: c.tipo_servicio }); setErrCo(''); setModalCo('cierre') }}>
-                          <i className="bi bi-check-circle me-1" />Cerrar
-                        </button>
-                      )}
+                      <div className="d-flex gap-1">
+                        {c.resultado === 'pendiente' && (
+                          <button className="btn btn-sm btn-outline-success" title="Cerrar" onClick={() => { setCorrectivaSel(c); setFormCierre({ ...FORM_CIERRE, tipo_servicio: c.tipo_servicio, responsable: userResponsable }); setErrCo(''); setModalCo('cierre') }}>
+                            <i className="bi bi-check-circle me-1" />Cerrar
+                          </button>
+                        )}
+                        {c.resultado === 'resuelto' && (
+                          <button className="btn btn-sm btn-outline-warning" title="Reabrir" onClick={() => reabrirCorrectiva(c)}>
+                            <i className="bi bi-arrow-counterclockwise me-1" />Reabrir
+                          </button>
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -1196,12 +1216,11 @@ export default function Mantenimiento() {
   // ══════════════════════════════════════════════════════════════════════════
 
   function TabHistorial() {
-    const BADGE_INSP = { OK: 'success', NOK: 'danger', requiere_atencion: 'warning', en_reparacion: 'warning', activo: 'success', baja: 'dark' }
-    const LABEL_INSP = { OK: 'OK', NOK: 'NOK', requiere_atencion: 'Requiere atención', en_reparacion: 'En reparación', activo: 'Activo', baja: 'Baja definitiva' }
-    const BADGE_IC = { pendiente: 'warning', resuelto: 'success', derivado_baja: 'secondary' }
-    const LABEL_IC = { pendiente: 'Pendiente', resuelto: 'Resuelto', derivado_baja: 'Derivado a baja' }
-    const TIPO_LABEL = { inspeccion: 'Inspección', correctiva: 'Correctiva', estado: 'Estado' }
-    const TIPO_BADGE = { inspeccion: 'info', correctiva: 'primary', estado: 'secondary' }
+    const BADGE_ESTADO_GEN = { OK: 'success', NOK: 'danger', Cuarentena: 'warning', requiere_atencion: 'warning', en_reparacion: 'warning', activo: 'success', baja: 'dark', pendiente: 'warning', resuelto: 'success', derivado_baja: 'secondary' }
+    const LABEL_ESTADO_GEN = { OK: 'OK', NOK: 'NOK', Cuarentena: 'Cuarentena', requiere_atencion: 'Requiere atención', en_reparacion: 'En reparación', activo: 'Activo', baja: 'Baja definitiva', pendiente: 'Pendiente', resuelto: 'Resuelto', derivado_baja: 'Derivado a baja' }
+    const TIPO_LABEL = { inspeccion: 'Inspección', preventiva: 'Preventiva', correctiva: 'Correctiva', estado: 'Cambio estado' }
+    const TIPO_BADGE = { inspeccion: 'info', preventiva: 'success', correctiva: 'danger', estado: 'secondary' }
+    const TIPO_TEXT  = { inspeccion: 'dark', preventiva: 'white', correctiva: 'white', estado: 'white' }
 
     const histFiltrado = filtHistInsp.buscar
       ? histInsp.filter(r =>
@@ -1219,23 +1238,13 @@ export default function Mantenimiento() {
               onChange={e => setFiltHistInsp(f => ({ ...f, buscar: e.target.value }))} />
           </div>
           <div className="col-md-2">
-            <select className="form-select" value={filtHistInsp.estado}
-              onChange={e => setFiltHistInsp(f => ({ ...f, estado: e.target.value }))}>
-              <option value="">Estado inspección</option>
-              <option value="OK">OK</option>
-              <option value="requiere_atencion">Requiere atención</option>
-              <option value="NOK">NOK</option>
-              <option value="en_reparacion">En reparación</option>
-            </select>
-          </div>
-          <div className="col-md-2">
-            <select className="form-select" value={filtHistInsp.estado_alerta}
-              onChange={e => setFiltHistInsp(f => ({ ...f, estado_alerta: e.target.value }))}>
-              <option value="">Estado preventivo</option>
-              <option value="vencida">Vencida</option>
-              <option value="proxima">Próxima</option>
-              <option value="nunca_ejecutada">Sin ejecutar</option>
-              <option value="al_dia">Al día</option>
+            <select className="form-select" value={filtHistInsp.tipo}
+              onChange={e => setFiltHistInsp(f => ({ ...f, tipo: e.target.value }))}>
+              <option value="">Todos los tipos</option>
+              <option value="inspeccion">Inspección</option>
+              <option value="preventiva">Preventiva</option>
+              <option value="correctiva">Correctiva</option>
+              <option value="estado">Cambio de estado</option>
             </select>
           </div>
           <div className="col-md-2">
@@ -1248,18 +1257,11 @@ export default function Mantenimiento() {
             </select>
           </div>
           <div className="col-md-2">
-            <select className="form-select" value={filtHistInsp.ubicacion}
-              onChange={e => setFiltHistInsp(f => ({ ...f, ubicacion: e.target.value }))}>
-              <option value="">Ubicación</option>
-              {meta.ubicaciones.map(u => <option key={u} value={u}>{u}</option>)}
-            </select>
-          </div>
-          <div className="col-md-1">
             <input type="date" className="form-control" title="Desde"
               value={filtHistInsp.desde}
               onChange={e => setFiltHistInsp(f => ({ ...f, desde: e.target.value }))} />
           </div>
-          <div className="col-md-1">
+          <div className="col-md-2">
             <input type="date" className="form-control" title="Hasta"
               value={filtHistInsp.hasta}
               onChange={e => setFiltHistInsp(f => ({ ...f, hasta: e.target.value }))} />
@@ -1279,7 +1281,7 @@ export default function Mantenimiento() {
               <div className="modal-content">
                 <div className="modal-header">
                   <h5 className="modal-title">
-                    <span className={`badge bg-${TIPO_BADGE[detalleHistorial.tipo]} me-2 text-${detalleHistorial.tipo === 'inspeccion' ? 'dark' : 'white'}`}>{TIPO_LABEL[detalleHistorial.tipo]}</span>
+                    <span className={`badge bg-${TIPO_BADGE[detalleHistorial.tipo] || 'secondary'} me-2 text-${TIPO_TEXT[detalleHistorial.tipo] || 'white'}`}>{TIPO_LABEL[detalleHistorial.tipo] || detalleHistorial.tipo}</span>
                     {detalleHistorial.codigo} — {detalleHistorial.equipo_nombre}
                   </h5>
                   <button className="btn-close" onClick={() => setDetalleHistorial(null)} />
@@ -1288,23 +1290,29 @@ export default function Mantenimiento() {
                   <p className="mb-1"><strong>Fecha:</strong> {fmtF(detalleHistorial.fecha)}</p>
                   {detalleHistorial.tipo === 'inspeccion' && (<>
                     <p className="mb-1"><strong>Resultado:</strong>{' '}
-                      <span className={`badge bg-${BADGE_INSP[detalleHistorial.estado_general] || 'secondary'}`}>{LABEL_INSP[detalleHistorial.estado_general] || detalleHistorial.estado_general}</span>
+                      <span className={`badge bg-${BADGE_ESTADO_GEN[detalleHistorial.estado_general] || 'secondary'}`}>{LABEL_ESTADO_GEN[detalleHistorial.estado_general] || detalleHistorial.estado_general}</span>
                     </p>
-                    <p className="mb-1"><strong>Ubicación verificada:</strong> {detalleHistorial.ubicacion_verificada || '—'}</p>
-                    <p className="mb-1"><strong>Etiqueta OK:</strong> {detalleHistorial.etiqueta_ok ? 'Sí' : 'No'}</p>
+                    <p className="mb-1"><strong>Observaciones:</strong> {detalleHistorial.observaciones || '—'}</p>
+                    <p className="mb-0"><strong>Responsable:</strong> {detalleHistorial.responsable || '—'}</p>
+                  </>)}
+                  {detalleHistorial.tipo === 'preventiva' && (<>
+                    <p className="mb-1"><strong>Tarea:</strong> {detalleHistorial.tarea_info || '—'}</p>
+                    <p className="mb-1"><strong>Resultado:</strong>{' '}
+                      <span className={`badge bg-${BADGE_ESTADO_GEN[detalleHistorial.estado_general] || 'secondary'}`}>{LABEL_ESTADO_GEN[detalleHistorial.estado_general] || detalleHistorial.estado_general}</span>
+                    </p>
                     <p className="mb-1"><strong>Observaciones:</strong> {detalleHistorial.observaciones || '—'}</p>
                     <p className="mb-0"><strong>Responsable:</strong> {detalleHistorial.responsable || '—'}</p>
                   </>)}
                   {detalleHistorial.tipo === 'estado' && (<>
                     <p className="mb-1"><strong>Cambio de estado:</strong>{' '}
-                      <span className={`badge bg-${BADGE_INSP[detalleHistorial.estado_anterior] || 'secondary'} me-1`}>{LABEL_INSP[detalleHistorial.estado_anterior] || detalleHistorial.estado_anterior || '—'}</span>
-                      → <span className={`badge bg-${BADGE_INSP[detalleHistorial.estado_general] || 'secondary'}`}>{LABEL_INSP[detalleHistorial.estado_general] || detalleHistorial.estado_general}</span>
+                      <span className={`badge bg-${BADGE_ESTADO_GEN[detalleHistorial.estado_anterior] || 'secondary'} me-1`}>{LABEL_ESTADO_GEN[detalleHistorial.estado_anterior] || detalleHistorial.estado_anterior || '—'}</span>
+                      → <span className={`badge bg-${BADGE_ESTADO_GEN[detalleHistorial.estado_general] || 'secondary'}`}>{LABEL_ESTADO_GEN[detalleHistorial.estado_general] || detalleHistorial.estado_general}</span>
                     </p>
                     <p className="mb-0"><strong>Motivo:</strong> {detalleHistorial.observaciones || '—'}</p>
                   </>)}
                   {detalleHistorial.tipo === 'correctiva' && (<>
                     <p className="mb-1"><strong>Resultado:</strong>{' '}
-                      <span className={`badge bg-${BADGE_IC[detalleHistorial.estado_general] || 'secondary'}`}>{LABEL_IC[detalleHistorial.estado_general] || detalleHistorial.estado_general}</span>
+                      <span className={`badge bg-${BADGE_ESTADO_GEN[detalleHistorial.estado_general] || 'secondary'}`}>{LABEL_ESTADO_GEN[detalleHistorial.estado_general] || detalleHistorial.estado_general}</span>
                     </p>
                     <p className="mb-1"><strong>Descripción de falla:</strong> {detalleHistorial.observaciones || '—'}</p>
                     <p className="mb-1"><strong>Acción realizada:</strong> {detalleHistorial.accion_realizada || '—'}</p>
@@ -1328,35 +1336,33 @@ export default function Mantenimiento() {
                     <th>Código</th>
                     <th>Equipo</th>
                     <th>Tipo</th>
-                    <th>Estado / Resultado</th>
+                    <th>Resultado</th>
                     <th>Estado equipo</th>
-                    <th>Ubicación verif.</th>
-                    <th style={{ width: 80 }}>Etiqueta</th>
-                    <th>Observaciones</th>
+                    <th>Detalle</th>
                     <th>Responsable</th>
-                    <th style={{ width: 50 }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {histFiltrado.length === 0 && (
-                    <tr><td colSpan={11} className="text-center text-muted py-3">Sin registros</td></tr>
+                    <tr><td colSpan={8} className="text-center text-muted py-3">Sin registros</td></tr>
                   )}
                   {histFiltrado.map(r => {
                     const rowClass =
-                      r.tipo === 'estado' ? 'table-secondary'
-                      : r.tipo === 'correctiva' && r.estado_general === 'derivado_baja' ? 'table-secondary'
-                      : r.estado_general === 'NOK' ? 'table-danger'
-                      : (r.estado_general === 'requiere_atencion' || (r.tipo === 'correctiva' && r.estado_general === 'pendiente')) ? 'table-warning'
+                      r.tipo === 'estado'     ? 'table-secondary'
+                      : r.estado_general === 'NOK' || r.estado_general === 'pendiente' ? 'table-warning'
+                      : r.estado_general === 'Cuarentena' || r.estado_general === 'requiere_atencion' ? 'table-warning'
+                      : r.estado_general === 'derivado_baja' || r.estado_general === 'baja' ? 'table-secondary'
                       : ''
-                    const badgeColor = r.tipo === 'correctiva' ? (BADGE_IC[r.estado_general] || 'secondary') : (BADGE_INSP[r.estado_general] || 'secondary')
-                    const badgeLabel = r.tipo === 'correctiva' ? (LABEL_IC[r.estado_general] || r.estado_general) : (LABEL_INSP[r.estado_general] || r.estado_general)
+                    const detalle = r.tipo === 'preventiva'
+                      ? (r.tarea_info || r.observaciones || '—')
+                      : (r.observaciones || '—')
                     return (
-                      <tr key={`${r.tipo}-${r.id}`} className={rowClass}>
+                      <tr key={`${r.tipo}-${r.id}`} className={`${rowClass} cursor-pointer`} style={{cursor:'pointer'}} onClick={() => setDetalleHistorial(r)}>
                         <td>{fmtF(r.fecha)}</td>
                         <td><strong>{r.codigo}</strong></td>
                         <td><small>{r.equipo_nombre}</small></td>
-                        <td><span className={`badge bg-${TIPO_BADGE[r.tipo] || 'secondary'} text-${r.tipo === 'inspeccion' ? 'dark' : 'white'}`}>{TIPO_LABEL[r.tipo] || r.tipo}</span></td>
-                        <td><span className={`badge bg-${badgeColor}`}>{badgeLabel}</span></td>
+                        <td><span className={`badge bg-${TIPO_BADGE[r.tipo] || 'secondary'} text-${TIPO_TEXT[r.tipo] || 'white'}`}>{TIPO_LABEL[r.tipo] || r.tipo}</span></td>
+                        <td><span className={`badge bg-${BADGE_ESTADO_GEN[r.estado_general] || 'secondary'}`}>{LABEL_ESTADO_GEN[r.estado_general] || r.estado_general}</span></td>
                         <td>
                           {r.equipo_estado === 'baja'
                             ? <span className="badge bg-secondary">Baja</span>
@@ -1364,21 +1370,8 @@ export default function Mantenimiento() {
                               ? <span className="badge bg-warning text-dark">En reparación</span>
                               : <span className="badge bg-success">Activo</span>}
                         </td>
-                        <td>{r.ubicacion_verificada || '—'}</td>
-                        <td className="text-center">
-                          {r.tipo !== 'inspeccion' ? <span className="text-muted">—</span>
-                            : r.etiqueta_ok
-                              ? <i className="bi bi-check-circle text-success" />
-                              : <i className="bi bi-x-circle text-danger" />}
-                        </td>
-                        <td><small>{r.observaciones || '—'}</small></td>
+                        <td><small>{detalle.length > 60 ? detalle.slice(0,60)+'…' : detalle}</small></td>
                         <td><small>{r.responsable || '—'}</small></td>
-                        <td className="text-center">
-                          <button className="btn btn-sm btn-outline-info py-0" title="Ver ficha del equipo"
-                            onClick={() => api.get(`/mantenimiento/equipos/${r.equipo_id}/perfil`).then(res => setPerfilEquipo(res.data)).catch(() => {})}>
-                            <i className="bi bi-info-circle" />
-                          </button>
-                        </td>
                       </tr>
                     )
                   })}

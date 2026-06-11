@@ -9,9 +9,10 @@ import Compras from './modules/compras/Compras'
 import ImprimirOC from './modules/compras/ImprimirOC'
 import Mantenimiento from './modules/mantenimiento/Mantenimiento'
 import Usuarios from './modules/configuracion/Usuarios'
-import Roles from './modules/configuracion/Roles'
 import Administracion from './modules/administracion/Administracion'
 import RRHH from './modules/rrhh/RRHH'
+import Partes from './modules/rrhh/Partes'
+import Codificacion from './modules/codificacion/Codificacion'
 
 export default function App() {
   return (
@@ -35,9 +36,10 @@ export default function App() {
             <Route path="/finanzas"    element={<EnConstruccion modulo="Finanzas" icono="cash-stack" />} />
             <Route path="/mantenimiento" element={<Mantenimiento />} />
             <Route path="/rrhh"         element={<RRHH />} />
+            <Route path="/partes"       element={<Partes />} />
+            <Route path="/codificacion" element={<Codificacion />} />
             <Route path="/administracion" element={<Administracion />} />
             <Route path="/usuarios"    element={<Usuarios />} />
-            <Route path="/roles"       element={<Roles />} />
             <Route index element={<Navigate to="/dashboard" replace />} />
           </Route>
         </Route>

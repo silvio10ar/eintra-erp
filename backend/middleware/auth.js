@@ -1,28 +1,21 @@
 const jwt = require('jsonwebtoken');
 const { db } = require('../db/database');
 
-const MODULOS = ['stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios'];
+const MODULOS = ['stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios','rrhh','partes','codificacion'];
+
+const MODULOS_LABEL = {
+  stock:'Stock', compras:'Compras', ventas:'Ventas', proyectos:'Proyectos',
+  produccion:'Producción', finanzas:'Finanzas', mantenimiento:'Mantenimiento',
+  administracion:'Administración', usuarios:'Usuarios', rrhh:'RRHH', partes:'Partes',
+  codificacion:'Codificación',
+};
 
 function getPermisosEfectivos(userId, rol) {
   if (rol === 'admin') {
     return Object.fromEntries(MODULOS.map(m => [m, { leer: true, escribir: true }]));
   }
-  const rows = db.prepare(`
-    SELECT rp.modulo,
-           MAX(rp.puede_leer)     as leer,
-           MAX(rp.puede_escribir) as escribir
-    FROM   usuario_roles ur
-    JOIN   rol_permisos rp ON rp.rol_id = ur.rol_id
-    JOIN   roles r         ON r.id = ur.rol_id AND r.activo = 1
-    WHERE  ur.usuario_id = ?
-    GROUP  BY rp.modulo
-  `).all(userId);
-  const permisos = Object.fromEntries(rows.map(r => [r.modulo, { leer: !!r.leer, escribir: !!r.escribir }]));
-  const directos = db.prepare('SELECT * FROM usuario_permisos WHERE usuario_id=?').all(userId);
-  for (const d of directos) {
-    permisos[d.modulo] = { leer: !!d.puede_leer, escribir: !!d.puede_escribir };
-  }
-  return permisos;
+  const rows = db.prepare('SELECT * FROM usuario_permisos WHERE usuario_id=?').all(userId);
+  return Object.fromEntries(rows.map(r => [r.modulo, { leer: !!r.puede_leer, escribir: !!r.puede_escribir }]));
 }
 
 function verificarToken(req, res, next) {
@@ -36,28 +29,10 @@ function verificarToken(req, res, next) {
   });
 }
 
-function requiereRol(...roles) {
-  return (req, res, next) => {
-    if (req.usuario.rol === 'admin') return next();
-    if (!roles.includes(req.usuario.rol))
-      return res.status(403).json({ error: 'Sin permisos para esta operación' });
-    next();
-  };
-}
-
 // Helpers de permiso para usar en rutas
 const puede = {
   leer:    modulo => (req, res, next) => req.permisos[modulo]?.leer     ? next() : res.status(403).json({ error: 'Sin permisos de lectura'    }),
   escribir:modulo => (req, res, next) => req.permisos[modulo]?.escribir ? next() : res.status(403).json({ error: 'Sin permisos de escritura'  }),
 };
 
-module.exports = {
-  verificarToken, requiereRol, puede, getPermisosEfectivos, MODULOS,
-  // Mantenidos por compatibilidad (ya no los usa el middleware pero los importan las rutas)
-  ESCRITURA_STOCK:     ['admin','deposito','compras','produccion'],
-  ESCRITURA_COMPRAS:   ['admin','compras'],
-  ESCRITURA_VENTAS:    ['admin','ventas'],
-  ESCRITURA_PROYECTOS: ['admin','ventas','produccion'],
-  ESCRITURA_PRODUCCION:['admin','produccion'],
-  ESCRITURA_FINANZAS:  ['admin','finanzas'],
-};
+module.exports = { verificarToken, puede, getPermisosEfectivos, MODULOS, MODULOS_LABEL };

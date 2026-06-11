@@ -1,0 +1,6558 @@
+{
+  "EXPLICACION GRAL": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "GALVANIZADO"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "SOLDAR"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "EPOXI"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "VALVULAS"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "BULONERIA"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "PVC"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "POLIPROPILENO"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "PASARELAS"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "MAT. ELECTRICO"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "BOMBAS"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "EQUIP. ELECTROMEC"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "MANGUERAS"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "DIFUSORES"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "ESTRUCTURA"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "FILTROS"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "TANQUES"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "MAT. VOLUTA"
+        },
+        {
+          "codigo": "I",
+          "descripcion": "TERMOFUSION"
+        },
+        {
+          "codigo": "J",
+          "descripcion": "ACCESORIOS MECANICOS"
+        },
+        {
+          "codigo": "K",
+          "descripcion": "ACERO INOXIDABLE"
+        },
+        {
+          "codigo": "L",
+          "descripcion": ""
+        },
+        {
+          "codigo": "M",
+          "descripcion": ""
+        },
+        {
+          "codigo": "N",
+          "descripcion": ""
+        },
+        {
+          "codigo": "O",
+          "descripcion": ""
+        },
+        {
+          "codigo": "P",
+          "descripcion": ""
+        },
+        {
+          "codigo": "Q",
+          "descripcion": ""
+        },
+        {
+          "codigo": "R",
+          "descripcion": ""
+        },
+        {
+          "codigo": "S",
+          "descripcion": ""
+        },
+        {
+          "codigo": "T",
+          "descripcion": ""
+        },
+        {
+          "codigo": "U",
+          "descripcion": ""
+        },
+        {
+          "codigo": "V",
+          "descripcion": ""
+        },
+        {
+          "codigo": "W",
+          "descripcion": ""
+        },
+        {
+          "codigo": "X",
+          "descripcion": ""
+        },
+        {
+          "codigo": "Y",
+          "descripcion": ""
+        },
+        {
+          "codigo": "Z",
+          "descripcion": ""
+        },
+        {
+          "codigo": "ZZ",
+          "descripcion": "MAT. POCO USUALES"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TERCER DIGITO\nACCESORIOS",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "CODO"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "CURVA"
+        },
+        {
+          "codigo": "02",
+          "descripcion": "CODO LARGO"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "CODO REDUCC"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "TEE"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "TEE REDUCIDO"
+        },
+        {
+          "codigo": "12",
+          "descripcion": "CRUZ HHH"
+        },
+        {
+          "codigo": "13",
+          "descripcion": ""
+        },
+        {
+          "codigo": "14",
+          "descripcion": ""
+        },
+        {
+          "codigo": "20",
+          "descripcion": "CASQUILLO RED"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "REDUCC CONICA"
+        },
+        {
+          "codigo": "22",
+          "descripcion": "BUJE REDUCCION"
+        },
+        {
+          "codigo": "23",
+          "descripcion": "BUJE REDUCC LARGO"
+        },
+        {
+          "codigo": "24",
+          "descripcion": "REDUCC CONCENTRICA"
+        },
+        {
+          "codigo": "25",
+          "descripcion": "REDUCC EXCENTRICA"
+        },
+        {
+          "codigo": "26",
+          "descripcion": ""
+        },
+        {
+          "codigo": "27",
+          "descripcion": ""
+        },
+        {
+          "codigo": "30",
+          "descripcion": "CUPLA DE REDUCC"
+        },
+        {
+          "codigo": "31",
+          "descripcion": "MANGUITO UNION"
+        },
+        {
+          "codigo": "32",
+          "descripcion": "CUPLA"
+        },
+        {
+          "codigo": "33",
+          "descripcion": ""
+        },
+        {
+          "codigo": "34",
+          "descripcion": ""
+        },
+        {
+          "codigo": "40",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "41",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "42",
+          "descripcion": "ENTRE ROSCA"
+        },
+        {
+          "codigo": "43",
+          "descripcion": "ESPIGA (RACOR)"
+        },
+        {
+          "codigo": "44",
+          "descripcion": "ESPIGA ACODADA"
+        },
+        {
+          "codigo": "45",
+          "descripcion": "ROSCA C/ TUERCA RED"
+        },
+        {
+          "codigo": "46",
+          "descripcion": ""
+        },
+        {
+          "codigo": "47",
+          "descripcion": ""
+        },
+        {
+          "codigo": "50",
+          "descripcion": "UNION DOBLE"
+        },
+        {
+          "codigo": "51",
+          "descripcion": "MONTURA"
+        },
+        {
+          "codigo": "52",
+          "descripcion": ""
+        },
+        {
+          "codigo": "53",
+          "descripcion": ""
+        },
+        {
+          "codigo": "60",
+          "descripcion": "TAPA"
+        },
+        {
+          "codigo": "61",
+          "descripcion": "TAPON"
+        },
+        {
+          "codigo": "62",
+          "descripcion": ""
+        },
+        {
+          "codigo": "63",
+          "descripcion": ""
+        },
+        {
+          "codigo": "70",
+          "descripcion": "CENTRO BRIDA"
+        },
+        {
+          "codigo": "71",
+          "descripcion": "BRIDA GIRATORIA"
+        },
+        {
+          "codigo": "72",
+          "descripcion": "BRIDA FIJA"
+        },
+        {
+          "codigo": "73",
+          "descripcion": "BRIDA ROSCADA"
+        },
+        {
+          "codigo": "74",
+          "descripcion": "BRIDA S125"
+        },
+        {
+          "codigo": "75",
+          "descripcion": "BRIDA S150"
+        },
+        {
+          "codigo": "76",
+          "descripcion": ""
+        },
+        {
+          "codigo": "77",
+          "descripcion": ""
+        },
+        {
+          "codigo": "80",
+          "descripcion": "TERMINAL"
+        },
+        {
+          "codigo": "81",
+          "descripcion": "MACHON"
+        },
+        {
+          "codigo": "82",
+          "descripcion": ""
+        },
+        {
+          "codigo": "83",
+          "descripcion": ""
+        },
+        {
+          "codigo": "90",
+          "descripcion": "CAÑOS METAL"
+        },
+        {
+          "codigo": "91",
+          "descripcion": "CAÑOS PLASTICO"
+        },
+        {
+          "codigo": "92",
+          "descripcion": "NIPLE"
+        },
+        {
+          "codigo": "93",
+          "descripcion": "NIPLE PASA TANQUE"
+        },
+        {
+          "codigo": "94",
+          "descripcion": ""
+        },
+        {
+          "codigo": "95",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "PEGAR H-H"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PEGAR M-H"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ROSCADO H-H"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ROSCADO M-H"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ROSCADO M-M"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "MIXTO PEGAR ROSCADO H-H"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "MIXTO PEGAR ROSCADO M-H"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "SOLDAR"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "BRIDADA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "MIXTO SOLDAR ROSCADO M-M"
+        }
+      ]
+    }
+  ],
+  "1-GALVANIZADO": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "GALVANIZADO"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TERCER DIGITO\nACCESORIOS",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "CODO"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "CURVA"
+        },
+        {
+          "codigo": "02",
+          "descripcion": "CODO LARGO"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "CODO REDUCC"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "TEE"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "TEE REDUCIDO"
+        },
+        {
+          "codigo": "12",
+          "descripcion": "CRUZ HHH"
+        },
+        {
+          "codigo": "13",
+          "descripcion": ""
+        },
+        {
+          "codigo": "14",
+          "descripcion": ""
+        },
+        {
+          "codigo": "20",
+          "descripcion": "CASQUILLO RED"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "REDUCC CONICA"
+        },
+        {
+          "codigo": "22",
+          "descripcion": "BUJE REDUCCION"
+        },
+        {
+          "codigo": "23",
+          "descripcion": "BUJE REDUCC LARGO"
+        },
+        {
+          "codigo": "24",
+          "descripcion": "REDUCC CONCENTRICA"
+        },
+        {
+          "codigo": "25",
+          "descripcion": "REDUCC EXCENTRICA"
+        },
+        {
+          "codigo": "26",
+          "descripcion": ""
+        },
+        {
+          "codigo": "27",
+          "descripcion": ""
+        },
+        {
+          "codigo": "30",
+          "descripcion": "CUPLA DE REDUCC"
+        },
+        {
+          "codigo": "31",
+          "descripcion": "MANGUITO UNION"
+        },
+        {
+          "codigo": "32",
+          "descripcion": "CUPLA"
+        },
+        {
+          "codigo": "33",
+          "descripcion": ""
+        },
+        {
+          "codigo": "34",
+          "descripcion": ""
+        },
+        {
+          "codigo": "40",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "41",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "42",
+          "descripcion": "ENTRE ROSCA"
+        },
+        {
+          "codigo": "43",
+          "descripcion": "ESPIGA (RACOR)"
+        },
+        {
+          "codigo": "44",
+          "descripcion": "ESPIGA ACODADA"
+        },
+        {
+          "codigo": "45",
+          "descripcion": "ROSCA C/ TUERCA RED"
+        },
+        {
+          "codigo": "46",
+          "descripcion": ""
+        },
+        {
+          "codigo": "47",
+          "descripcion": ""
+        },
+        {
+          "codigo": "50",
+          "descripcion": "UNION DOBLE"
+        },
+        {
+          "codigo": "51",
+          "descripcion": "MONTURA"
+        },
+        {
+          "codigo": "52",
+          "descripcion": ""
+        },
+        {
+          "codigo": "53",
+          "descripcion": ""
+        },
+        {
+          "codigo": "60",
+          "descripcion": "TAPA"
+        },
+        {
+          "codigo": "61",
+          "descripcion": "TAPON"
+        },
+        {
+          "codigo": "62",
+          "descripcion": ""
+        },
+        {
+          "codigo": "63",
+          "descripcion": ""
+        },
+        {
+          "codigo": "70",
+          "descripcion": "CENTRO BRIDA"
+        },
+        {
+          "codigo": "71",
+          "descripcion": "BRIDA GIRATORIA"
+        },
+        {
+          "codigo": "72",
+          "descripcion": "BRIDA FIJA"
+        },
+        {
+          "codigo": "73",
+          "descripcion": "BRIDA ROSCADA"
+        },
+        {
+          "codigo": "74",
+          "descripcion": "BRIDA S125"
+        },
+        {
+          "codigo": "75",
+          "descripcion": "BRIDA S150"
+        },
+        {
+          "codigo": "76",
+          "descripcion": ""
+        },
+        {
+          "codigo": "77",
+          "descripcion": ""
+        },
+        {
+          "codigo": "80",
+          "descripcion": "TERMINAL"
+        },
+        {
+          "codigo": "81",
+          "descripcion": "MACHON"
+        },
+        {
+          "codigo": "82",
+          "descripcion": ""
+        },
+        {
+          "codigo": "83",
+          "descripcion": ""
+        },
+        {
+          "codigo": "90",
+          "descripcion": "CAÑOS METAL"
+        },
+        {
+          "codigo": "91",
+          "descripcion": "CAÑOS PLASTICO"
+        },
+        {
+          "codigo": "92",
+          "descripcion": "NIPLE"
+        },
+        {
+          "codigo": "93",
+          "descripcion": "NIPLE PASA TANQUE"
+        },
+        {
+          "codigo": "94",
+          "descripcion": ""
+        },
+        {
+          "codigo": "95",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "PEGAR H-H"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PEGAR M-H"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ROSCADO H-H"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ROSCADO M-H"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ROSCADO M-M"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "MIXTO PEGAR ROSCADO H-H"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "MIXTO PEGAR ROSCADO M-H"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "SOLDAR"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "BRIDADA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "MIXTO SOLDAR ROSCADO M-M"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nANGULO/RADIO/LONGITUD",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO APLICA n/a"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "45°"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "90°"
+        }
+      ]
+    }
+  ],
+  "2-SOLDAR": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "2",
+          "descripcion": "SOLDAR"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TERCER DIGITO\nACCESORIOS",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "CODO"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "CURVA"
+        },
+        {
+          "codigo": "02",
+          "descripcion": "CODO LARGO"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "CODO REDUCC"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "TEE"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "TEE REDUCIDO"
+        },
+        {
+          "codigo": "12",
+          "descripcion": "CRUZ HHH"
+        },
+        {
+          "codigo": "13",
+          "descripcion": ""
+        },
+        {
+          "codigo": "14",
+          "descripcion": ""
+        },
+        {
+          "codigo": "20",
+          "descripcion": "CASQUILLO RED"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "REDUCC CONICA"
+        },
+        {
+          "codigo": "22",
+          "descripcion": "BUJE REDUCCION"
+        },
+        {
+          "codigo": "23",
+          "descripcion": "BUJE REDUCC LARGO"
+        },
+        {
+          "codigo": "24",
+          "descripcion": "REDUCC CONCENTRICA"
+        },
+        {
+          "codigo": "25",
+          "descripcion": "REDUCC EXCENTRICA"
+        },
+        {
+          "codigo": "26",
+          "descripcion": ""
+        },
+        {
+          "codigo": "27",
+          "descripcion": ""
+        },
+        {
+          "codigo": "30",
+          "descripcion": "CUPLA DE REDUCC"
+        },
+        {
+          "codigo": "31",
+          "descripcion": "MANGUITO UNION"
+        },
+        {
+          "codigo": "32",
+          "descripcion": "CUPLA"
+        },
+        {
+          "codigo": "33",
+          "descripcion": ""
+        },
+        {
+          "codigo": "34",
+          "descripcion": ""
+        },
+        {
+          "codigo": "40",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "41",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "42",
+          "descripcion": "ENTRE ROSCA"
+        },
+        {
+          "codigo": "43",
+          "descripcion": "ESPIGA (RACOR)"
+        },
+        {
+          "codigo": "44",
+          "descripcion": "ESPIGA ACODADA"
+        },
+        {
+          "codigo": "45",
+          "descripcion": "ROSCA C/ TUERCA RED"
+        },
+        {
+          "codigo": "46",
+          "descripcion": ""
+        },
+        {
+          "codigo": "47",
+          "descripcion": ""
+        },
+        {
+          "codigo": "50",
+          "descripcion": "UNION DOBLE"
+        },
+        {
+          "codigo": "51",
+          "descripcion": "MONTURA"
+        },
+        {
+          "codigo": "52",
+          "descripcion": ""
+        },
+        {
+          "codigo": "53",
+          "descripcion": ""
+        },
+        {
+          "codigo": "60",
+          "descripcion": "TAPA"
+        },
+        {
+          "codigo": "61",
+          "descripcion": "TAPON"
+        },
+        {
+          "codigo": "62",
+          "descripcion": ""
+        },
+        {
+          "codigo": "63",
+          "descripcion": ""
+        },
+        {
+          "codigo": "70",
+          "descripcion": "CENTRO BRIDA"
+        },
+        {
+          "codigo": "71",
+          "descripcion": "BRIDA GIRATORIA"
+        },
+        {
+          "codigo": "72",
+          "descripcion": "BRIDA FIJA"
+        },
+        {
+          "codigo": "73",
+          "descripcion": "BRIDA ROSCADA"
+        },
+        {
+          "codigo": "74",
+          "descripcion": "BRIDA S125"
+        },
+        {
+          "codigo": "75",
+          "descripcion": "BRIDA S150"
+        },
+        {
+          "codigo": "76",
+          "descripcion": ""
+        },
+        {
+          "codigo": "77",
+          "descripcion": ""
+        },
+        {
+          "codigo": "80",
+          "descripcion": "TERMINAL"
+        },
+        {
+          "codigo": "81",
+          "descripcion": "MACHON"
+        },
+        {
+          "codigo": "82",
+          "descripcion": ""
+        },
+        {
+          "codigo": "83",
+          "descripcion": ""
+        },
+        {
+          "codigo": "90",
+          "descripcion": "CAÑOS METAL"
+        },
+        {
+          "codigo": "91",
+          "descripcion": "CAÑOS PLASTICO"
+        },
+        {
+          "codigo": "92",
+          "descripcion": "NIPLE"
+        },
+        {
+          "codigo": "93",
+          "descripcion": "NIPLE PASA TANQUE"
+        },
+        {
+          "codigo": "94",
+          "descripcion": ""
+        },
+        {
+          "codigo": "95",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "PEGAR H-H"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PEGAR M-H"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ROSCADO H-H"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ROSCADO M-H"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ROSCADO M-M"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "MIXTO PEGAR ROSCADO H-H"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "MIXTO PEGAR ROSCADO M-H"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "SOLDAR"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "BRIDADA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "MIXTO SOLDAR ROSCADO M-M"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nANGULO/RADIO/LONGITUD",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO APLICA n/a"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "45°"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "90°"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO Y SEPTIMO DIGITO\nBRIDAS\nSERIE DE LAS BRIDAS",
+      "valores": [
+        {
+          "codigo": "25",
+          "descripcion": "SERIE 125"
+        },
+        {
+          "codigo": "50",
+          "descripcion": "SERIE 150"
+        }
+      ]
+    }
+  ],
+  "3-EPOXI": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "3",
+          "descripcion": "EPOXI"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TERCER DIGITO\nACCESORIOS",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "CODO"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "CURVA"
+        },
+        {
+          "codigo": "02",
+          "descripcion": "CODO LARGO"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "CODO REDUCC"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "TEE"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "TEE REDUCIDO"
+        },
+        {
+          "codigo": "12",
+          "descripcion": "CRUZ HHH"
+        },
+        {
+          "codigo": "13",
+          "descripcion": ""
+        },
+        {
+          "codigo": "14",
+          "descripcion": ""
+        },
+        {
+          "codigo": "20",
+          "descripcion": "CASQUILLO RED"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "REDUCC CONICA"
+        },
+        {
+          "codigo": "22",
+          "descripcion": "BUJE REDUCCION"
+        },
+        {
+          "codigo": "23",
+          "descripcion": "BUJE REDUCC LARGO"
+        },
+        {
+          "codigo": "24",
+          "descripcion": "REDUCC CONCENTRICA"
+        },
+        {
+          "codigo": "25",
+          "descripcion": "REDUCC EXCENTRICA"
+        },
+        {
+          "codigo": "26",
+          "descripcion": ""
+        },
+        {
+          "codigo": "27",
+          "descripcion": ""
+        },
+        {
+          "codigo": "30",
+          "descripcion": "CUPLA DE REDUCC"
+        },
+        {
+          "codigo": "31",
+          "descripcion": "MANGUITO UNION"
+        },
+        {
+          "codigo": "32",
+          "descripcion": "CUPLA"
+        },
+        {
+          "codigo": "33",
+          "descripcion": ""
+        },
+        {
+          "codigo": "34",
+          "descripcion": ""
+        },
+        {
+          "codigo": "40",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "41",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "42",
+          "descripcion": "ENTRE ROSCA"
+        },
+        {
+          "codigo": "43",
+          "descripcion": "ESPIGA (RACOR)"
+        },
+        {
+          "codigo": "44",
+          "descripcion": "ESPIGA ACODADA"
+        },
+        {
+          "codigo": "45",
+          "descripcion": "ROSCA C/ TUERCA RED"
+        },
+        {
+          "codigo": "46",
+          "descripcion": ""
+        },
+        {
+          "codigo": "47",
+          "descripcion": ""
+        },
+        {
+          "codigo": "50",
+          "descripcion": "UNION DOBLE"
+        },
+        {
+          "codigo": "51",
+          "descripcion": "MONTURA"
+        },
+        {
+          "codigo": "52",
+          "descripcion": ""
+        },
+        {
+          "codigo": "53",
+          "descripcion": ""
+        },
+        {
+          "codigo": "60",
+          "descripcion": "TAPA"
+        },
+        {
+          "codigo": "61",
+          "descripcion": "TAPON"
+        },
+        {
+          "codigo": "62",
+          "descripcion": ""
+        },
+        {
+          "codigo": "63",
+          "descripcion": ""
+        },
+        {
+          "codigo": "70",
+          "descripcion": "CENTRO BRIDA"
+        },
+        {
+          "codigo": "71",
+          "descripcion": "BRIDA GIRATORIA"
+        },
+        {
+          "codigo": "72",
+          "descripcion": "BRIDA FIJA"
+        },
+        {
+          "codigo": "73",
+          "descripcion": "BRIDA ROSCADA"
+        },
+        {
+          "codigo": "74",
+          "descripcion": "BRIDA S125"
+        },
+        {
+          "codigo": "75",
+          "descripcion": "BRIDA S150"
+        },
+        {
+          "codigo": "76",
+          "descripcion": ""
+        },
+        {
+          "codigo": "77",
+          "descripcion": ""
+        },
+        {
+          "codigo": "80",
+          "descripcion": "TERMINAL"
+        },
+        {
+          "codigo": "81",
+          "descripcion": "MACHON"
+        },
+        {
+          "codigo": "82",
+          "descripcion": ""
+        },
+        {
+          "codigo": "83",
+          "descripcion": ""
+        },
+        {
+          "codigo": "90",
+          "descripcion": "CAÑOS METAL"
+        },
+        {
+          "codigo": "91",
+          "descripcion": "CAÑOS PLASTICO"
+        },
+        {
+          "codigo": "92",
+          "descripcion": "NIPLE"
+        },
+        {
+          "codigo": "93",
+          "descripcion": "NIPLE PASA TANQUE"
+        },
+        {
+          "codigo": "94",
+          "descripcion": ""
+        },
+        {
+          "codigo": "95",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "PEGAR H-H"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PEGAR M-H"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ROSCADO H-H"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ROSCADO M-H"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ROSCADO M-M"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "MIXTO PEGAR ROSCADO H-H"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "MIXTO PEGAR ROSCADO M-H"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "SOLDAR"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "BRIDADA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "MIXTO SOLDAR ROSCADO M-M"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nANGULO/RADIO/LONGITUD",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO APLICA n/a"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "45°"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "90°"
+        }
+      ]
+    }
+  ],
+  "4-VALVULAS": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "4",
+          "descripcion": "VALVULAS"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO DIGITO TIPO DE\nVALVULAS",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "MARIPOSA"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "MARIPOSA C/ ACTUADOR E"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "MARIPOSA C/ ACTUADOR N"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ESFERICA CUERPO EN 3 PARTES"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ESFERICA PASO TOTAL"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "ESFERICAS C/ ACTUADOR E"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "ESFERICAS C/ ACTUADOR N"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "DIAFRAGMA"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "CUCHILLA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "RETENCION A BOLA"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "RETENCION A RESORTE"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "RETENCION A CLAPETA"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "RETENCION BUTTERFLY/MARIPOSA"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "SOLENOIDE"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "AGUJA"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "GLOBO"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "ELECTROVAL NEU 1 VIA"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "ELECTROVAL NEU 2 VIAS"
+        },
+        {
+          "codigo": "I",
+          "descripcion": "ELECTROVAL NEU 3 VIAS"
+        },
+        {
+          "codigo": "J",
+          "descripcion": "ELECTROVAL NEU 4 VIAS"
+        },
+        {
+          "codigo": "K",
+          "descripcion": "ELECTROVAL NEU 5 VIAS"
+        },
+        {
+          "codigo": "L",
+          "descripcion": "VALV DE SEGURIDAD"
+        },
+        {
+          "codigo": "M",
+          "descripcion": "VALV DE SUCCION"
+        },
+        {
+          "codigo": "N",
+          "descripcion": "VALV DE INYECCION"
+        },
+        {
+          "codigo": "P",
+          "descripcion": "UNIBLOCK"
+        },
+        {
+          "codigo": "Q",
+          "descripcion": "VISOR DE LIQUIDOS"
+        },
+        {
+          "codigo": "R",
+          "descripcion": "ESFERICA 3 VIAS PASO REDUCIDO"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO  MATERIAL",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "ACERO INOX"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "BRONCE"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "HIERRO"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ALUMINIO"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "CPVC"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "PVC"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "POLIPROPILENO"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "TERMOFUSION"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "POLIETILENO"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "PEGAR H-H"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PEGAR M-H"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "PEGAR D.U H-H"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "PEGAR S.U H-H"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ROSCADO H-H"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "ROSCADO M-H"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "ROSCADO M-M"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "ROSCADA D.U H-H"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "ROSCADA S.U H-H"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "MIXTO PEGAR ROSCADO H-H"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "MIXTO PEGAR ROSCADO M-H"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "SOLDAR"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "BRIDADA"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "FUSION"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nTENSION",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO APLICA"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "12 VCA"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "12 VCC"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "24 VCA"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "24 VCC"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "110 VCA"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "220 VCA"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "380 VCA"
+        }
+      ]
+    }
+  ],
+  "5-BULONERIA": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "5",
+          "descripcion": "BULONERIA"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO DIGITO\nPIEZA",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "TUERCA"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ARANDELA"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ALLEN CILINDRICO"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "TORNILLO"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "BULON HEXAGONAL"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "VARILLA ROSCADA"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "GRAMPA"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "ABRAZADERA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "PATAS SOPLADOR"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "REMACHES"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "PRECINTO"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "ESPARRAGO"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "GRAMPA G-03"
+        },
+        {
+          "codigo": "F",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nMATERIAL",
+      "valores": [
+        {
+          "codigo": "4",
+          "descripcion": "NEGRO"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "ACERO ZINCADO"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "ACERO INOXIDABLE"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "ACERO DE GRADO"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "GOMA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "ALUMINIO"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "PLASTICO"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "ACERO"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "ACERO INOX ALTA PRESION"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "GALVANIZADO"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO Y QUINTO DIGITO\nLETRA CODIGO\nGRAL",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "ALLEN"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "AUTOPERFORANTE"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "AUTOFRENANTE"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "MANGUITO DE BRIDA"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "ANILLO DE BRIDA"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "FIJA"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "GROWER"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "MACHO MIXTO RECTO"
+        },
+        {
+          "codigo": "I",
+          "descripcion": "MACHO HEMBRA RECTO"
+        },
+        {
+          "codigo": "J",
+          "descripcion": "CORTO"
+        },
+        {
+          "codigo": "K",
+          "descripcion": "LARGO"
+        },
+        {
+          "codigo": "L",
+          "descripcion": "PLANA"
+        },
+        {
+          "codigo": "M",
+          "descripcion": "METRICA"
+        },
+        {
+          "codigo": "N",
+          "descripcion": "COLOR NEGRO"
+        },
+        {
+          "codigo": "Ñ",
+          "descripcion": ""
+        },
+        {
+          "codigo": "O",
+          "descripcion": "COLOR BLANCO"
+        },
+        {
+          "codigo": "P",
+          "descripcion": "PULGADA"
+        },
+        {
+          "codigo": "Q",
+          "descripcion": ""
+        },
+        {
+          "codigo": "R",
+          "descripcion": "ROSCADA"
+        },
+        {
+          "codigo": "S",
+          "descripcion": "SLIP ON"
+        },
+        {
+          "codigo": "T",
+          "descripcion": "MECHA"
+        },
+        {
+          "codigo": "U",
+          "descripcion": ""
+        },
+        {
+          "codigo": "V",
+          "descripcion": ""
+        },
+        {
+          "codigo": "W",
+          "descripcion": "WAFER"
+        },
+        {
+          "codigo": "X",
+          "descripcion": ""
+        },
+        {
+          "codigo": "Y",
+          "descripcion": "TIPO CARRETEL"
+        },
+        {
+          "codigo": "Z",
+          "descripcion": "TACO DE GOMA REDONDO"
+        }
+      ]
+    }
+  ],
+  "6-PVC": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "6",
+          "descripcion": "PVC"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TERCER DIGITO\nACCESORIOS",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "CODO"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "CURVA"
+        },
+        {
+          "codigo": "02",
+          "descripcion": "CODO LARGO"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "CODO REDUCC"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "TEE"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "TEE REDUCIDO"
+        },
+        {
+          "codigo": "12",
+          "descripcion": "CRUZ HHH"
+        },
+        {
+          "codigo": "13",
+          "descripcion": ""
+        },
+        {
+          "codigo": "14",
+          "descripcion": ""
+        },
+        {
+          "codigo": "20",
+          "descripcion": "CASQUILLO RED"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "REDUCC CONICA"
+        },
+        {
+          "codigo": "22",
+          "descripcion": "BUJE REDUCCION"
+        },
+        {
+          "codigo": "23",
+          "descripcion": "BUJE REDUCC LARGO"
+        },
+        {
+          "codigo": "24",
+          "descripcion": "REDUCC CONCENTRICA"
+        },
+        {
+          "codigo": "25",
+          "descripcion": "REDUCC EXCENTRICA"
+        },
+        {
+          "codigo": "26",
+          "descripcion": ""
+        },
+        {
+          "codigo": "27",
+          "descripcion": ""
+        },
+        {
+          "codigo": "30",
+          "descripcion": "CUPLA DE REDUCC"
+        },
+        {
+          "codigo": "31",
+          "descripcion": "MANGUITO UNION"
+        },
+        {
+          "codigo": "32",
+          "descripcion": "CUPLA"
+        },
+        {
+          "codigo": "33",
+          "descripcion": ""
+        },
+        {
+          "codigo": "34",
+          "descripcion": ""
+        },
+        {
+          "codigo": "40",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "41",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "42",
+          "descripcion": "ENTRE ROSCA"
+        },
+        {
+          "codigo": "43",
+          "descripcion": "ESPIGA (RACOR)"
+        },
+        {
+          "codigo": "44",
+          "descripcion": "ESPIGA ACODADA"
+        },
+        {
+          "codigo": "45",
+          "descripcion": "ROSCA C/ TUERCA RED"
+        },
+        {
+          "codigo": "46",
+          "descripcion": ""
+        },
+        {
+          "codigo": "47",
+          "descripcion": ""
+        },
+        {
+          "codigo": "50",
+          "descripcion": "UNION DOBLE"
+        },
+        {
+          "codigo": "51",
+          "descripcion": "MONTURA"
+        },
+        {
+          "codigo": "52",
+          "descripcion": ""
+        },
+        {
+          "codigo": "53",
+          "descripcion": ""
+        },
+        {
+          "codigo": "60",
+          "descripcion": "TAPA"
+        },
+        {
+          "codigo": "61",
+          "descripcion": "TAPON"
+        },
+        {
+          "codigo": "62",
+          "descripcion": ""
+        },
+        {
+          "codigo": "63",
+          "descripcion": ""
+        },
+        {
+          "codigo": "70",
+          "descripcion": "CENTRO BRIDA"
+        },
+        {
+          "codigo": "71",
+          "descripcion": "BRIDA GIRATORIA"
+        },
+        {
+          "codigo": "72",
+          "descripcion": "BRIDA FIJA"
+        },
+        {
+          "codigo": "73",
+          "descripcion": "BRIDA ROSCADA"
+        },
+        {
+          "codigo": "74",
+          "descripcion": "BRIDA S125"
+        },
+        {
+          "codigo": "75",
+          "descripcion": "BRIDA S150"
+        },
+        {
+          "codigo": "76",
+          "descripcion": ""
+        },
+        {
+          "codigo": "77",
+          "descripcion": ""
+        },
+        {
+          "codigo": "80",
+          "descripcion": "TERMINAL"
+        },
+        {
+          "codigo": "81",
+          "descripcion": "MACHON"
+        },
+        {
+          "codigo": "82",
+          "descripcion": ""
+        },
+        {
+          "codigo": "83",
+          "descripcion": ""
+        },
+        {
+          "codigo": "90",
+          "descripcion": "CAÑOS METAL"
+        },
+        {
+          "codigo": "91",
+          "descripcion": "CAÑOS PLASTICO"
+        },
+        {
+          "codigo": "92",
+          "descripcion": "NIPLE"
+        },
+        {
+          "codigo": "93",
+          "descripcion": "NIPLE PASA TANQUE"
+        },
+        {
+          "codigo": "94",
+          "descripcion": ""
+        },
+        {
+          "codigo": "95",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "PEGAR H-H"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PEGAR M-H"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ROSCADO H-H"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ROSCADO M-H"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ROSCADO M-M"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "MIXTO PEGAR ROSCADO H-H"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "MIXTO PEGAR ROSCADO M-H"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "SOLDAR"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "BRIDADA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "MIXTO SOLDAR ROSCADO M-M"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nANGULO/RADIO/LONGITUD",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO APLICA n/a"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "45°"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "90°"
+        }
+      ]
+    }
+  ],
+  "7-POLIPROPILENO": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "7",
+          "descripcion": "POLIPROPILENO"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TERCER DIGITO\nACCESORIOS",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "CODO"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "CURVA"
+        },
+        {
+          "codigo": "02",
+          "descripcion": "CODO LARGO"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "CODO REDUCC"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "TEE"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "TEE REDUCIDO"
+        },
+        {
+          "codigo": "12",
+          "descripcion": "CRUZ HHH"
+        },
+        {
+          "codigo": "13",
+          "descripcion": ""
+        },
+        {
+          "codigo": "14",
+          "descripcion": ""
+        },
+        {
+          "codigo": "20",
+          "descripcion": "CASQUILLO RED"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "REDUCC CONICA"
+        },
+        {
+          "codigo": "22",
+          "descripcion": "BUJE REDUCCION"
+        },
+        {
+          "codigo": "23",
+          "descripcion": "BUJE REDUCC LARGO"
+        },
+        {
+          "codigo": "24",
+          "descripcion": "REDUCC CONCENTRICA"
+        },
+        {
+          "codigo": "25",
+          "descripcion": "REDUCC EXCENTRICA"
+        },
+        {
+          "codigo": "26",
+          "descripcion": ""
+        },
+        {
+          "codigo": "27",
+          "descripcion": ""
+        },
+        {
+          "codigo": "30",
+          "descripcion": "CUPLA DE REDUCC"
+        },
+        {
+          "codigo": "31",
+          "descripcion": "MANGUITO UNION"
+        },
+        {
+          "codigo": "32",
+          "descripcion": "CUPLA"
+        },
+        {
+          "codigo": "33",
+          "descripcion": ""
+        },
+        {
+          "codigo": "34",
+          "descripcion": ""
+        },
+        {
+          "codigo": "40",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "41",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "42",
+          "descripcion": "ENTRE ROSCA"
+        },
+        {
+          "codigo": "43",
+          "descripcion": "ESPIGA (RACOR)"
+        },
+        {
+          "codigo": "44",
+          "descripcion": "ESPIGA ACODADA"
+        },
+        {
+          "codigo": "45",
+          "descripcion": "ROSCA C/ TUERCA RED"
+        },
+        {
+          "codigo": "46",
+          "descripcion": ""
+        },
+        {
+          "codigo": "47",
+          "descripcion": ""
+        },
+        {
+          "codigo": "50",
+          "descripcion": "UNION DOBLE"
+        },
+        {
+          "codigo": "51",
+          "descripcion": "MONTURA"
+        },
+        {
+          "codigo": "52",
+          "descripcion": ""
+        },
+        {
+          "codigo": "53",
+          "descripcion": ""
+        },
+        {
+          "codigo": "60",
+          "descripcion": "TAPA"
+        },
+        {
+          "codigo": "61",
+          "descripcion": "TAPON"
+        },
+        {
+          "codigo": "62",
+          "descripcion": ""
+        },
+        {
+          "codigo": "63",
+          "descripcion": ""
+        },
+        {
+          "codigo": "70",
+          "descripcion": "CENTRO BRIDA"
+        },
+        {
+          "codigo": "71",
+          "descripcion": "BRIDA GIRATORIA"
+        },
+        {
+          "codigo": "72",
+          "descripcion": "BRIDA FIJA"
+        },
+        {
+          "codigo": "73",
+          "descripcion": "BRIDA ROSCADA"
+        },
+        {
+          "codigo": "74",
+          "descripcion": "BRIDA S125"
+        },
+        {
+          "codigo": "75",
+          "descripcion": "BRIDA S150"
+        },
+        {
+          "codigo": "76",
+          "descripcion": ""
+        },
+        {
+          "codigo": "77",
+          "descripcion": ""
+        },
+        {
+          "codigo": "80",
+          "descripcion": "TERMINAL"
+        },
+        {
+          "codigo": "81",
+          "descripcion": "MACHON"
+        },
+        {
+          "codigo": "82",
+          "descripcion": ""
+        },
+        {
+          "codigo": "83",
+          "descripcion": ""
+        },
+        {
+          "codigo": "90",
+          "descripcion": "CAÑOS METAL"
+        },
+        {
+          "codigo": "91",
+          "descripcion": "CAÑOS PLASTICO"
+        },
+        {
+          "codigo": "92",
+          "descripcion": "NIPLE"
+        },
+        {
+          "codigo": "93",
+          "descripcion": "NIPLE PASA TANQUE"
+        },
+        {
+          "codigo": "94",
+          "descripcion": ""
+        },
+        {
+          "codigo": "95",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "PEGAR H-H"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PEGAR M-H"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ROSCADO H-H"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ROSCADO M-H"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ROSCADO M-M"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "MIXTO PEGAR ROSCADO H-H"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "MIXTO PEGAR ROSCADO M-H"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "SOLDAR"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "BRIDADA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "MIXTO SOLDAR ROSCADO M-M"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nANGULO/RADIO/LONGITUD",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO APLICA n/a"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "45°"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "90°"
+        }
+      ]
+    },
+    {
+      "posicion": "NIPLES  QUINTO A SEPTIMO DIGITO       DIAM PULG",
+      "valores": [
+        {
+          "codigo": "0.5",
+          "descripcion": "012"
+        },
+        {
+          "codigo": "0.75",
+          "descripcion": "034"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "001"
+        },
+        {
+          "codigo": "1.25",
+          "descripcion": "114"
+        },
+        {
+          "codigo": "1.5",
+          "descripcion": "112"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "002"
+        }
+      ]
+    },
+    {
+      "posicion": "NIPLES  OCTAVO A DECIMO DIGITO       LARGO EN MM",
+      "valores": [
+        {
+          "codigo": "60 cm",
+          "descripcion": "600"
+        },
+        {
+          "codigo": "10 cm",
+          "descripcion": "100"
+        },
+        {
+          "codigo": "15 cm",
+          "descripcion": "150"
+        },
+        {
+          "codigo": "6 cm",
+          "descripcion": "060"
+        },
+        {
+          "codigo": "8 cm",
+          "descripcion": "080"
+        },
+        {
+          "codigo": "12 cm",
+          "descripcion": "120"
+        },
+        {
+          "codigo": "30 cm",
+          "descripcion": "300"
+        }
+      ]
+    }
+  ],
+  "8-PASARELAS": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "8",
+          "descripcion": "PASARELA"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TERCER DIGITO\nCOMPLEMENTO",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "PASARELA"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "PASARELA FIN"
+        },
+        {
+          "codigo": "02",
+          "descripcion": "BASE DE DESCANSO"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "BASE DE UPN"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "BARANDA LATERAL"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "BARANDA LATERAL FINAL"
+        },
+        {
+          "codigo": "12",
+          "descripcion": "BARANDA LAT CON RODAPIE"
+        },
+        {
+          "codigo": "13",
+          "descripcion": "BARANDA LAT FINAL C/ RODAPIE"
+        },
+        {
+          "codigo": "14",
+          "descripcion": "BARANDA DE ESCALERA"
+        },
+        {
+          "codigo": "20",
+          "descripcion": "ESCALERA C/ PELDAÑO"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "ESCALERA MARINERA"
+        },
+        {
+          "codigo": "30",
+          "descripcion": "PATA PASARELA"
+        },
+        {
+          "codigo": "31",
+          "descripcion": "PATA PASARELA MEDIO UNION"
+        },
+        {
+          "codigo": "32",
+          "descripcion": "PATA PASARELA FIN"
+        },
+        {
+          "codigo": "33",
+          "descripcion": "PATA DIAGONAL"
+        },
+        {
+          "codigo": "34",
+          "descripcion": "ACCESORIOS PASARELA"
+        },
+        {
+          "codigo": "40",
+          "descripcion": "SOPORTE SUPERIOR P/ PATA DIAGONAL"
+        },
+        {
+          "codigo": "41",
+          "descripcion": "SOPORTE INFERIOR P/ PATA DIAGONAL"
+        },
+        {
+          "codigo": "42",
+          "descripcion": "SOPORTE DE UNION DE PASARELA"
+        },
+        {
+          "codigo": "50",
+          "descripcion": "PEDESTAL"
+        },
+        {
+          "codigo": "60",
+          "descripcion": "MALACATE"
+        },
+        {
+          "codigo": "70",
+          "descripcion": "CANASTO"
+        },
+        {
+          "codigo": "80",
+          "descripcion": "SISTEMA DE FIJACION DE PASARELAS"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO\nMANO/PUNTO/\nTERMINADO",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "INFERIOR"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "DERECHA"
+        },
+        {
+          "codigo": "I",
+          "descripcion": "IZQUIERDA"
+        },
+        {
+          "codigo": "M",
+          "descripcion": "MEDIO"
+        },
+        {
+          "codigo": "R",
+          "descripcion": "RECTO"
+        },
+        {
+          "codigo": "S",
+          "descripcion": "SUPERIOR"
+        },
+        {
+          "codigo": "P",
+          "descripcion": "PINTADO"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "GALVANIZADO"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "BARANDA"
+        },
+        {
+          "codigo": "Z",
+          "descripcion": "PASAMANOS"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nPROVEEDOR",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "E-INTRA SRL"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "TDL"
+        }
+      ]
+    },
+    {
+      "posicion": "DECIMO DIGITO\nANCHO DE PASARELA/ALTO DE BARANDA/ANGULO PATA",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "400"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "750"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "900"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "1440"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "1115"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "1000"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "1035"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "45°"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "50°"
+        }
+      ]
+    }
+  ],
+  "9-MAT. ELECTRICO": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "9",
+          "descripcion": "MAT ELECTRICO"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TERCER DIGITO \nTIPO DE MATERIAL",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "CONTACTOR"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "GUARDAMOTOR"
+        },
+        {
+          "codigo": "20",
+          "descripcion": "TAPAS"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "TOPES"
+        },
+        {
+          "codigo": "30",
+          "descripcion": "CONECTOR  DE BOMBA DOSIFICADORA"
+        },
+        {
+          "codigo": "40",
+          "descripcion": "BOYA DE NIVEL"
+        },
+        {
+          "codigo": "50",
+          "descripcion": "SENSOR DE TEMPERATURA"
+        },
+        {
+          "codigo": "60",
+          "descripcion": "SENSOR DE NIVEL"
+        },
+        {
+          "codigo": "70",
+          "descripcion": ""
+        },
+        {
+          "codigo": "80",
+          "descripcion": ""
+        },
+        {
+          "codigo": "90",
+          "descripcion": "CAÑO ELECTRICO DE METAL"
+        },
+        {
+          "codigo": "91",
+          "descripcion": "CURVA DE METAL 90°"
+        },
+        {
+          "codigo": "92",
+          "descripcion": "CAÑO ELECTRICO FLEX DE METAL"
+        },
+        {
+          "codigo": "93",
+          "descripcion": "CAÑO ELECTRICO FLEX DE PLASTICO"
+        },
+        {
+          "codigo": "94",
+          "descripcion": "CONECTOR DE CAÑO ELECTRICO DE METAL"
+        },
+        {
+          "codigo": "95",
+          "descripcion": "CONECTOR DE CAÑO ELECTRICO DE METAL 90°"
+        },
+        {
+          "codigo": "96",
+          "descripcion": "CONECTOR DE CAÑO ELECTRICO DE METAL RECTO"
+        },
+        {
+          "codigo": "97",
+          "descripcion": "CUPLA ELECTRICA DE METAL"
+        },
+        {
+          "codigo": "A0",
+          "descripcion": "GABINETE"
+        },
+        {
+          "codigo": "B0",
+          "descripcion": "BORNES"
+        },
+        {
+          "codigo": "B1",
+          "descripcion": "BORNES DE TIERRA"
+        },
+        {
+          "codigo": "C0",
+          "descripcion": "CAJA ELECTRICA DE METAL"
+        },
+        {
+          "codigo": "C1",
+          "descripcion": "CAJA ELECTRICA DE ALUMINIO"
+        },
+        {
+          "codigo": "C2",
+          "descripcion": "CAJA ELECTRICA DE ALUMINIO CON BORNERA"
+        },
+        {
+          "codigo": "C3",
+          "descripcion": "CAJA ELECTRICA DE ALUMINIO CON BORNERA Y PRENSACABLE"
+        },
+        {
+          "codigo": "D0",
+          "descripcion": "DISYUNTOR"
+        },
+        {
+          "codigo": "E0",
+          "descripcion": "SENSOR DE OXIGENO DISUELTO"
+        },
+        {
+          "codigo": "F0",
+          "descripcion": "FICHAS 220V TRES PATAS HEMBRAS"
+        },
+        {
+          "codigo": "F1",
+          "descripcion": "FICHAS 220V TRES PATAS MACHOS"
+        },
+        {
+          "codigo": "F2",
+          "descripcion": "PROTECTOR DE TOMA ESTANCO NARANJA"
+        },
+        {
+          "codigo": "G0",
+          "descripcion": "GRAMPA TIPO OLMAR"
+        },
+        {
+          "codigo": "G1",
+          "descripcion": "GRAMPA"
+        },
+        {
+          "codigo": "G2",
+          "descripcion": "RELE TERMICO"
+        },
+        {
+          "codigo": "H0",
+          "descripcion": "TRANSFORMADOR"
+        },
+        {
+          "codigo": "I0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "J0",
+          "descripcion": "RESISTENCIA"
+        },
+        {
+          "codigo": "K0",
+          "descripcion": "CAUDALIMETROS"
+        },
+        {
+          "codigo": "L0",
+          "descripcion": "INDICADOR LUMINOSO VERDE"
+        },
+        {
+          "codigo": "L1",
+          "descripcion": "INDICADOR LUMINOSO ROJO"
+        },
+        {
+          "codigo": "L2",
+          "descripcion": "INDICADOR LUMINOSO AMARILLO"
+        },
+        {
+          "codigo": "L3",
+          "descripcion": "INDICADOR LUMINOSO AZUL"
+        },
+        {
+          "codigo": "M0",
+          "descripcion": "MODULO P/ SELECTORA"
+        },
+        {
+          "codigo": "N0",
+          "descripcion": "LLAVE TERMOMAGNETICA"
+        },
+        {
+          "codigo": "P0",
+          "descripcion": "PRENSACABLES"
+        },
+        {
+          "codigo": "Q0",
+          "descripcion": "PULSADORES"
+        },
+        {
+          "codigo": "R0",
+          "descripcion": "RIEL OLMAR 20mm"
+        },
+        {
+          "codigo": "R1",
+          "descripcion": "RIEL OLMAR 40mm"
+        },
+        {
+          "codigo": "R2",
+          "descripcion": "RIEL DIN"
+        },
+        {
+          "codigo": "R3",
+          "descripcion": "RIEL MINI DIN"
+        },
+        {
+          "codigo": "S0",
+          "descripcion": "LLAVE SELECTORA"
+        },
+        {
+          "codigo": "T0",
+          "descripcion": "TERMICA"
+        },
+        {
+          "codigo": "U0",
+          "descripcion": "CAJA DE CONEXIÓN ALUMINIO PORTABALASTO"
+        },
+        {
+          "codigo": "U1",
+          "descripcion": "LAMPARA UV"
+        },
+        {
+          "codigo": "U2",
+          "descripcion": "BALASTO"
+        },
+        {
+          "codigo": "U3",
+          "descripcion": "SOCKET 4 PINES UV"
+        },
+        {
+          "codigo": "U4",
+          "descripcion": "CAMISA DE CUARZO"
+        },
+        {
+          "codigo": "U5",
+          "descripcion": "CONECTOR TIPO CPC MACHO"
+        },
+        {
+          "codigo": "U6",
+          "descripcion": "CONECTOR TIPO CPC HEMBRA"
+        },
+        {
+          "codigo": "V0",
+          "descripcion": "PRESOSTATOS"
+        },
+        {
+          "codigo": "W0",
+          "descripcion": "ROTAMETROS"
+        },
+        {
+          "codigo": "X0",
+          "descripcion": "MEDIDOR Ph"
+        },
+        {
+          "codigo": "X1",
+          "descripcion": "MEDIDOR CONDUCTIVIDAD"
+        },
+        {
+          "codigo": "X2",
+          "descripcion": "MEDIDOR DE OXIGENO DISUELTO"
+        },
+        {
+          "codigo": "Y0",
+          "descripcion": "MANOMETRO"
+        },
+        {
+          "codigo": "Z0",
+          "descripcion": "PLC EXPANSION ENTRADAS"
+        },
+        {
+          "codigo": "Z1",
+          "descripcion": "PLC EXPANSION SALIDAS"
+        },
+        {
+          "codigo": "Z2",
+          "descripcion": "PLC EXPANSION ANALOGICAS"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO Y QUINTO DIGITO FABRICANTE",
+      "valores": [
+        {
+          "codigo": "10",
+          "descripcion": "SIEMENS"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "DELTA"
+        },
+        {
+          "codigo": "20",
+          "descripcion": "ABB"
+        },
+        {
+          "codigo": "30",
+          "descripcion": "MOELLER"
+        },
+        {
+          "codigo": "40",
+          "descripcion": "WEG"
+        },
+        {
+          "codigo": "50",
+          "descripcion": "TELEMECANIQUE"
+        },
+        {
+          "codigo": "60",
+          "descripcion": "SCHNEIDER"
+        },
+        {
+          "codigo": "70",
+          "descripcion": "MERLIN GERIN"
+        },
+        {
+          "codigo": "71",
+          "descripcion": "SCHMERSAL"
+        },
+        {
+          "codigo": "80",
+          "descripcion": "ALLEN BRADLEY"
+        },
+        {
+          "codigo": "90",
+          "descripcion": "ROCKWELL"
+        },
+        {
+          "codigo": "A0",
+          "descripcion": "E-INTRA"
+        },
+        {
+          "codigo": "A1",
+          "descripcion": "AMP"
+        },
+        {
+          "codigo": "B0",
+          "descripcion": "SAMET"
+        },
+        {
+          "codigo": "C0",
+          "descripcion": "MICROCONTROL"
+        },
+        {
+          "codigo": "C1",
+          "descripcion": "CONDUIT"
+        },
+        {
+          "codigo": "D0",
+          "descripcion": "CONEXTUBE"
+        },
+        {
+          "codigo": "E0",
+          "descripcion": "HELLERMAN"
+        },
+        {
+          "codigo": "E1",
+          "descripcion": "EATON"
+        },
+        {
+          "codigo": "F0",
+          "descripcion": "ZOLODA"
+        },
+        {
+          "codigo": "G0",
+          "descripcion": "DAISA"
+        },
+        {
+          "codigo": "I0",
+          "descripcion": "FORLI"
+        },
+        {
+          "codigo": "J0",
+          "descripcion": "GENROD"
+        },
+        {
+          "codigo": "J1",
+          "descripcion": "GABEXCEL"
+        },
+        {
+          "codigo": "K0",
+          "descripcion": "TALEMEC"
+        },
+        {
+          "codigo": "K1",
+          "descripcion": "REPICKY (REPUESTOS)"
+        },
+        {
+          "codigo": "L0",
+          "descripcion": "VARITEL"
+        },
+        {
+          "codigo": "M0",
+          "descripcion": "LOMBARD"
+        },
+        {
+          "codigo": "M1",
+          "descripcion": "METTLER TOLEDO"
+        },
+        {
+          "codigo": "N0",
+          "descripcion": "ALTRONIX"
+        },
+        {
+          "codigo": "N1",
+          "descripcion": "RISTAL"
+        },
+        {
+          "codigo": "P0",
+          "descripcion": "BEYCA"
+        },
+        {
+          "codigo": "P1",
+          "descripcion": "PHOENIX"
+        },
+        {
+          "codigo": "Q0",
+          "descripcion": "WINTER"
+        },
+        {
+          "codigo": "R0",
+          "descripcion": "MARLEW"
+        },
+        {
+          "codigo": "R1",
+          "descripcion": "PIRELLI"
+        },
+        {
+          "codigo": "R2",
+          "descripcion": "IMSA"
+        },
+        {
+          "codigo": "R3",
+          "descripcion": "BELDEN"
+        },
+        {
+          "codigo": "S0",
+          "descripcion": "AMP"
+        },
+        {
+          "codigo": "S1",
+          "descripcion": "SISA"
+        },
+        {
+          "codigo": "S2",
+          "descripcion": "SURELITE"
+        },
+        {
+          "codigo": "T0",
+          "descripcion": "ATLANTIC UV"
+        },
+        {
+          "codigo": "T1",
+          "descripcion": "TEA"
+        },
+        {
+          "codigo": "U0",
+          "descripcion": "PHILLIPS"
+        },
+        {
+          "codigo": "U1",
+          "descripcion": "OSRAM"
+        },
+        {
+          "codigo": "V0",
+          "descripcion": "SCAME"
+        },
+        {
+          "codigo": "V1",
+          "descripcion": "TAREWA"
+        },
+        {
+          "codigo": "V2",
+          "descripcion": "DELGA"
+        },
+        {
+          "codigo": "W0",
+          "descripcion": "DANFOSS"
+        },
+        {
+          "codigo": "W1",
+          "descripcion": "FANTINI COSMI"
+        },
+        {
+          "codigo": "X0",
+          "descripcion": "MEDITECNA"
+        },
+        {
+          "codigo": "X1",
+          "descripcion": "KROHNE"
+        },
+        {
+          "codigo": "X2",
+          "descripcion": "SIGNET"
+        },
+        {
+          "codigo": "X3",
+          "descripcion": "FISCHER"
+        },
+        {
+          "codigo": "X4",
+          "descripcion": "ENDRESS HAUSER"
+        },
+        {
+          "codigo": "Y0",
+          "descripcion": "ROC"
+        },
+        {
+          "codigo": "Y1",
+          "descripcion": "Te Be Cin"
+        },
+        {
+          "codigo": "Z0",
+          "descripcion": "ROCKER"
+        },
+        {
+          "codigo": "Z1",
+          "descripcion": "VEFBEN"
+        },
+        {
+          "codigo": "GN",
+          "descripcion": "GENEBRE"
+        },
+        {
+          "codigo": "CU",
+          "descripcion": "CUC"
+        },
+        {
+          "codigo": "VI",
+          "descripcion": "VIYILANT"
+        },
+        {
+          "codigo": "VE",
+          "descripcion": "VEGA"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO Y SEPTIMO DIGITO\nPULSADORES\nTIPO DE PULSADOR",
+      "valores": [
+        {
+          "codigo": "01",
+          "descripcion": "PULSADOR NEGRO"
+        },
+        {
+          "codigo": "02",
+          "descripcion": "GOLPE DE PUÑO"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "LUMINOSO VERDE"
+        },
+        {
+          "codigo": "04",
+          "descripcion": "LUMINOSO ROJO"
+        },
+        {
+          "codigo": "05",
+          "descripcion": "LUMINOSO AMARILLO"
+        },
+        {
+          "codigo": "06",
+          "descripcion": "LUMINOSO AZUL"
+        },
+        {
+          "codigo": "07",
+          "descripcion": ""
+        },
+        {
+          "codigo": "08",
+          "descripcion": ""
+        },
+        {
+          "codigo": "09",
+          "descripcion": ""
+        },
+        {
+          "codigo": "10",
+          "descripcion": ""
+        },
+        {
+          "codigo": "11",
+          "descripcion": ""
+        },
+        {
+          "codigo": "12",
+          "descripcion": ""
+        },
+        {
+          "codigo": "13",
+          "descripcion": ""
+        },
+        {
+          "codigo": "960VE10100",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO Y SEPTIMO DIGITO\nSENSOR DE TEMP.\nTIPO",
+      "valores": [
+        {
+          "codigo": "01",
+          "descripcion": "DE CONTACTO"
+        },
+        {
+          "codigo": "SALIDAS ANAG  POR CORRIENTE",
+          "descripcion": "CANT SALIDAS ANAG POR TENSION"
+        },
+        {
+          "codigo": "1",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "OCTAVO A DECIMO DIGITO\nSENSOR DE TEMP.\nRANGO",
+      "valores": [
+        {
+          "codigo": "095",
+          "descripcion": "95°"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nINDICADOR LED\nTIPO",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "COMPACTO"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "MODULAR"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nMEDIDOR PH Y CONDUCTIVIDAD\nTENSION",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "12 VCA"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "12 VCC"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "24 VCA"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "24 VCC"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "110 VCA"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "220 VCA"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "380 VCA"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nTERMICA, DISYUNTOR Y LLAVE TERMOMAGNETICA\nCANTIDAD DE POLOS",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "UNIPOLAR"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "BIPOLAR"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "TRIPOLAR"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "TETRAPOLAR"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nCONTACTOR\nCONTACTO AUXILIAR",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "NORMAL ABIERTO - NA"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "NORMAL CERRADO - NC"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nMODULO P/ SELECTORA\nPOSICIONES",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NORMAL CERRADO - NC"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "NORMAL ABIERTO - NA"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "2 NORMAL CERRADO - 2NC"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "2 NORMAL ABIERTO - 2NA"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "1NA+1NC"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nCAJAS DE METAL\nFORMA/TIPO",
+      "valores": [
+        {
+          "codigo": "X",
+          "descripcion": "TIPO X"
+        },
+        {
+          "codigo": "L",
+          "descripcion": "TIPO L"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "TIPO B"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nTRANSFORMADORES\nTENSION ENTRADA",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "220V"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "380V"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "380T"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO A DECIMO DIGITO\nBOYA DE NIVEL\nMEDIDA EN MM",
+      "valores": [
+        {
+          "codigo": "3000",
+          "descripcion": ""
+        },
+        {
+          "codigo": "5000",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "SEPTIMO DIGITO\nCONECTOR METAL\nANGULO",
+      "valores": [
+        {
+          "codigo": "R",
+          "descripcion": "RECTO"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "90°"
+        }
+      ]
+    },
+    {
+      "posicion": "SEPTIMO DIGITO\nPRENSACABLE\nTIPO",
+      "valores": [
+        {
+          "codigo": "E",
+          "descripcion": "ELECTRICO"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "GAS"
+        }
+      ]
+    },
+    {
+      "posicion": "SEPTIMO A NOVENO DIGITO\nTRANSFORMADOR\nTENSION",
+      "valores": [
+        {
+          "codigo": "006",
+          "descripcion": "6V"
+        },
+        {
+          "codigo": "012",
+          "descripcion": "12V"
+        },
+        {
+          "codigo": "018",
+          "descripcion": "18V"
+        },
+        {
+          "codigo": "024",
+          "descripcion": "24V"
+        },
+        {
+          "codigo": "048",
+          "descripcion": "48V"
+        }
+      ]
+    },
+    {
+      "posicion": "OCTAVO DIGITO\nLLAVE SELECTORA\nGRADOS",
+      "valores": [
+        {
+          "codigo": "4",
+          "descripcion": "45°"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "90°"
+        }
+      ]
+    },
+    {
+      "posicion": "OCTAVO DIGITO\nGABINETE\nALTO",
+      "valores": [
+        {
+          "codigo": "2",
+          "descripcion": "200"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "300"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "400"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "500"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "600"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "900"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "1200"
+        }
+      ]
+    },
+    {
+      "posicion": "OCTAVO DIGITO\nCAJAS DE CONEXION\nALTO",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "70"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "50"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "100"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "130"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "150"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "200"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "210"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "250"
+        }
+      ]
+    },
+    {
+      "posicion": "OCTAVO DIGITO\nBORNES\nTIPO",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "UKM"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "BPN"
+        }
+      ]
+    },
+    {
+      "posicion": "NOVENO DIGITO\nLLAVE SELECTORA\nPOSICION",
+      "valores": [
+        {
+          "codigo": "2",
+          "descripcion": "2 POSICIONES"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "3 POSICIONES"
+        }
+      ]
+    },
+    {
+      "posicion": "NOVENO DIGITO\nGABINETE\nANCHO",
+      "valores": [
+        {
+          "codigo": "3",
+          "descripcion": "300"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "400"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "500"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "600"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "900"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "1200"
+        }
+      ]
+    },
+    {
+      "posicion": "NOVENO DIGITO\nCAJAS DE CONEXIÓN\nANCHO",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "70"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "50"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "100"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "130"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "150"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "200"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "210"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "250"
+        },
+        {
+          "codigo": "I",
+          "descripcion": "300"
+        }
+      ]
+    },
+    {
+      "posicion": "NOVENO DIGITO\nRESISTENCIAS\nCANTIDAD RESISTENCIAS",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "1 RESISTENCIA"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "2 RESISTENCIAS"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "3 RESISTENCIAS"
+        }
+      ]
+    },
+    {
+      "posicion": "DECIMO DIGITO\nLLAVE SELECTORA\nRETENCION",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "SIN RETENCION"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "CON RENTENCION"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "CON RETENCION METALICA"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "CON RETENCION PLASTICA"
+        }
+      ]
+    },
+    {
+      "posicion": "DECIMO DIGITO\nGABINETE\nPROFUNDIDAD",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "160"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "210"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "225"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "260"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "450"
+        }
+      ]
+    },
+    {
+      "posicion": "DECIMO DIGITO\nCAJAS DE CONEXION\nPROFUNDIDAD",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "70"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "50"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "100"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "130"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "150"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "200"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "210"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "250"
+        }
+      ]
+    },
+    {
+      "posicion": "DECIMO DIGITO\nRESISTENCIA Y TRANSFORMADOR\nPOTENCIA",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "25/30 W"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "50 W"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "75 W"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "100 W"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "150 W"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "200 W"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "250 W"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "300 W"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "400 W"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "500 W"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "750 W"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "1000 W"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "1500 W"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "3000 W (3kW)"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nSENSOR DE NIVEL\nTECNOLOGIA",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "1",
+          "descripcion": "RADAR"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ELECTROMAGNETICA"
+        },
+        {
+          "codigo": "3",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "SEPTIMO DIGITO\nSENSOR DE NIVEL\nCANT SALIDAS DIGITALES",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "1",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2",
+          "descripcion": ""
+        },
+        {
+          "codigo": "3",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "OCTAVO DIGITO\nSENSOR DE NIVEL\nCANT SALIDAS ANALOGICAS POR CORRIENTE",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "1",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2",
+          "descripcion": ""
+        },
+        {
+          "codigo": "3",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "NOVENO DIGITO\nSENSOR DE NIVEL\nCANT SALIDAS ANALOGICAS POR TENSION",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "1",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2",
+          "descripcion": ""
+        },
+        {
+          "codigo": "3",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nSENSOR DE NIVEL\nTECNOLOGIA",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO TIENE"
+        },
+        {
+          "codigo": "1",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2",
+          "descripcion": ""
+        },
+        {
+          "codigo": "3",
+          "descripcion": ""
+        }
+      ]
+    }
+  ],
+  "A-BOMBAS": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "BOMBAS"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO DIGITO\nTIPO DE BOMBA",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "DOSIFICADORAS"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "SUMERGIBLES"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "CENTRIFUGAS"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "A TORNILLO"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "MULTIETAPA H"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "MULTIETAPA V"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "IMPULSOR BOMBA"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "DIAFRAGMA"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "CABEZAL"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "KIT CABEZAL COMPLETO"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "PRESURIZADORAS"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nCLASE DE BOMBA",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "ELECTROBOMBA"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "EJE LIBRE"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "PULLBACK"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ELECTROMAGNETICA"
+        },
+        {
+          "codigo": "N",
+          "descripcion": "N/A"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "AUTOACOPLAMIENTO"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO\nMARCA",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "ARES"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "DOSIVAC"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "EBARA"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "GRUNDFOS"
+        },
+        {
+          "codigo": "L",
+          "descripcion": "LOWARA"
+        },
+        {
+          "codigo": "K",
+          "descripcion": "KSB"
+        },
+        {
+          "codigo": "R",
+          "descripcion": "ROWA"
+        },
+        {
+          "codigo": "M",
+          "descripcion": "MEC"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nTIPO DE CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "MANGUERA / ROSCA"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "BRIDADA"
+        },
+        {
+          "codigo": "M",
+          "descripcion": "MANGUERA"
+        },
+        {
+          "codigo": "R",
+          "descripcion": "ROSCADA"
+        },
+        {
+          "codigo": "0",
+          "descripcion": "N/A"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO Y SEPTIMO DIGITO\nPOTENCIA",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "DOSIFICADORAS ELECTROMAG"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "0,11 KW"
+        },
+        {
+          "codigo": "05",
+          "descripcion": "0,55 KW"
+        },
+        {
+          "codigo": "07",
+          "descripcion": "0,75 Kw"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "1,1 KW"
+        },
+        {
+          "codigo": "15",
+          "descripcion": "1,5 kw"
+        },
+        {
+          "codigo": "22",
+          "descripcion": "2,2 KW"
+        },
+        {
+          "codigo": "40",
+          "descripcion": "4 KW"
+        }
+      ]
+    },
+    {
+      "posicion": "OCTAVO, NOVENO Y DECIMO DIGITO\nCAUDAL",
+      "valores": [
+        {
+          "codigo": "001",
+          "descripcion": "0,15 l / seg"
+        },
+        {
+          "codigo": "002",
+          "descripcion": "0,25 l / seg"
+        },
+        {
+          "codigo": "003",
+          "descripcion": "0,27 l / seg"
+        },
+        {
+          "codigo": "004",
+          "descripcion": "0,41 l / seg"
+        },
+        {
+          "codigo": "005",
+          "descripcion": "0,5 l / seg"
+        },
+        {
+          "codigo": "007",
+          "descripcion": "0,7 l / seg"
+        },
+        {
+          "codigo": "008",
+          "descripcion": "0,83 l / seg"
+        },
+        {
+          "codigo": "009",
+          "descripcion": "0,91 l / seg"
+        },
+        {
+          "codigo": "010",
+          "descripcion": "0,97 l / seg"
+        },
+        {
+          "codigo": "011",
+          "descripcion": "1,16 l / seg"
+        },
+        {
+          "codigo": "016",
+          "descripcion": "1,66 l / seg"
+        },
+        {
+          "codigo": "019",
+          "descripcion": "1,94 l / seg"
+        },
+        {
+          "codigo": "022",
+          "descripcion": "2,22 l / seg"
+        },
+        {
+          "codigo": "027",
+          "descripcion": "2,77 l / seg"
+        },
+        {
+          "codigo": "036",
+          "descripcion": "3,61 l / seg"
+        },
+        {
+          "codigo": "041",
+          "descripcion": "4,16 l / seg"
+        },
+        {
+          "codigo": "083",
+          "descripcion": "8,33 l / seg"
+        },
+        {
+          "codigo": "116",
+          "descripcion": "11,6 l / seg"
+        },
+        {
+          "codigo": "125",
+          "descripcion": "12,5 l / seg"
+        },
+        {
+          "codigo": "166",
+          "descripcion": "16,6 l / seg"
+        },
+        {
+          "codigo": "050",
+          "descripcion": "5 l / seg"
+        },
+        {
+          "codigo": "208",
+          "descripcion": "20,8 l / seg"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO A DECIMO DIGITO\nMEDIDA DE AUTOACOPLAMIENTO",
+      "valores": [
+        {
+          "codigo": "2\"",
+          "descripcion": ""
+        }
+      ]
+    }
+  ],
+  "B-EQUIP. ELECTROMECANI": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "B",
+          "descripcion": "EQUIPAMIENTO\nELECTROMECANICO"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO DIGITO\nACCESORIO",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "SOPLADOR"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "MOTORREDUCTOR"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "MOTOR"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "AGITADORES"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "REDUCTOR"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "COMPRESORES"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "CORREA SOPLADORES"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "INDICADORES DE OBSTRUCCION"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "CONTROLADOR DE TEMPERATURA"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "ACEITE SOPLADORES"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nFABRICANTE",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": ""
+        },
+        {
+          "codigo": "B",
+          "descripcion": ""
+        },
+        {
+          "codigo": "C",
+          "descripcion": "CRISMET"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "DOSIVAC"
+        },
+        {
+          "codigo": "E",
+          "descripcion": ""
+        },
+        {
+          "codigo": "F",
+          "descripcion": ""
+        },
+        {
+          "codigo": "G",
+          "descripcion": ""
+        },
+        {
+          "codigo": "H",
+          "descripcion": ""
+        },
+        {
+          "codigo": "I",
+          "descripcion": ""
+        },
+        {
+          "codigo": "J",
+          "descripcion": ""
+        },
+        {
+          "codigo": "K",
+          "descripcion": ""
+        },
+        {
+          "codigo": "L",
+          "descripcion": ""
+        },
+        {
+          "codigo": "M",
+          "descripcion": "MANCUSO"
+        },
+        {
+          "codigo": "N",
+          "descripcion": "DNN"
+        },
+        {
+          "codigo": "O",
+          "descripcion": "OMALA"
+        },
+        {
+          "codigo": "P",
+          "descripcion": ""
+        },
+        {
+          "codigo": "Q",
+          "descripcion": ""
+        },
+        {
+          "codigo": "R",
+          "descripcion": "REPICKY"
+        },
+        {
+          "codigo": "S",
+          "descripcion": "SELEC"
+        },
+        {
+          "codigo": "T",
+          "descripcion": ""
+        },
+        {
+          "codigo": "U",
+          "descripcion": ""
+        },
+        {
+          "codigo": "V",
+          "descripcion": ""
+        },
+        {
+          "codigo": "W",
+          "descripcion": "WEG"
+        },
+        {
+          "codigo": "X",
+          "descripcion": ""
+        },
+        {
+          "codigo": "Y",
+          "descripcion": ""
+        },
+        {
+          "codigo": "Z",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO Y QUINTO DIGITO\nPOTENCIA",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO APLICA"
+        },
+        {
+          "codigo": "15",
+          "descripcion": "1,5 Kw"
+        },
+        {
+          "codigo": "25",
+          "descripcion": "2,5 Kw"
+        },
+        {
+          "codigo": "35",
+          "descripcion": "3,5 Kw"
+        },
+        {
+          "codigo": "45",
+          "descripcion": "4,5 Kw"
+        },
+        {
+          "codigo": "55",
+          "descripcion": "5,5 Kw"
+        },
+        {
+          "codigo": "65",
+          "descripcion": "6,5 Kw"
+        },
+        {
+          "codigo": "75",
+          "descripcion": "7,5 Kw"
+        },
+        {
+          "codigo": "05",
+          "descripcion": "0,5 Kw"
+        },
+        {
+          "codigo": "07",
+          "descripcion": "0,75 Kw"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "1 Kw"
+        },
+        {
+          "codigo": "20",
+          "descripcion": "2 Kw"
+        },
+        {
+          "codigo": "30",
+          "descripcion": "3 Kw"
+        },
+        {
+          "codigo": "40",
+          "descripcion": "4 Kw"
+        },
+        {
+          "codigo": "50",
+          "descripcion": "5 Kw"
+        },
+        {
+          "codigo": "60",
+          "descripcion": "6 Kw"
+        },
+        {
+          "codigo": "70",
+          "descripcion": "7 Kw"
+        },
+        {
+          "codigo": "23",
+          "descripcion": "2,3kW"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nTIPO/MONTAJE",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO APLICA"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "COAXIAL EJE SALIENTE"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "AXIAL EJE PASANTE"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "AXIAL EJE SALIENTE"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "BRIDAS"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "PATAS"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "CON SOPORTE"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "DS (DOSIVAC)"
+        },
+        {
+          "codigo": "M",
+          "descripcion": "MR (REPICKY)"
+        },
+        {
+          "codigo": "R",
+          "descripcion": "R (REPICKY)"
+        }
+      ]
+    },
+    {
+      "posicion": "SEPTIMO AL DECIMO DIGITO\nMEDIDA / TENSION / RELACION",
+      "valores": [
+        {
+          "codigo": "2",
+          "descripcion": "220 V"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "380 V"
+        }
+      ]
+    }
+  ],
+  "C-MANGUERAS": [
+    {
+      "posicion": "PRIMER DIGITO",
+      "valores": [
+        {
+          "codigo": "C",
+          "descripcion": "MANGUERAS"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO DIGITO\nMATERIAL",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "POLIAMIDAS"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "POLIETILENO C/ TRENZADO TEXTIL"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "GOMA Y TELA"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "PVC JACUZZI"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "POLIETILENO BAJA DENSIDAD"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "PVC TRANSPARENTE"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nTERMINAL",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "SIN TERMINAL"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "CON TERMINAL"
+        }
+      ]
+    }
+  ],
+  "D-DIFUSORES": [
+    {
+      "posicion": "PRIMER DIGITO",
+      "valores": [
+        {
+          "codigo": "D",
+          "descripcion": "DIFUSOR"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO DIGITO\nACCESORIO",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "DIFUSOR"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "SOPORTE DIFUSOR"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "DIFUSOR TUBULAR"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nFABRICANTE DIFUSOR",
+      "valores": [
+        {
+          "codigo": "Repicky",
+          "descripcion": "R"
+        },
+        {
+          "codigo": "Daisyl",
+          "descripcion": "D"
+        },
+        {
+          "codigo": "SSI Aeration",
+          "descripcion": "S"
+        },
+        {
+          "codigo": "EDI",
+          "descripcion": "E"
+        }
+      ]
+    }
+  ],
+  "E-ESTRUCTURA": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL\nESTRUCTURA",
+      "valores": [
+        {
+          "codigo": "E",
+          "descripcion": "ESTRUCTURA"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO DIGITO\nCOMPONENTE",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "AISLACION"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "CHAPAS"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "PERFILES"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "BISAGRAS"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "MANIJAS P/ TAPAS"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "CIERRE"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "CANCAMOS"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "ANGULOS"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "CAÑOS"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "PLANCHUELAS"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "CHAPA PLEGADA TIPO U"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "CHAPA PLEGADA TIPO L"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "PERFIL UPN"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "BORDE BATIENTE"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "CAÑO CON COSTURA"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "CHAPA DESPLEGADA"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "HIERRO RENDONDO"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "CAJA AFORADORA"
+        },
+        {
+          "codigo": "I",
+          "descripcion": "MARCO P/TAPAS"
+        },
+        {
+          "codigo": "J",
+          "descripcion": "TAPA"
+        },
+        {
+          "codigo": "K",
+          "descripcion": "CERROJO PASADOR"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nMATERIAL",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "POLIURETANO"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "POLIESTIRENO"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ACERO CARBONO"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ACERO INOXIDABLE"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "GALVANIZADO"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "PREPINTADA"
+        },
+        {
+          "codigo": "P",
+          "descripcion": "PLEGADA"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "GOMA POLIURETANICA"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO AISLACION\nFABRICANTE",
+      "valores": [
+        {
+          "codigo": "E",
+          "descripcion": "E-INTRA"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "ACERO LATINA"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ARMAFLEX"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CHAPAS Y PERFILES\nCALIDAD",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "COMERCIAL"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "F24"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "A36"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "304"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "304 C/ PLASTICO"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "304 MATE"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "316"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "316 C/ PLASTICO"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "316 MATE"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nESPESOR",
+      "valores": [
+        {
+          "codigo": "4",
+          "descripcion": "40mm"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "60mm"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "80mm"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "100mm"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "1/8\""
+        },
+        {
+          "codigo": "B",
+          "descripcion": "3/16\""
+        },
+        {
+          "codigo": "C",
+          "descripcion": "1/4\""
+        },
+        {
+          "codigo": "D",
+          "descripcion": "5/16\""
+        },
+        {
+          "codigo": "E",
+          "descripcion": "3/8\""
+        },
+        {
+          "codigo": "F",
+          "descripcion": "1/2\""
+        },
+        {
+          "codigo": "G",
+          "descripcion": "4mm"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "3mm"
+        },
+        {
+          "codigo": "I",
+          "descripcion": "0,7mm"
+        },
+        {
+          "codigo": "J",
+          "descripcion": "SCHEDULE 40"
+        },
+        {
+          "codigo": "K",
+          "descripcion": "25mm"
+        },
+        {
+          "codigo": "L",
+          "descripcion": "2mm"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nMARCO DE TAPAS  CANT DIVISIONES",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "4",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO ASILACION\nLAMINAS",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "2 CARAS CHAPA PREPINTADA"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "2 CARAS PRFV"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "1 CARA CHAPA PREPINTADA"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "1 CARA PRFV"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "MANTA FLEXIBLE"
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO CHAPAS\nANCHO",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "1500"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "1220"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "730"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "830"
+        }
+      ]
+    },
+    {
+      "posicion": "SEPTIMO A DECIMO DIGITO\nCHAPAS\nLARGO",
+      "valores": [
+        {
+          "codigo": "2420",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2270",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2600",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2700",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2800",
+          "descripcion": ""
+        },
+        {
+          "codigo": "660",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "SEXTO DIGITO\nMEDIDAS ANCHO DE MARCO DE TAPAS",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "750"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "600"
+        }
+      ]
+    },
+    {
+      "posicion": "SEPTIMO A DECIMO DIGITO\nLARGO DE MARCO DE TAPAS",
+      "valores": [
+        {
+          "codigo": "2700",
+          "descripcion": ""
+        },
+        {
+          "codigo": "850",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "NOVENO Y DECIMO DIGITO\nLARGO PERFILES ANGULOS Y UPN",
+      "valores": [
+        {
+          "codigo": "12",
+          "descripcion": "12000"
+        },
+        {
+          "codigo": "0A",
+          "descripcion": "150mm"
+        },
+        {
+          "codigo": "06",
+          "descripcion": "6000"
+        }
+      ]
+    },
+    {
+      "posicion": "DECIMO DIGITO CHAPAS PLEGADAS\nLARGO DE CHAPA",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "2800mm"
+        }
+      ]
+    },
+    {
+      "posicion": "DECIMO DIGITO\nPESO POR METRO\nCHAPA DESPLEGADA",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "10"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nTIPO DE AFORADOR\nCAJA DE AFORO",
+      "valores": [
+        {
+          "codigo": "V",
+          "descripcion": "EN V"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "AISLACION"
+        }
+      ]
+    },
+    {
+      "posicion": "DECIMO DIGITO\nALTURA DE CAJA DE AFORO",
+      "valores": [
+        {
+          "codigo": "4",
+          "descripcion": "40 cm"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "25 cm"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "20 cm"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "46 cm"
+        }
+      ]
+    }
+  ],
+  "F-FILTROS Y MEMBRANAS": [
+    {
+      "posicion": "PRIMER DIGITO\nGENERAL",
+      "valores": [
+        {
+          "codigo": "F",
+          "descripcion": "FILTROS Y MEMBRANAS"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO DIGITO\nESPECIFICACION",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "MEMBRANA"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "CARTUCHO FILTRANTE"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "CARCASA FILTRO"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "TUBO PORTAMEMBRANA"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "FILTRO SOPLADOR"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "FILTRO COMPRESOR"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "FILTRO BOLSA"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nMEDIDA Ø",
+      "valores": [
+        {
+          "codigo": "2",
+          "descripcion": "2\""
+        },
+        {
+          "codigo": "4",
+          "descripcion": "4\""
+        },
+        {
+          "codigo": "8",
+          "descripcion": "8\""
+        },
+        {
+          "codigo": "5",
+          "descripcion": "150mm"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "7\""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO\nMEDIDA LARGO CARTUCHOS Y CARCASAS FILTRANTES",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "20\""
+        },
+        {
+          "codigo": "B",
+          "descripcion": "40\""
+        },
+        {
+          "codigo": "C",
+          "descripcion": "10\""
+        },
+        {
+          "codigo": "D",
+          "descripcion": "100mm"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "850mm"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO\nPRESION TUBO PORTA MEMBRANA",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "300 psi"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nMATERIAL",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "POLIPROPILENO"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "ACERO INOX"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "BIG BLUE"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "POLIETILENO"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "PRFV"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "PAPEL IMPREGNADO EN POLIESTER"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "CARBON EN BLOQUE"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "CARBON ACTIVADO"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "LECHOS ESPECIALES"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "RESINAS ESPECIALES"
+        }
+      ]
+    },
+    {
+      "posicion": "OCTAVO, NOVENO Y DECIMO DIGITO\nCARTUCHO FILTRANTE\nMICRONAJE",
+      "valores": [
+        {
+          "codigo": "005",
+          "descripcion": "5 micrones"
+        },
+        {
+          "codigo": "010",
+          "descripcion": "10 micrones"
+        },
+        {
+          "codigo": "020",
+          "descripcion": "20 micrones"
+        },
+        {
+          "codigo": "040",
+          "descripcion": "40 micrones"
+        },
+        {
+          "codigo": "150",
+          "descripcion": "150 micrones"
+        },
+        {
+          "codigo": "100",
+          "descripcion": "100 micrones"
+        }
+      ]
+    },
+    {
+      "posicion": "OCTAVO, NOVENO Y DECIMO DIGITO\nCARCASA FILTRANTE\nMEDIDA CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "112",
+          "descripcion": "1 1/2\""
+        }
+      ]
+    },
+    {
+      "posicion": "OCTAVO DIGITO\nTUBO PORTA MEMBRANA\nCANT MEMBRANAS",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "1 membrana"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "2 membranas"
+        }
+      ]
+    },
+    {
+      "posicion": "NOVENO Y DECIMO DIGITO\nTUBO PORTAMEMBRANA\nLARGO MEMBRANA",
+      "valores": [
+        {
+          "codigo": "20",
+          "descripcion": "20\""
+        },
+        {
+          "codigo": "40",
+          "descripcion": "40\""
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nFILTROS SOPLADORES O COMPRESOR\nFABRICANTE",
+      "valores": [
+        {
+          "codigo": "D",
+          "descripcion": "DOSIVAC"
+        },
+        {
+          "codigo": "R",
+          "descripcion": "REPICKY"
+        },
+        {
+          "codigo": "K",
+          "descripcion": "KAESER"
+        }
+      ]
+    }
+  ],
+  "G-TANQUES": [
+    {
+      "posicion": "PRIMER DIGITO",
+      "valores": [
+        {
+          "codigo": "G",
+          "descripcion": "TANQUES"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO DIGITO\nFORMA",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "CILINDRICO HORIZONTAL"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "CILINDRICO VERTICAL"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "CILINDRICO CONICO"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "CUADRADO"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "CUADRADO CONICO"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "BATEA CUADRADA"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "BATEA RECTANGULAR"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nTIPO DE TAPA",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "TAPA A ROSCA"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PASO DE HOMBRE"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "PASO TOTAL"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO\nMATERIAL",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "PBD"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PAD"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "PRFV"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nFABRICANTE",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": ""
+        },
+        {
+          "codigo": "A",
+          "descripcion": "ARES"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "DOSIVAC"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "FORMINGPLAST"
+        },
+        {
+          "codigo": "T",
+          "descripcion": "TIPA"
+        },
+        {
+          "codigo": "P",
+          "descripcion": "PENTAIR"
+        }
+      ]
+    }
+  ],
+  "H-MAT. VOLUTA": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "H",
+          "descripcion": "MATERIAL VOLUTA"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TECER DIGITO ACCESORIOS",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "DISCOS FIJOS"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "DISCOS MOVILES"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "PLACAS DE MONTAJE"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "PLACA LATERAL A"
+        },
+        {
+          "codigo": "12",
+          "descripcion": "PLACA LATERAL B"
+        },
+        {
+          "codigo": "13",
+          "descripcion": "PLACA ACERO INOX 5/8 X Ø 254MM"
+        },
+        {
+          "codigo": "14",
+          "descripcion": "PLACA UHMW 9MM X Ø245MM"
+        },
+        {
+          "codigo": "20",
+          "descripcion": "BASTIDOR"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "CHAPAS COBERTORES LATERAL BASTIDOR"
+        },
+        {
+          "codigo": "22",
+          "descripcion": "CHAPA COBERTURA SUPERIOR BASTIDOR"
+        },
+        {
+          "codigo": "30",
+          "descripcion": "SIN FIN"
+        },
+        {
+          "codigo": "31",
+          "descripcion": "RULEMAN"
+        },
+        {
+          "codigo": "32",
+          "descripcion": "RESORTE"
+        },
+        {
+          "codigo": "40",
+          "descripcion": "SOPORTE REDUCTOR"
+        },
+        {
+          "codigo": "50",
+          "descripcion": "BOCA DE ENTRADA"
+        },
+        {
+          "codigo": "60",
+          "descripcion": "ARANDELAS PLASTICAS"
+        },
+        {
+          "codigo": "61",
+          "descripcion": "ANILLOS TOPE"
+        },
+        {
+          "codigo": "70",
+          "descripcion": "MANIJA DE BAQUELITA"
+        },
+        {
+          "codigo": "71",
+          "descripcion": "PICOS ROCIADORES"
+        },
+        {
+          "codigo": "80",
+          "descripcion": "CAÑO Ø4"
+        },
+        {
+          "codigo": "81",
+          "descripcion": "ANGULOS 60 X 8MM"
+        },
+        {
+          "codigo": "90",
+          "descripcion": "BULON ACERO INOX ALLEN 68 X 8MM"
+        },
+        {
+          "codigo": "91",
+          "descripcion": "BUJE SOLDAR ACERO INOX"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO MATERIAL",
+      "valores": [
+        {
+          "codigo": "A",
+          "descripcion": "ACERO INOXIDABLE"
+        },
+        {
+          "codigo": "U",
+          "descripcion": "UHMW"
+        },
+        {
+          "codigo": "P",
+          "descripcion": "PLASTICO"
+        }
+      ]
+    }
+  ],
+  "I-TERMOFUSION": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "I",
+          "descripcion": "TERMOFUSION"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TERCER DIGITO\nACCESORIOS",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "CODO"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "CURVA"
+        },
+        {
+          "codigo": "02",
+          "descripcion": "CODO LARGO"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "CODO REDUCC"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "TEE"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "TEE REDUCIDO"
+        },
+        {
+          "codigo": "12",
+          "descripcion": "CRUZ HHH"
+        },
+        {
+          "codigo": "13",
+          "descripcion": ""
+        },
+        {
+          "codigo": "14",
+          "descripcion": ""
+        },
+        {
+          "codigo": "20",
+          "descripcion": "BUJE DE REDUCCION"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "REDUCC CONICA"
+        },
+        {
+          "codigo": "22",
+          "descripcion": ""
+        },
+        {
+          "codigo": "23",
+          "descripcion": "BUJE REDUCC LARGO"
+        },
+        {
+          "codigo": "24",
+          "descripcion": "REDUCC CONCENTRICA"
+        },
+        {
+          "codigo": "25",
+          "descripcion": "REDUCC EXCENTRICA"
+        },
+        {
+          "codigo": "26",
+          "descripcion": ""
+        },
+        {
+          "codigo": "27",
+          "descripcion": ""
+        },
+        {
+          "codigo": "30",
+          "descripcion": "CUPLA DE REDUCC"
+        },
+        {
+          "codigo": "31",
+          "descripcion": "MANGUITO UNION"
+        },
+        {
+          "codigo": "32",
+          "descripcion": "CUPLA"
+        },
+        {
+          "codigo": "33",
+          "descripcion": ""
+        },
+        {
+          "codigo": "34",
+          "descripcion": ""
+        },
+        {
+          "codigo": "40",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "41",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "42",
+          "descripcion": "ENTRE ROSCA"
+        },
+        {
+          "codigo": "43",
+          "descripcion": "ESPIGA (RACOR)"
+        },
+        {
+          "codigo": "44",
+          "descripcion": "ESPIGA ACODADA"
+        },
+        {
+          "codigo": "45",
+          "descripcion": "ROSCA C/ TUERCA RED"
+        },
+        {
+          "codigo": "46",
+          "descripcion": ""
+        },
+        {
+          "codigo": "47",
+          "descripcion": ""
+        },
+        {
+          "codigo": "50",
+          "descripcion": "UNION DOBLE"
+        },
+        {
+          "codigo": "51",
+          "descripcion": "MONTURA"
+        },
+        {
+          "codigo": "52",
+          "descripcion": ""
+        },
+        {
+          "codigo": "53",
+          "descripcion": ""
+        },
+        {
+          "codigo": "60",
+          "descripcion": "TAPA"
+        },
+        {
+          "codigo": "61",
+          "descripcion": "TAPON"
+        },
+        {
+          "codigo": "62",
+          "descripcion": ""
+        },
+        {
+          "codigo": "63",
+          "descripcion": ""
+        },
+        {
+          "codigo": "70",
+          "descripcion": "CENTRO BRIDA"
+        },
+        {
+          "codigo": "71",
+          "descripcion": "BRIDA GIRATORIA"
+        },
+        {
+          "codigo": "72",
+          "descripcion": "BRIDA FIJA"
+        },
+        {
+          "codigo": "73",
+          "descripcion": "BRIDA ROSCADA"
+        },
+        {
+          "codigo": "74",
+          "descripcion": "BRIDA S125"
+        },
+        {
+          "codigo": "75",
+          "descripcion": "BRIDA S150"
+        },
+        {
+          "codigo": "76",
+          "descripcion": ""
+        },
+        {
+          "codigo": "77",
+          "descripcion": ""
+        },
+        {
+          "codigo": "80",
+          "descripcion": "TUBO"
+        },
+        {
+          "codigo": "81",
+          "descripcion": "MACHON"
+        },
+        {
+          "codigo": "82",
+          "descripcion": ""
+        },
+        {
+          "codigo": "83",
+          "descripcion": ""
+        },
+        {
+          "codigo": "90",
+          "descripcion": "CAÑOS METAL"
+        },
+        {
+          "codigo": "91",
+          "descripcion": "CAÑOS PLASTICO"
+        },
+        {
+          "codigo": "92",
+          "descripcion": "NIPLE"
+        },
+        {
+          "codigo": "93",
+          "descripcion": "NIPLE PASA TANQUE"
+        },
+        {
+          "codigo": "94",
+          "descripcion": ""
+        },
+        {
+          "codigo": "95",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "PEGAR H-H"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PEGAR M-H"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ROSCADO H-H"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ROSCADO M-H"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ROSCADO M-M"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "MIXTO PEGAR ROSCADO H-H"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "MIXTO PEGAR ROSCADO M-H"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "SOLDAR"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "BRIDADA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "MIXTO SOLDAR ROSCADO M-M"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nANGULO/RADIO/LONGITUD",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO APLICA n/a"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "45°"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "90°"
+        }
+      ]
+    }
+  ],
+  "J-ACCESORIOS MECANICOS": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "J",
+          "descripcion": "ACCESORIOS MECANICOS"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO DIGITO\nACCESORIOS",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "Caja portarodamientos"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "Manguito"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "Ruleman/Rodamientos"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "Piñones/Engranajes"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "Cadenas"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "Acoplamientos Elasticos"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "Caño de paleta"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "Pivot para caño de paleta"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "Paleta Barredor"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER DIGITO\nFABRICANTE",
+      "valores": [
+        {
+          "codigo": "N",
+          "descripcion": "NTN"
+        },
+        {
+          "codigo": "0",
+          "descripcion": "E-Intra"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "Dinatec"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CADENA Y ACOPLAMIENTO ELASTICO\nTIPO (de cada uno)",
+      "valores": [
+        {
+          "codigo": "S",
+          "descripcion": "SIMPLE"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "DOBLE"
+        },
+        {
+          "codigo": "T",
+          "descripcion": "TUPAC"
+        },
+        {
+          "codigo": "J",
+          "descripcion": "JUNTA ELASTICA C/ BRIDA"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER A QUINTO DIGITO\nØCAÑO DEL EJE",
+      "valores": [
+        {
+          "codigo": "1\"",
+          "descripcion": ""
+        },
+        {
+          "codigo": "1 1/2\"",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2\"",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2 1/2\"",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO\nESPESOR DE LA PALETA (en mm)",
+      "valores": [
+        {
+          "codigo": "3mm",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO A OCTAVO DIGITO\nLARGO DE LA PALETA (en mm)",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "NOVENO DIGITO\nALTO DE LA PALETA (en cm)",
+      "valores": [
+        {
+          "codigo": "1",
+          "descripcion": "10cm"
+        }
+      ]
+    },
+    {
+      "posicion": "DECIMO DIGITO\nANCHO DE LA PALETA",
+      "valores": [
+        {
+          "codigo": "5",
+          "descripcion": "520mm"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "20mm"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "30mm"
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO A SEXTO DIGITO\nØ DEL EJE",
+      "valores": [
+        {
+          "codigo": "1 1/2\"",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2\"",
+          "descripcion": ""
+        },
+        {
+          "codigo": "2 1/2\"",
+          "descripcion": ""
+        },
+        {
+          "codigo": "3\"",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "SEPTIMO Y OCTAVO DIGITO\nANCHO BASE (en mm)",
+      "valores": [
+        {
+          "codigo": "50mm",
+          "descripcion": ""
+        },
+        {
+          "codigo": "60mm",
+          "descripcion": ""
+        },
+        {
+          "codigo": "70mm",
+          "descripcion": ""
+        },
+        {
+          "codigo": "90mm",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "NOVENO Y DECIMO DIGITO\nLARGO BASE (en cm)",
+      "valores": [
+        {
+          "codigo": "15",
+          "descripcion": "150mm"
+        },
+        {
+          "codigo": "20",
+          "descripcion": "200mm"
+        }
+      ]
+    }
+  ],
+  "K- ACERO INOX": [
+    {
+      "posicion": "PRIMER DIGITO GENERAL",
+      "valores": [
+        {
+          "codigo": "K",
+          "descripcion": "ACERO INOXIDABLE"
+        }
+      ]
+    },
+    {
+      "posicion": "SEGUNDO Y TERCER DIGITO\nACCESORIOS",
+      "valores": [
+        {
+          "codigo": "00",
+          "descripcion": "CODO"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "CURVA"
+        },
+        {
+          "codigo": "02",
+          "descripcion": "CODO LARGO"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "CODO REDUCC"
+        },
+        {
+          "codigo": "10",
+          "descripcion": "TEE"
+        },
+        {
+          "codigo": "11",
+          "descripcion": "TEE REDUCIDO"
+        },
+        {
+          "codigo": "12",
+          "descripcion": "CRUZ HHH"
+        },
+        {
+          "codigo": "13",
+          "descripcion": ""
+        },
+        {
+          "codigo": "14",
+          "descripcion": ""
+        },
+        {
+          "codigo": "20",
+          "descripcion": "CASQUILLO RED"
+        },
+        {
+          "codigo": "21",
+          "descripcion": "REDUCC CONICA"
+        },
+        {
+          "codigo": "22",
+          "descripcion": "BUJE REDUCCION"
+        },
+        {
+          "codigo": "23",
+          "descripcion": "BUJE REDUCC LARGO"
+        },
+        {
+          "codigo": "24",
+          "descripcion": "REDUCC CONCENTRICA"
+        },
+        {
+          "codigo": "25",
+          "descripcion": "REDUCC EXCENTRICA"
+        },
+        {
+          "codigo": "26",
+          "descripcion": ""
+        },
+        {
+          "codigo": "27",
+          "descripcion": ""
+        },
+        {
+          "codigo": "30",
+          "descripcion": "CUPLA DE REDUCC"
+        },
+        {
+          "codigo": "31",
+          "descripcion": "MANGUITO UNION"
+        },
+        {
+          "codigo": "32",
+          "descripcion": "CUPLA"
+        },
+        {
+          "codigo": "33",
+          "descripcion": ""
+        },
+        {
+          "codigo": "34",
+          "descripcion": ""
+        },
+        {
+          "codigo": "40",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "41",
+          "descripcion": "ADAPTADOR MIXTO"
+        },
+        {
+          "codigo": "42",
+          "descripcion": "ENTRE ROSCA"
+        },
+        {
+          "codigo": "43",
+          "descripcion": "ESPIGA (RACOR)"
+        },
+        {
+          "codigo": "44",
+          "descripcion": "ESPIGA ACODADA"
+        },
+        {
+          "codigo": "45",
+          "descripcion": "ROSCA C/ TUERCA RED"
+        },
+        {
+          "codigo": "46",
+          "descripcion": ""
+        },
+        {
+          "codigo": "47",
+          "descripcion": ""
+        },
+        {
+          "codigo": "50",
+          "descripcion": "UNION DOBLE"
+        },
+        {
+          "codigo": "51",
+          "descripcion": "MONTURA"
+        },
+        {
+          "codigo": "52",
+          "descripcion": ""
+        },
+        {
+          "codigo": "53",
+          "descripcion": ""
+        },
+        {
+          "codigo": "60",
+          "descripcion": "TAPA"
+        },
+        {
+          "codigo": "61",
+          "descripcion": "TAPON"
+        },
+        {
+          "codigo": "62",
+          "descripcion": ""
+        },
+        {
+          "codigo": "63",
+          "descripcion": ""
+        },
+        {
+          "codigo": "70",
+          "descripcion": "CENTRO BRIDA"
+        },
+        {
+          "codigo": "71",
+          "descripcion": "BRIDA GIRATORIA"
+        },
+        {
+          "codigo": "72",
+          "descripcion": "BRIDA FIJA"
+        },
+        {
+          "codigo": "73",
+          "descripcion": "BRIDA ROSCADA"
+        },
+        {
+          "codigo": "74",
+          "descripcion": "BRIDA S125"
+        },
+        {
+          "codigo": "75",
+          "descripcion": "BRIDA S150"
+        },
+        {
+          "codigo": "76",
+          "descripcion": ""
+        },
+        {
+          "codigo": "77",
+          "descripcion": ""
+        },
+        {
+          "codigo": "80",
+          "descripcion": "TERMINAL"
+        },
+        {
+          "codigo": "81",
+          "descripcion": "MACHON"
+        },
+        {
+          "codigo": "82",
+          "descripcion": ""
+        },
+        {
+          "codigo": "83",
+          "descripcion": ""
+        },
+        {
+          "codigo": "90",
+          "descripcion": "CAÑOS METAL"
+        },
+        {
+          "codigo": "91",
+          "descripcion": "CAÑOS PLASTICO"
+        },
+        {
+          "codigo": "92",
+          "descripcion": "NIPLE"
+        },
+        {
+          "codigo": "93",
+          "descripcion": "NIPLE PASA TANQUE"
+        },
+        {
+          "codigo": "94",
+          "descripcion": ""
+        },
+        {
+          "codigo": "95",
+          "descripcion": ""
+        }
+      ]
+    },
+    {
+      "posicion": "CUARTO DIGITO CONEXIÓN",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "PEGAR H-H"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PEGAR M-H"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "ROSCADO H-H"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "ROSCADO M-H"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ROSCADO M-M"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "MIXTO PEGAR ROSCADO H-H"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "MIXTO PEGAR ROSCADO M-H"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "SOLDAR"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "BRIDADA"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "MIXTO SOLDAR ROSCADO M-M"
+        }
+      ]
+    },
+    {
+      "posicion": "QUINTO DIGITO\nANGULO/RADIO/LONGITUD",
+      "valores": [
+        {
+          "codigo": "0",
+          "descripcion": "NO APLICA n/a"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "45°"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "90°"
+        }
+      ]
+    }
+  ],
+  "ZZ-MATERIALES POCO USUALES": [
+    {
+      "posicion": "PRIMER Y SEGUNDO DIGITO\nGENERAL",
+      "valores": [
+        {
+          "codigo": "ZZ",
+          "descripcion": "MATERIALES POCO USUALES"
+        }
+      ]
+    },
+    {
+      "posicion": "TERCER, CUARTO Y QUINTO DIGITO\nCOMPONENTE",
+      "valores": [
+        {
+          "codigo": "001",
+          "descripcion": "CURVATUBO DE POLIETILENO"
+        },
+        {
+          "codigo": "002",
+          "descripcion": "GRILLA DE ACERO INOX DE HIERRO REDONDO"
+        },
+        {
+          "codigo": "003",
+          "descripcion": "COLECTOR DE PISO RADIANTE"
+        },
+        {
+          "codigo": "004",
+          "descripcion": "CALDERA FLOWING ADVANCE SC-30"
+        },
+        {
+          "codigo": "005",
+          "descripcion": "EJE DE MANDO P/ VALVULA MARIPOSA"
+        },
+        {
+          "codigo": "006",
+          "descripcion": "FLOTANTE ROTOPLAST 1\""
+        },
+        {
+          "codigo": "007",
+          "descripcion": "MANGUERA TUBOTERM"
+        },
+        {
+          "codigo": "008",
+          "descripcion": "RODILLO COLECTOR EN PVC DE Ø300mm"
+        },
+        {
+          "codigo": "009",
+          "descripcion": "TENSORES ROSCADOS DE ACERO INOXIDABLE"
+        },
+        {
+          "codigo": "010",
+          "descripcion": "PERNOS DE ACERO INOXIDABLE"
+        },
+        {
+          "codigo": "011",
+          "descripcion": "MATERIAL DE CANASTOS"
+        },
+        {
+          "codigo": "012",
+          "descripcion": "RACORD DE BRONCE PARA MANGUERA"
+        },
+        {
+          "codigo": "013",
+          "descripcion": "CODO AWADUCT"
+        },
+        {
+          "codigo": "014",
+          "descripcion": "CAÑO AWADUCT"
+        },
+        {
+          "codigo": "015",
+          "descripcion": "Cloro BIN x 1000 litros"
+        },
+        {
+          "codigo": "016",
+          "descripcion": "Alojamiento de canastos"
+        },
+        {
+          "codigo": "017",
+          "descripcion": "CUPLA AWADUCT"
+        },
+        {
+          "codigo": "018",
+          "descripcion": "Angulo de union pasarela y escalera especificación cliente"
+        },
+        {
+          "codigo": "019",
+          "descripcion": "Escalera especificación cliente"
+        },
+        {
+          "codigo": "020",
+          "descripcion": "Baranda escalera especificación cliente"
+        },
+        {
+          "codigo": "021",
+          "descripcion": "Base para filtro bolsa"
+        },
+        {
+          "codigo": "022",
+          "descripcion": "Cable subterraneo"
+        },
+        {
+          "codigo": "023",
+          "descripcion": ""
+        },
+        {
+          "codigo": "024",
+          "descripcion": ""
+        },
+        {
+          "codigo": "025",
+          "descripcion": ""
+        },
+        {
+          "codigo": "026",
+          "descripcion": ""
+        },
+        {
+          "codigo": "027",
+          "descripcion": ""
+        },
+        {
+          "codigo": "028",
+          "descripcion": ""
+        },
+        {
+          "codigo": "029",
+          "descripcion": ""
+        },
+        {
+          "codigo": "030",
+          "descripcion": ""
+        },
+        {
+          "codigo": "031",
+          "descripcion": ""
+        },
+        {
+          "codigo": "032",
+          "descripcion": ""
+        },
+        {
+          "codigo": "033",
+          "descripcion": ""
+        },
+        {
+          "codigo": "034",
+          "descripcion": ""
+        },
+        {
+          "codigo": "035",
+          "descripcion": ""
+        }
+      ]
+    }
+  ]
+}

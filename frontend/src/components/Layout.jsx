@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { getUser, clearAuth, getPermisos } from '../store/authStore'
+import MiParte from './MiParte'
 
 const TODOS_LOS_ITEMS = [
   { to: '/dashboard',  label: 'Dashboard',   icon: 'speedometer2', modulo: null          },
@@ -11,9 +13,10 @@ const TODOS_LOS_ITEMS = [
   { to: '/finanzas',      label: 'Finanzas',      icon: 'cash-stack',    modulo: 'finanzas'      },
   { to: '/mantenimiento', label: 'Mantenimiento', icon: 'wrench-adjustable', modulo: 'mantenimiento' },
   { to: '/rrhh',         label: 'RRHH',          icon: 'people-fill',       modulo: 'rrhh'           },
+  { to: '/partes',       label: 'Partes',        icon: 'file-earmark-text', modulo: 'partes'         },
+  { to: '/codificacion',    label: 'Codificación',   icon: 'tag',           modulo: 'codificacion'   },
   { to: '/administracion', label: 'Administración', icon: 'building-gear', modulo: 'administracion' },
   { to: '/usuarios',      label: 'Usuarios',      icon: 'people-gear',   modulo: '__admin__'     },
-  { to: '/roles',      label: 'Roles',        icon: 'shield-lock',  modulo: '__admin__'   },
 ]
 
 const ROL_LABELS = {
@@ -28,10 +31,11 @@ const ROL_LABELS = {
 }
 
 export default function Layout() {
-  const navigate  = useNavigate()
-  const user      = getUser()
-  const rol       = user?.rol ?? 'solo_lectura'
-  const permisos  = getPermisos()
+  const navigate      = useNavigate()
+  const user          = getUser()
+  const rol           = user?.rol ?? 'solo_lectura'
+  const permisos      = getPermisos()
+  const [showMiParte, setShowMiParte] = useState(false)
 
   const NAV_ITEMS = TODOS_LOS_ITEMS.filter(i => {
     if (i.modulo === '__admin__') return rol === 'admin'
@@ -80,6 +84,9 @@ export default function Layout() {
             E-INTRA ERP
           </span>
           <div className="d-flex align-items-center gap-3">
+            <button className="btn btn-sm btn-primary" onClick={() => setShowMiParte(true)}>
+              <i className="bi bi-file-earmark-text me-1" />Mi Parte
+            </button>
             <span className="text-muted" style={{ fontSize: '0.82rem' }}>
               <i className="bi bi-person-circle me-1" />
               {user?.username}
@@ -96,6 +103,8 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      <MiParte show={showMiParte} onClose={() => setShowMiParte(false)} />
     </div>
   )
 }

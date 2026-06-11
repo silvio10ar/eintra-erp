@@ -1,20 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 
-const FORM_NUEVO = { username:'', nombre:'', email:'', password:'', rol:'solo_lectura' }
-
-const MODULOS = ['stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios']
-const MOD_LABEL = {
-  stock:'Stock', compras:'Compras', ventas:'Ventas', proyectos:'Proyectos',
-  produccion:'Producción', finanzas:'Finanzas', mantenimiento:'Mantenimiento',
-  administracion:'Administración', usuarios:'Usuarios',
-}
+const FORM_NUEVO = { username:'', nombre:'', email:'', password:'', rol:'solo_lectura', rrhh_empleado_id:'' }
 
 export default function Usuarios() {
-  const [usuarios, setUsuarios]           = useState([])
-  const [todosLosRoles, setTodosLosRoles] = useState([])
-  const [loading, setLoading]             = useState(true)
-  const [error, setError]                 = useState('')
+  const [usuarios, setUsuarios]   = useState([])
+  const [empleados, setEmpleados] = useState([])
+  const [modulos, setModulos]     = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [error, setError]         = useState('')
 
   // Modal nuevo usuario
   const [showNuevo, setShowNuevo]     = useState(false)
@@ -23,28 +17,35 @@ export default function Usuarios() {
   const [errNuevo, setErrNuevo]       = useState('')
 
   // Modal contraseña
-  const [userPass, setUserPass]       = useState(null)
-  const [nuevaPass, setNuevaPass]     = useState('')
-  const [savingPass, setSavingPass]   = useState(false)
-  const [errPass, setErrPass]         = useState('')
+  const [userPass, setUserPass]     = useState(null)
+  const [nuevaPass, setNuevaPass]   = useState('')
+  const [savingPass, setSavingPass] = useState(false)
+  const [errPass, setErrPass]       = useState('')
 
-  // Modal acceso (roles + permisos directos)
-  const [userAcceso, setUserAcceso]         = useState(null)
-  const [tabAcceso, setTabAcceso]           = useState('roles')
-  const [rolesAsignados, setRolesAsignados] = useState([])
-  const [savingRoles, setSavingRoles]       = useState(false)
-  const [permisosForm, setPermisosForm]     = useState({})
-  const [savingPermisos, setSavingPermisos] = useState(false)
+  // Modal editar
+  const [userEdit, setUserEdit]       = useState(null)
+  const [formEdit, setFormEdit]       = useState({})
+  const [savingEdit, setSavingEdit]   = useState(false)
+  const [errEdit, setErrEdit]         = useState('')
+
+  // Modal permisos
+  const [userPermisos, setUserPermisos]       = useState(null)
+  const [permisosForm, setPermisosForm]       = useState({})
+  const [savingPermisos, setSavingPermisos]   = useState(false)
 
   const cargar = useCallback(() => {
     setLoading(true)
     Promise.all([
       api.get('/auth/usuarios'),
-      api.get('/roles'),
-    ]).then(([u, r]) => {
-      setUsuarios(u.data)
-      setTodosLosRoles(r.data)
-    }).catch(() => setError('No se pudieron cargar los datos'))
+      api.get('/rrhh/empleados'),
+      api.get('/auth/modulos'),
+    ])
+      .then(([ru, re, rm]) => {
+        setUsuarios(ru.data)
+        setEmpleados(re.data.filter(e => e.activo))
+        setModulos(rm.data)
+      })
+      .catch(() => setError('No se pudieron cargar los usuarios'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -74,6 +75,36 @@ export default function Usuarios() {
     } finally { setSavingPass(false) }
   }
 
+  /* ── Editar usuario ───────────────────────────────────────────── */
+  const abrirEdit = u => {
+    setFormEdit({ nombre: u.nombre, email: u.email || '', rol: u.rol, rrhh_empleado_id: u.rrhh_empleado_id || '' })
+    setErrEdit('')
+    setUserEdit(u)
+  }
+
+  const handleEditar = async e => {
+    e.preventDefault()
+    setSavingEdit(true); setErrEdit('')
+    try {
+      await api.put(`/auth/usuarios/${userEdit.id}`, formEdit)
+      setUserEdit(null)
+      cargar()
+    } catch (err) {
+      setErrEdit(err.response?.data?.error ?? 'Error al guardar')
+    } finally { setSavingEdit(false) }
+  }
+
+  /* ── Eliminar usuario ──────────────────────────────────────────── */
+  const handleEliminar = async u => {
+    if (!window.confirm(`¿Eliminar al usuario "${u.username}"? Esta acción no se puede deshacer.`)) return
+    try {
+      await api.delete(`/auth/usuarios/${u.id}`)
+      cargar()
+    } catch (err) {
+      alert(err.response?.data?.error ?? 'Error al eliminar')
+    }
+  }
+
   /* ── Activar / desactivar ──────────────────────────────────────── */
   const handleActivo = async u => {
     try {
@@ -82,34 +113,19 @@ export default function Usuarios() {
     } catch { alert('Error al cambiar estado') }
   }
 
-  /* ── Abrir modal de acceso (roles + permisos) ──────────────────── */
-  const abrirAcceso = async (u, tab = 'roles') => {
-    const [rolesResp, permisosResp] = await Promise.all([
-      api.get(`/roles/usuario/${u.id}`),
-      api.get(`/roles/usuario/${u.id}/permisos`),
-    ])
-    setRolesAsignados(rolesResp.data.map(x => x.id))
-    const directos = permisosResp.data
-    setPermisosForm(Object.fromEntries(MODULOS.map(m => [m, {
+  /* ── Abrir modal de permisos ───────────────────────────────────── */
+  const abrirPermisos = async u => {
+    const resp = await api.get(`/auth/usuarios/${u.id}/permisos`)
+    const directos = resp.data
+    setPermisosForm(Object.fromEntries(modulos.map(({ id: m }) => [m, {
       activo:   m in directos,
-      leer:     directos[m]?.leer    ?? false,
+      leer:     directos[m]?.leer     ?? false,
       escribir: directos[m]?.escribir ?? false,
     }])))
-    setTabAcceso(tab)
-    setUserAcceso(u)
+    setUserPermisos(u)
   }
 
-  /* ── Guardar roles ─────────────────────────────────────────────── */
-  const guardarRoles = async () => {
-    setSavingRoles(true)
-    try {
-      await api.put(`/roles/usuario/${userAcceso.id}`, { roles: rolesAsignados })
-      setUserAcceso(null)
-    } catch { alert('Error al guardar roles') }
-    finally { setSavingRoles(false) }
-  }
-
-  /* ── Guardar permisos directos ─────────────────────────────────── */
+  /* ── Guardar permisos ──────────────────────────────────────────── */
   const guardarPermisos = async () => {
     setSavingPermisos(true)
     try {
@@ -117,14 +133,11 @@ export default function Usuarios() {
       for (const [m, v] of Object.entries(permisosForm)) {
         if (v.activo) body[m] = { leer: v.leer, escribir: v.escribir }
       }
-      await api.put(`/roles/usuario/${userAcceso.id}/permisos`, body)
-      setUserAcceso(null)
+      await api.put(`/auth/usuarios/${userPermisos.id}/permisos`, body)
+      setUserPermisos(null)
     } catch { alert('Error al guardar permisos') }
     finally { setSavingPermisos(false) }
   }
-
-  const toggleRol = id =>
-    setRolesAsignados(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
 
   const setPerm = (m, field, val) =>
     setPermisosForm(p => ({ ...p, [m]: { ...p[m], [field]: val } }))
@@ -155,6 +168,7 @@ export default function Usuarios() {
               <tr>
                 <th>Usuario</th>
                 <th>Nombre</th>
+                <th>Empleado RRHH</th>
                 <th>Email</th>
                 <th>Estado</th>
                 <th className="text-end">Acciones</th>
@@ -168,6 +182,11 @@ export default function Usuarios() {
                     {u.rol === 'admin' && <span className="badge bg-danger ms-2" style={{fontSize:'0.65rem'}}>ADMIN</span>}
                   </td>
                   <td>{u.nombre}</td>
+                  <td className="text-muted small">
+                    {u.empleado_nombre
+                      ? <><i className="bi bi-person-badge me-1 text-primary" />{u.empleado_nombre}</>
+                      : <span className="text-muted fst-italic">—</span>}
+                  </td>
                   <td className="text-muted small">{u.email || '—'}</td>
                   <td>
                     <span className={`badge bg-${u.activo ? 'success' : 'secondary'}`}>
@@ -177,20 +196,28 @@ export default function Usuarios() {
                   <td className="text-end">
                     <div className="d-flex gap-2 justify-content-end">
                       {u.rol !== 'admin' && (
-                        <button className="btn btn-sm btn-outline-primary" title="Roles y permisos"
-                          onClick={() => abrirAcceso(u)}>
+                        <button className="btn btn-sm btn-outline-primary" title="Permisos"
+                          onClick={() => abrirPermisos(u)}>
                           <i className="bi bi-shield-check" />
                         </button>
                       )}
+                      <button className="btn btn-sm btn-outline-secondary" title="Editar"
+                        onClick={() => abrirEdit(u)}>
+                        <i className="bi bi-pencil" />
+                      </button>
                       <button className="btn btn-sm btn-outline-secondary" title="Cambiar contraseña"
                         onClick={() => { setUserPass(u); setNuevaPass(''); setErrPass('') }}>
                         <i className="bi bi-key" />
                       </button>
                       <button
-                        className={`btn btn-sm btn-outline-${u.activo ? 'danger' : 'success'}`}
+                        className={`btn btn-sm btn-outline-${u.activo ? 'warning' : 'success'}`}
                         title={u.activo ? 'Desactivar' : 'Activar'}
                         onClick={() => handleActivo(u)}>
-                        <i className={`bi bi-${u.activo ? 'person-x' : 'person-check'}`} />
+                        <i className={`bi bi-${u.activo ? 'person-dash' : 'person-check'}`} />
+                      </button>
+                      <button className="btn btn-sm btn-outline-danger" title="Eliminar"
+                        onClick={() => handleEliminar(u)}>
+                        <i className="bi bi-trash" />
                       </button>
                     </div>
                   </td>
@@ -201,151 +228,122 @@ export default function Usuarios() {
         </div>
       </div>
 
-      {todosLosRoles.length === 0 && (
-        <div className="alert alert-info mt-3 small">
-          <i className="bi bi-info-circle me-2" />
-          Aún no hay roles definidos. Creá los roles primero en <strong>Configuración → Roles</strong>.
-        </div>
-      )}
-
-      {/* ── Modal: Roles y permisos ───────────────────────────────────── */}
-      {userAcceso && (
+      {/* ── Modal: Permisos de usuario ────────────────────────────────── */}
+      {userPermisos && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,.4)' }}>
-          <div className="modal-dialog modal-lg">
+          <div className="modal-dialog modal-md">
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">
                   <i className="bi bi-shield-check me-2 text-primary" />
-                  Acceso de <strong>{userAcceso.username}</strong>
+                  Permisos de <strong>{userPermisos.username}</strong>
                 </h5>
-                <button type="button" className="btn-close" onClick={() => setUserAcceso(null)} />
+                <button type="button" className="btn-close" onClick={() => setUserPermisos(null)} />
               </div>
-              <div className="modal-body">
-                <ul className="nav nav-tabs mb-3">
-                  <li className="nav-item">
-                    <button className={`nav-link ${tabAcceso === 'roles' ? 'active' : ''}`}
-                      onClick={() => setTabAcceso('roles')}>
-                      <i className="bi bi-people me-2" />Roles
-                    </button>
-                  </li>
-                  <li className="nav-item">
-                    <button className={`nav-link ${tabAcceso === 'permisos' ? 'active' : ''}`}
-                      onClick={() => setTabAcceso('permisos')}>
-                      <i className="bi bi-toggles me-2" />Permisos directos
-                    </button>
-                  </li>
-                </ul>
-
-                {/* Tab: Roles */}
-                {tabAcceso === 'roles' && (
-                  todosLosRoles.length === 0 ? (
-                    <p className="text-muted">No hay roles definidos. Creá roles en la sección <strong>Roles</strong> primero.</p>
-                  ) : (
-                    <>
-                      <p className="text-muted small mb-3">
-                        Seleccioná uno o más roles. Los permisos del usuario serán la unión de todos los roles asignados.
-                      </p>
-                      <div className="row g-2">
-                        {todosLosRoles.map(r => {
-                          const asignado = rolesAsignados.includes(r.id)
-                          const modsCon  = Object.entries(r.permisos ?? {}).filter(([,v]) => v.leer || v.escribir)
-                          return (
-                            <div key={r.id} className="col-12 col-sm-6">
-                              <div
-                                className={`card border-2 h-100 ${asignado ? 'border-primary bg-primary bg-opacity-10' : 'border-light'}`}
-                                style={{ cursor: 'pointer' }}
-                                onClick={() => toggleRol(r.id)}>
-                                <div className="card-body py-2 px-3">
-                                  <div className="d-flex align-items-center gap-2">
-                                    <input type="checkbox" className="form-check-input" readOnly checked={asignado} />
-                                    <span className="fw-semibold small">{r.nombre}</span>
-                                  </div>
-                                  {modsCon.length > 0 && (
-                                    <div className="mt-1" style={{ fontSize: '0.72rem', color: '#6c757d' }}>
-                                      {modsCon.map(([mod, v]) => (
-                                        <span key={mod} className="me-2">
-                                          {MOD_LABEL[mod] ?? mod} {v.escribir ? '✏️' : '👁️'}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
+              <div className="modal-body p-0">
+                <table className="table table-sm align-middle mb-0">
+                  <thead className="table-light">
+                    <tr>
+                      <th className="ps-3">Módulo</th>
+                      <th className="text-center" style={{width:80}}>Acceso</th>
+                      <th className="text-center" style={{width:80}}>Leer</th>
+                      <th className="text-center" style={{width:80}}>Escribir</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modulos.map(({ id: m, label }) => {
+                      const v = permisosForm[m] ?? { activo: false, leer: false, escribir: false }
+                      return (
+                        <tr key={m} className={v.activo ? '' : 'text-muted'}>
+                          <td className="ps-3 fw-medium">{label}</td>
+                          <td className="text-center">
+                            <div className="form-check form-switch d-flex justify-content-center m-0">
+                              <input type="checkbox" className="form-check-input" role="switch"
+                                checked={v.activo}
+                                onChange={e => {
+                                  const on = e.target.checked
+                                  setPermisosForm(p => ({ ...p, [m]: { activo: on, leer: on, escribir: false } }))
+                                }} />
                             </div>
-                          )
-                        })}
-                      </div>
-                    </>
-                  )
-                )}
-
-                {/* Tab: Permisos directos */}
-                {tabAcceso === 'permisos' && (
-                  <>
-                    <p className="text-muted small mb-3">
-                      Los permisos directos <strong>sobreescriben</strong> los que otorgan los roles.
-                      Activá solo los módulos que necesiten una excepción específica para este usuario.
-                    </p>
-                    <div className="table-responsive">
-                      <table className="table table-sm align-middle mb-0">
-                        <thead className="table-light">
-                          <tr>
-                            <th>Módulo</th>
-                            <th className="text-center" style={{width:120}}>Override</th>
-                            <th className="text-center" style={{width:80}}>Leer</th>
-                            <th className="text-center" style={{width:80}}>Escribir</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {MODULOS.map(m => {
-                            const v = permisosForm[m] ?? { activo: false, leer: false, escribir: false }
-                            return (
-                              <tr key={m} className={v.activo ? '' : 'text-muted'}>
-                                <td className="fw-medium">{MOD_LABEL[m]}</td>
-                                <td className="text-center">
-                                  <div className="form-check form-switch d-flex justify-content-center m-0">
-                                    <input type="checkbox" className="form-check-input" role="switch"
-                                      checked={v.activo}
-                                      onChange={e => setPerm(m, 'activo', e.target.checked)} />
-                                  </div>
-                                </td>
-                                <td className="text-center">
-                                  <input type="checkbox" className="form-check-input"
-                                    checked={v.leer}
-                                    disabled={!v.activo}
-                                    onChange={e => setPerm(m, 'leer', e.target.checked)} />
-                                </td>
-                                <td className="text-center">
-                                  <input type="checkbox" className="form-check-input"
-                                    checked={v.escribir}
-                                    disabled={!v.activo}
-                                    onChange={e => setPerm(m, 'escribir', e.target.checked)} />
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
-                )}
+                          </td>
+                          <td className="text-center">
+                            <input type="checkbox" className="form-check-input"
+                              checked={v.leer}
+                              disabled={!v.activo}
+                              onChange={e => setPerm(m, 'leer', e.target.checked)} />
+                          </td>
+                          <td className="text-center">
+                            <input type="checkbox" className="form-check-input"
+                              checked={v.escribir}
+                              disabled={!v.activo}
+                              onChange={e => setPerm(m, 'escribir', e.target.checked)} />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
               <div className="modal-footer">
-                <button className="btn btn-secondary btn-sm" onClick={() => setUserAcceso(null)}>Cancelar</button>
-                {tabAcceso === 'roles' && (
-                  <button className="btn btn-primary btn-sm" onClick={guardarRoles} disabled={savingRoles}>
-                    {savingRoles && <span className="spinner-border spinner-border-sm me-2" />}
-                    Guardar roles
-                  </button>
-                )}
-                {tabAcceso === 'permisos' && (
-                  <button className="btn btn-primary btn-sm" onClick={guardarPermisos} disabled={savingPermisos}>
-                    {savingPermisos && <span className="spinner-border spinner-border-sm me-2" />}
-                    Guardar permisos
-                  </button>
-                )}
+                <button className="btn btn-secondary btn-sm" onClick={() => setUserPermisos(null)}>Cancelar</button>
+                <button className="btn btn-primary btn-sm" onClick={guardarPermisos} disabled={savingPermisos}>
+                  {savingPermisos && <span className="spinner-border spinner-border-sm me-2" />}
+                  Guardar permisos
+                </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Editar usuario ─────────────────────────────────── */}
+      {userEdit && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,.4)' }}>
+          <div className="modal-dialog">
+            <form className="modal-content" onSubmit={handleEditar}>
+              <div className="modal-header">
+                <h5 className="modal-title">Editar — <strong>{userEdit.username}</strong></h5>
+                <button type="button" className="btn-close" onClick={() => setUserEdit(null)} />
+              </div>
+              <div className="modal-body">
+                {errEdit && <div className="alert alert-danger py-2 small">{errEdit}</div>}
+                <div className="row g-3">
+                  <div className="col-12">
+                    <label className="form-label small fw-medium">Nombre completo *</label>
+                    <input className="form-control" value={formEdit.nombre} required
+                      onChange={e => setFormEdit(p => ({ ...p, nombre: e.target.value }))} />
+                  </div>
+                  <div className="col-6">
+                    <label className="form-label small fw-medium">Email</label>
+                    <input type="email" className="form-control" value={formEdit.email}
+                      onChange={e => setFormEdit(p => ({ ...p, email: e.target.value }))} />
+                  </div>
+                  <div className="col-6">
+                    <label className="form-label small fw-medium">Tipo</label>
+                    <select className="form-select" value={formEdit.rol}
+                      onChange={e => setFormEdit(p => ({ ...p, rol: e.target.value }))}>
+                      <option value="solo_lectura">Usuario normal</option>
+                      <option value="admin">Administrador</option>
+                    </select>
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label small fw-medium">Empleado RRHH asociado</label>
+                    <select className="form-select" value={formEdit.rrhh_empleado_id}
+                      onChange={e => setFormEdit(p => ({ ...p, rrhh_empleado_id: e.target.value }))}>
+                      <option value="">— Sin asociar —</option>
+                      {empleados.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setUserEdit(null)}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={savingEdit}>
+                  {savingEdit && <span className="spinner-border spinner-border-sm me-2" />}
+                  Guardar cambios
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -383,13 +381,21 @@ export default function Usuarios() {
                       onChange={e => setFormNuevo(p => ({ ...p, email: e.target.value }))} />
                   </div>
                   <div className="col-6">
-                    <label className="form-label small fw-medium">Rol base</label>
+                    <label className="form-label small fw-medium">Tipo</label>
                     <select className="form-select" value={formNuevo.rol}
                       onChange={e => setFormNuevo(p => ({ ...p, rol: e.target.value }))}>
-                      <option value="solo_lectura">Solo lectura</option>
+                      <option value="solo_lectura">Usuario normal</option>
                       <option value="admin">Administrador</option>
                     </select>
-                    <div className="form-text">Los permisos se asignan vía roles</div>
+                    <div className="form-text">Admin accede a todo</div>
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label small fw-medium">Empleado RRHH asociado</label>
+                    <select className="form-select" value={formNuevo.rrhh_empleado_id}
+                      onChange={e => setFormNuevo(p => ({ ...p, rrhh_empleado_id: e.target.value }))}>
+                      <option value="">— Sin asociar —</option>
+                      {empleados.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+                    </select>
                   </div>
                 </div>
               </div>
