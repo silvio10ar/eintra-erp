@@ -1,13 +1,19 @@
 const jwt = require('jsonwebtoken');
 const { db } = require('../db/database');
 
-const MODULOS = ['stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios','rrhh','partes','codificacion'];
+const MODULOS = ['stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios','rrhh','partes','codificacion','materiales'];
 
 const MODULOS_LABEL = {
   stock:'Stock', compras:'Compras', ventas:'Ventas', proyectos:'Proyectos',
   produccion:'Producción', finanzas:'Finanzas', mantenimiento:'Mantenimiento',
   administracion:'Administración', usuarios:'Usuarios', rrhh:'RRHH', partes:'Partes',
-  codificacion:'Codificación',
+  codificacion:'Codificación', materiales:'Materiales',
+};
+
+// padre → [submodulos]: acceso al padre otorga el mismo acceso a todos sus submodulos
+const JERARQUIA = {
+  rrhh:    ['partes'],
+  compras: ['codificacion', 'materiales'],
 };
 
 function getPermisosEfectivos(userId, rol) {
@@ -15,7 +21,16 @@ function getPermisosEfectivos(userId, rol) {
     return Object.fromEntries(MODULOS.map(m => [m, { leer: true, escribir: true }]));
   }
   const rows = db.prepare('SELECT * FROM usuario_permisos WHERE usuario_id=?').all(userId);
-  return Object.fromEntries(rows.map(r => [r.modulo, { leer: !!r.puede_leer, escribir: !!r.puede_escribir }]));
+  const permisos = Object.fromEntries(rows.map(r => [r.modulo, { leer: !!r.puede_leer, escribir: !!r.puede_escribir }]));
+  // Herencia: si tiene el módulo padre, otorga mismo acceso a sus submodulos
+  for (const [padre, hijos] of Object.entries(JERARQUIA)) {
+    if (permisos[padre]) {
+      for (const hijo of hijos) {
+        if (!permisos[hijo]) permisos[hijo] = { ...permisos[padre] };
+      }
+    }
+  }
+  return permisos;
 }
 
 function verificarToken(req, res, next) {
@@ -35,4 +50,4 @@ const puede = {
   escribir:modulo => (req, res, next) => req.permisos[modulo]?.escribir ? next() : res.status(403).json({ error: 'Sin permisos de escritura'  }),
 };
 
-module.exports = { verificarToken, puede, getPermisosEfectivos, MODULOS, MODULOS_LABEL };
+module.exports = { verificarToken, puede, getPermisosEfectivos, MODULOS, MODULOS_LABEL, JERARQUIA };

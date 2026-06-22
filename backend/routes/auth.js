@@ -3,7 +3,7 @@ const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
-const { verificarToken, getPermisosEfectivos, MODULOS, MODULOS_LABEL } = require('../middleware/auth');
+const { verificarToken, getPermisosEfectivos, MODULOS, MODULOS_LABEL, JERARQUIA } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -35,7 +35,11 @@ router.post('/login',
 );
 
 router.get('/modulos', verificarToken, (req, res) => {
-  res.json(MODULOS.map(m => ({ id: m, label: MODULOS_LABEL[m] ?? m })));
+  const submodulosMap = Object.entries(JERARQUIA).reduce((acc, [padre, hijos]) => {
+    hijos.forEach(h => { acc[h] = padre });
+    return acc;
+  }, {});
+  res.json(MODULOS.map(m => ({ id: m, label: MODULOS_LABEL[m] ?? m, padre: submodulosMap[m] ?? null })));
 });
 
 router.get('/me', verificarToken, (req, res) => {

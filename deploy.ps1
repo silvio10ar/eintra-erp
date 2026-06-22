@@ -32,8 +32,9 @@ tar -czf $TMP_TAR `
   "backend/package.json" `
   "backend/routes" `
   "backend/middleware" `
+  "backend/helpers" `
   "backend/db/database.js" `
-  "backend/data" `
+  "backend/scripts" `
   "frontend/src" `
   "frontend/package.json" `
   "frontend/vite.config.js" `
@@ -46,15 +47,32 @@ OK "Paquete listo ($kb KB)"
 
 # ─── 3. Subir y extraer en el servidor ───────────────────────────────────────
 Paso 3 "Subiendo archivos al servidor (ingresar contrasena)..."
-$dirs = "$RUTA_REMOTA/backend/routes $RUTA_REMOTA/backend/middleware $RUTA_REMOTA/backend/db $RUTA_REMOTA/frontend/src $RUTA_REMOTA/uploads"
+$dirs = "$RUTA_REMOTA/backend/routes $RUTA_REMOTA/backend/middleware $RUTA_REMOTA/backend/helpers $RUTA_REMOTA/backend/db $RUTA_REMOTA/backend/scripts $RUTA_REMOTA/backend/data $RUTA_REMOTA/frontend/src $RUTA_REMOTA/uploads"
 scp @O -q $TMP_TAR "${SSH}:${RUTA_REMOTA}/deploy.tar.gz"
 if ($LASTEXITCODE -ne 0) { Fallo "Error al subir el paquete" }
 ssh @O $SSH "mkdir -p $dirs && cd $RUTA_REMOTA && tar -xzf deploy.tar.gz && rm deploy.tar.gz"
 if ($LASTEXITCODE -ne 0) { Fallo "Error al extraer en el servidor" }
 OK "Archivos en $RUTA_REMOTA"
 
+# Los archivos de datos NO se sincronizan automaticamente.
+# Para subir datos al servidor, hacerlo manualmente con scp.
+
 # ─── 4. Script de configuracion remota ───────────────────────────────────────
 Paso 4 "Instalando dependencias y compilando en el servidor..."
+
+# Leer vars SMTP del .env local para sincronizar al servidor
+function Read-EnvVar {
+  param($f, $k)
+  $l = Get-Content $f -ErrorAction SilentlyContinue | Where-Object { $_ -match "^${k}=(.*)$" } | Select-Object -First 1
+  if ($l) { ($l -split '=', 2)[1].Trim() } else { '' }
+}
+$smtpHost   = Read-EnvVar "$LOCAL\backend\.env" 'SMTP_HOST'
+$smtpPort   = Read-EnvVar "$LOCAL\backend\.env" 'SMTP_PORT'
+$smtpUser   = Read-EnvVar "$LOCAL\backend\.env" 'SMTP_USER'
+$smtpPass   = Read-EnvVar "$LOCAL\backend\.env" 'SMTP_PASS'
+$smtpFrom   = Read-EnvVar "$LOCAL\backend\.env" 'SMTP_FROM'
+$smtpSecure = Read-EnvVar "$LOCAL\backend\.env" 'SMTP_SECURE'
+$backupTo   = Read-EnvVar "$LOCAL\backend\.env" 'BACKUP_TO'
 
 $bash = @"
 #!/bin/bash
@@ -95,6 +113,23 @@ else
   echo "[env] .env existente, sin cambios"
 fi
 
+# ── Sincronizar vars SMTP ─────────────────────────────────────────
+_uenv() {
+  local k="`$1" v="`$2"
+  local tmp=`$(mktemp)
+  grep -v "^`$k=" "`$RUTA/backend/.env" > "`$tmp" 2>/dev/null || true
+  printf '%s=%s\n' "`$k" "`$v" >> "`$tmp"
+  mv "`$tmp" "`$RUTA/backend/.env"
+}
+_uenv SMTP_HOST   "$smtpHost"
+_uenv SMTP_PORT   "$smtpPort"
+_uenv SMTP_USER   "$smtpUser"
+_uenv SMTP_PASS   "$smtpPass"
+_uenv SMTP_FROM   "$smtpFrom"
+_uenv SMTP_SECURE "$smtpSecure"
+_uenv BACKUP_TO   "$backupTo"
+echo "[smtp] Vars SMTP sincronizadas"
+
 # ── Dependencias backend ──────────────────────────────────────────
 echo "[npm] Instalando dependencias del backend..."
 cd "`$RUTA/backend" && npm install --omit=dev
@@ -115,6 +150,13 @@ else
   sudo env PATH=`$PATH:/usr/bin pm2 startup systemd -u "`$USUARIO" --hp "/home/`$USUARIO" 2>/dev/null || true
   pm2 save
 fi
+
+# ── Cron backup BD ───────────────────────────────────────────────
+mkdir -p "`$RUTA/logs"
+NODE_BIN=`$(which node 2>/dev/null || echo /usr/bin/node)
+CRON_JOB="0 0 * * * `$NODE_BIN `$RUTA/backend/scripts/backup-email.js >> `$RUTA/logs/backup.log 2>&1"
+( crontab -l 2>/dev/null | grep -v "backup-email.js" ; echo "`$CRON_JOB" ) | crontab -
+echo "[cron] Backup BD programado a medianoche"
 
 echo ""
 echo "[OK] Servicio activo en http://`$(hostname -I | awk '{print `$1}'):3002"

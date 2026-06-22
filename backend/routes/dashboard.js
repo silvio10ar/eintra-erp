@@ -63,6 +63,7 @@ router.get('/resumen', verificarToken, (req, res) => {
 
   // ── Fichadas del día ───────────────────────────────────────────────────────
   let fichadas_hoy = [];
+  let sin_fichar_hoy = [];
   try {
     fichadas_hoy = db.prepare(`
       SELECT
@@ -76,6 +77,16 @@ router.get('/resumen', verificarToken, (req, res) => {
       GROUP BY COALESCE(CAST(a.empleado_id AS TEXT), a.empleado_ext)
       ORDER BY MIN(a.hora)
     `).all(hoy);
+    sin_fichar_hoy = db.prepare(`
+      SELECT e.id, e.nombre, e.horario_entrada
+      FROM rrhh_empleados e
+      WHERE e.activo = 1
+        AND e.id NOT IN (
+          SELECT DISTINCT empleado_id FROM rrhh_asistencia
+          WHERE fecha = ? AND empleado_id IS NOT NULL
+        )
+      ORDER BY e.nombre
+    `).all(hoy);
   } catch (_) {}
 
   res.json({
@@ -87,6 +98,7 @@ router.get('/resumen', verificarToken, (req, res) => {
     finanzas:  { ingresos_mes: finRow.ingresos_mes, egresos_mes: finRow.egresos_mes, saldo_total: saldoTotal },
     alertas:   { ots_urgentes, stock_bajo, oc_pendientes },
     fichadas_hoy,
+    sin_fichar_hoy,
   });
 });
 

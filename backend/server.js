@@ -32,6 +32,10 @@ app.use('/api/v1/mantenimiento', require('./routes/mantenimiento'));
 app.use('/api/v1/evaluaciones',  require('./routes/evaluaciones'));
 app.use('/api/v1/rrhh',          require('./routes/rrhh'));
 app.use('/api/v1/codificacion',  require('./routes/codificacion'));
+app.use('/api/v1/materiales',    require('./routes/materiales'));
+app.use('/api/v1/configuracion', require('./routes/configuracion'));
+app.use('/api/v1/mensajes',      require('./routes/mensajes'));
+app.use('/api/v1/crm',           require('./routes/crm'));
 
 const frontendDist = isProd
   ? (process.env.FRONTEND_DIST || path.resolve(__dirname, '../frontend/dist'))

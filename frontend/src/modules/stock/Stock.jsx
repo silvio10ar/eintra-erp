@@ -12,8 +12,7 @@ const fmt  = n => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).f
 const hoy  = () => new Date().toISOString().slice(0,10)
 const fmtF = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
 
-const FORM_P = { codigo:'', descripcion:'', categoria:'', unidad:'UND.', stock_actual:0, stock_minimo:0, ubicacion:'', precio_costo:0, precio_venta:0, proveedor:'' }
-const FORM_M = { producto_id:'', tipo:'entrada', cantidad:'', fecha:hoy(), referencia:'', precio_unit:0, proveedor:'', proyecto:'', cliente_interno:'', observaciones:'' }
+const FORM_M ={ producto_id:'', tipo:'entrada', cantidad:'', fecha:hoy(), referencia:'', precio_unit:0, proveedor:'', proyecto:'', cliente_interno:'', observaciones:'' }
 const FORM_H = { desde:'', hasta:'', tipo:'', campo:'todos', valor:'' }
 
 export default function Stock() {
@@ -21,7 +20,6 @@ export default function Stock() {
 
   /* ── Estado productos ───────────────────────────────────────────── */
   const [prods, setProds]     = useState([])
-  const [cats, setCats]       = useState([])
   const [ubics, setUbics]     = useState([])
   const [loading, setLoading] = useState(true)
   const [selId, setSelId]     = useState(null)
@@ -30,10 +28,9 @@ export default function Stock() {
   const [filAlerta, setFilAlerta] = useState('')   // ''|'ok'|'bajo'|'agotado'
 
   /* ── Estado modales ─────────────────────────────────────────────── */
-  const [modalP, setModalP]   = useState(null)    // null | 'nuevo' | prod
-  const [formP, setFormP]     = useState(FORM_P)
-  const [savP, setSavP]       = useState(false)
-  const [errP, setErrP]       = useState('')
+  const [modalUbic, setModalUbic] = useState(null)  // null | prod
+  const [ubicVal,   setUbicVal]   = useState('')
+  const [savUbic,   setSavUbic]   = useState(false)
 
   const [modalM, setModalM]   = useState(null)    // null | { tipo }
   const [formM, setFormM]     = useState(FORM_M)
@@ -51,6 +48,36 @@ export default function Stock() {
   const [valoresH, setValoresH] = useState([])  // autocomplete del campo Valor
   const [provsList, setProvsList] = useState([])
 
+  /* ── Ingresos pendientes ─────────────────────────────────────────── */
+  const [ingPend, setIngPend]         = useState([])
+  const [modalIngPend, setModalIngPend] = useState(false)
+  const [savIng, setSavIng]           = useState(null)   // id del item en proceso
+
+  const cargarIngPend = useCallback(() => {
+    api.get('/stock/ingresos-pendientes').then(r => setIngPend(r.data)).catch(() => {})
+  }, [])
+
+  useEffect(() => { cargarIngPend() }, [cargarIngPend])
+
+  const confirmarIngreso = async id => {
+    setSavIng(id)
+    try {
+      await api.post(`/stock/ingresos-pendientes/${id}/confirmar`)
+      cargarIngPend(); cargar()
+    } catch(err) { alert(err.response?.data?.error ?? 'Error al confirmar') }
+    finally { setSavIng(null) }
+  }
+
+  const rechazarIngreso = async (id, desc) => {
+    if (!confirm(`¿Rechazar ingreso de "${desc}"? El material NO entrará al stock.`)) return
+    setSavIng(id)
+    try {
+      await api.delete(`/stock/ingresos-pendientes/${id}`)
+      cargarIngPend()
+    } catch(err) { alert(err.response?.data?.error ?? 'Error') }
+    finally { setSavIng(null) }
+  }
+
   /* ── Cargar productos ───────────────────────────────────────────── */
   const cargar = useCallback(() => {
     setLoading(true)
@@ -62,7 +89,6 @@ export default function Stock() {
   useEffect(() => { cargar() }, [cargar])
 
   useEffect(() => {
-    api.get('/stock/productos/categorias').then(r => setCats(r.data))
     api.get('/stock/productos/ubicaciones').then(r => setUbics(r.data))
     api.get('/compras/proveedores').then(r => setProvsList(r.data)).catch(() => {})
   }, [])
@@ -100,8 +126,7 @@ export default function Stock() {
   const sel = prods.find(p => p.id === selId)
 
   /* ── Abrir modales ──────────────────────────────────────────────── */
-  const abrirNuevo = () => { setFormP(FORM_P); setErrP(''); setModalP('nuevo') }
-  const abrirEditar = p => { if (!p) return; setFormP({...p}); setErrP(''); setModalP(p) }
+  const abrirEditarUbic = p => { if (!p) return; setUbicVal(p.ubicacion || ''); setModalUbic(p) }
 
   const abrirMov = (tipo) => {
     const p = sel
@@ -110,22 +135,14 @@ export default function Stock() {
     setSugs([]); setErrM(''); setModalM({ tipo })
   }
 
-  /* ── Guardar producto ───────────────────────────────────────────── */
-  const guardarP = async e => {
-    e.preventDefault(); setSavP(true); setErrP('')
+  /* ── Guardar ubicación ──────────────────────────────────────────── */
+  const guardarUbic = async e => {
+    e.preventDefault(); setSavUbic(true)
     try {
-      if (modalP === 'nuevo') await api.post('/stock/productos', formP)
-      else                    await api.put(`/stock/productos/${modalP.id}`, formP)
-      setModalP(null); cargar()
-    } catch(err) { setErrP(err.response?.data?.error ?? 'Error al guardar') }
-    finally { setSavP(false) }
-  }
-
-  /* ── Eliminar producto ──────────────────────────────────────────── */
-  const eliminar = async () => {
-    if (!sel || !confirm(`¿Desactivar "${sel.descripcion}"?`)) return
-    await api.delete(`/stock/productos/${sel.id}`)
-    setSelId(null); cargar()
+      await api.put(`/stock/productos/${modalUbic.id}`, { ...modalUbic, ubicacion: ubicVal })
+      setModalUbic(null); cargar()
+    } catch { alert('Error al guardar') }
+    finally { setSavUbic(false) }
   }
 
   /* ── Guardar movimiento ─────────────────────────────────────────── */
@@ -172,9 +189,7 @@ export default function Stock() {
       {/* ── Toolbar ───────────────────────────────────────────────── */}
       <div className="d-flex flex-wrap gap-2 mb-3">
         {canWrite && <>
-          <button className="btn btn-sm btn-success"   onClick={abrirNuevo}><i className="bi bi-plus-lg me-1"/>Agregar</button>
-          <button className="btn btn-sm btn-primary"   onClick={() => abrirEditar(sel)} disabled={!sel}><i className="bi bi-pencil me-1"/>Editar</button>
-          <button className="btn btn-sm btn-danger"    onClick={eliminar}   disabled={!sel}><i className="bi bi-x-lg me-1"/>Eliminar</button>
+          <button className="btn btn-sm btn-outline-primary" onClick={() => abrirEditarUbic(sel)} disabled={!sel}><i className="bi bi-geo-alt me-1"/>Editar ubicación</button>
           <div className="vr mx-1"/>
           <button className="btn btn-sm btn-outline-success" onClick={() => abrirMov('entrada')}   disabled={!sel}><i className="bi bi-arrow-up me-1"/>Entrada</button>
           <button className="btn btn-sm btn-outline-danger"  onClick={() => abrirMov('salida')}    disabled={!sel}><i className="bi bi-arrow-down me-1"/>Salida</button>
@@ -183,6 +198,14 @@ export default function Stock() {
         </>}
         <button className="btn btn-sm btn-outline-secondary" onClick={() => { setModalH(true); setPageH(1) }}>
           <i className="bi bi-clock-history me-1"/>Historial
+        </button>
+        <button className={`btn btn-sm position-relative ${ingPend.length > 0 ? 'btn-warning' : 'btn-outline-secondary'}`}
+          onClick={() => setModalIngPend(true)}>
+          <i className="bi bi-box-arrow-in-down me-1"/>Ingresos pendientes
+          {ingPend.length > 0 && (
+            <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+              style={{fontSize:'0.68rem'}}>{ingPend.length}</span>
+          )}
         </button>
         <div className="dropdown">
           <button className="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
@@ -242,8 +265,11 @@ export default function Stock() {
                             className={selId===p.id ? 'table-primary' : ''}
                             style={{ cursor:'pointer', color: agot ? '#dc3545' : bajo ? '#d97706' : undefined }}
                             onClick={() => setSelId(p.id === selId ? null : p.id)}
-                            onDoubleClick={() => canWrite && abrirEditar(p)}>
-                            <td className="fw-semibold">{p.codigo}</td>
+                            onDoubleClick={() => canWrite && abrirEditarUbic(p)}>
+                            <td className="fw-semibold">
+                              {p.codigo}
+                              {p.codigo_proveedor && <div className="text-muted fw-normal" style={{fontSize:'0.74rem'}}>{p.codigo_proveedor}</div>}
+                            </td>
                             <td><div className="text-truncate" style={{maxWidth:320}} title={p.descripcion}>{p.descripcion}</div></td>
                             <td className="text-end fw-semibold">{fmt(p.stock_actual)}</td>
                             <td className="text-center">{agot ? '✗' : '✓'}</td>
@@ -381,73 +407,32 @@ export default function Stock() {
         </div>
       )}
 
-      {/* ══ MODAL: PRODUCTO ═════════════════════════════════════════ */}
-      {modalP !== null && (
+      {/* ══ MODAL: EDITAR UBICACIÓN ══════════════════════════════════ */}
+      {modalUbic && (
         <div className="modal show d-block" style={{background:'rgba(0,0,0,.4)'}}>
-          <div className="modal-dialog modal-lg">
-            <form className="modal-content" onSubmit={guardarP}>
-              <div className="modal-header">
-                <h5 className="modal-title">{modalP==='nuevo' ? 'Nuevo producto' : 'Editar producto'}</h5>
-                <button type="button" className="btn-close" onClick={()=>setModalP(null)}/>
+          <div className="modal-dialog modal-sm">
+            <form className="modal-content" onSubmit={guardarUbic}>
+              <div className="modal-header py-2">
+                <h6 className="modal-title">Editar ubicación</h6>
+                <button type="button" className="btn-close" onClick={() => setModalUbic(null)}/>
               </div>
               <div className="modal-body">
-                {errP && <div className="alert alert-danger py-2 small">{errP}</div>}
-                <div className="row g-3">
-                  <div className="col-md-4">
-                    <label className="form-label small fw-medium">Código *</label>
-                    <input className="form-control" value={formP.codigo} required onChange={e=>setFormP(p=>({...p,codigo:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-8">
-                    <label className="form-label small fw-medium">Descripción *</label>
-                    <input className="form-control" value={formP.descripcion} required onChange={e=>setFormP(p=>({...p,descripcion:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label small fw-medium">Categoría</label>
-                    <input className="form-control" value={formP.categoria} list="cats-list" onChange={e=>setFormP(p=>({...p,categoria:e.target.value}))}/>
-                    <datalist id="cats-list">{cats.map(c=><option key={c} value={c}/>)}</datalist>
-                  </div>
-                  <div className="col-md-2">
-                    <label className="form-label small fw-medium">Unidad</label>
-                    <input className="form-control" value={formP.unidad} onChange={e=>setFormP(p=>({...p,unidad:e.target.value}))}/>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium">Ubicación</label>
-                    <input className="form-control" value={formP.ubicacion} list="ubics-list" onChange={e=>setFormP(p=>({...p,ubicacion:e.target.value}))}/>
-                    <datalist id="ubics-list">{ubics.map(u=><option key={u} value={u}/>)}</datalist>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium">Stock mínimo</label>
-                    <input type="number" className="form-control" value={formP.stock_minimo} min="0" step="any" onChange={e=>setFormP(p=>({...p,stock_minimo:parseFloat(e.target.value)||0}))}/>
-                  </div>
-                  {modalP==='nuevo' && (
-                    <div className="col-md-3">
-                      <label className="form-label small fw-medium">Stock inicial</label>
-                      <input type="number" className="form-control" value={formP.stock_actual} min="0" step="any" onChange={e=>setFormP(p=>({...p,stock_actual:parseFloat(e.target.value)||0}))}/>
-                    </div>
-                  )}
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium">Precio costo</label>
-                    <input type="number" className="form-control" value={formP.precio_costo} min="0" step="any" onChange={e=>setFormP(p=>({...p,precio_costo:parseFloat(e.target.value)||0}))}/>
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-medium">Precio venta</label>
-                    <input type="number" className="form-control" value={formP.precio_venta} min="0" step="any" onChange={e=>setFormP(p=>({...p,precio_venta:parseFloat(e.target.value)||0}))}/>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label small fw-medium">Proveedor principal</label>
-                    <input className="form-control" value={formP.proveedor} list="prod-provs-list"
-                      placeholder="Seleccionar o escribir…"
-                      onChange={e=>setFormP(p=>({...p,proveedor:e.target.value}))}/>
-                    <datalist id="prod-provs-list">
-                      {provsList.map(p => <option key={p.id} value={p.nombre}/>)}
-                    </datalist>
-                  </div>
-                </div>
+                <p className="small text-muted mb-2">
+                  <strong>{modalUbic.codigo}</strong> — {modalUbic.descripcion}
+                </p>
+                <input className="form-control" autoFocus
+                  placeholder="Ej: Estante A3"
+                  list="ubics-stock-list"
+                  value={ubicVal}
+                  onChange={e => setUbicVal(e.target.value)} />
+                <datalist id="ubics-stock-list">
+                  {ubics.map(u => <option key={u} value={u}/>)}
+                </datalist>
               </div>
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={()=>setModalP(null)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary" disabled={savP}>
-                  {savP && <span className="spinner-border spinner-border-sm me-2"/>}Guardar
+              <div className="modal-footer py-2">
+                <button type="button" className="btn btn-sm btn-secondary" onClick={() => setModalUbic(null)}>Cancelar</button>
+                <button type="submit" className="btn btn-sm btn-primary" disabled={savUbic}>
+                  {savUbic && <span className="spinner-border spinner-border-sm me-1"/>}Guardar
                 </button>
               </div>
             </form>
@@ -539,6 +524,80 @@ export default function Stock() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ══ MODAL: INGRESOS PENDIENTES ═══════════════════════════════════ */}
+      {modalIngPend && (
+        <div className="modal show d-block" style={{background:'rgba(0,0,0,.5)', zIndex:1060}}>
+          <div className="modal-dialog modal-xl modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header py-2">
+                <h5 className="modal-title">
+                  <i className="bi bi-box-arrow-in-down me-2"/>
+                  Ingresos pendientes de confirmación
+                  {ingPend.length > 0 && <span className="badge bg-warning text-dark ms-2">{ingPend.length}</span>}
+                </h5>
+                <button className="btn-close" onClick={()=>setModalIngPend(false)}/>
+              </div>
+              <div className="modal-body p-0">
+                {ingPend.length === 0
+                  ? <p className="text-center text-muted py-5">No hay materiales pendientes de ingreso.</p>
+                  : <table className="table table-sm table-hover mb-0" style={{fontSize:'0.83rem'}}>
+                      <thead className="table-dark sticky-top">
+                        <tr>
+                          <th>OC N°</th>
+                          <th>PROVEEDOR</th>
+                          <th>CÓDIGO</th>
+                          <th>DESCRIPCIÓN</th>
+                          <th className="text-end">CANTIDAD</th>
+                          <th>UNIDAD</th>
+                          <th>REMITO</th>
+                          <th>FECHA RECEP.</th>
+                          <th>STOCK ACTUAL</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ingPend.map(row => (
+                          <tr key={row.id}>
+                            <td className="fw-semibold">{row.oc_numero}</td>
+                            <td className="text-truncate" style={{maxWidth:140}} title={row.proveedor_nombre}>{row.proveedor_nombre}</td>
+                            <td><code style={{fontSize:'0.78rem'}}>{row.producto_codigo}</code></td>
+                            <td className="text-truncate" style={{maxWidth:220}} title={row.producto_desc}>{row.producto_desc}</td>
+                            <td className="text-end fw-semibold">{fmt(row.cantidad)}</td>
+                            <td>{row.unidad}</td>
+                            <td>{row.numero_remito || <span className="text-muted">—</span>}</td>
+                            <td>{fmtF(row.fecha_recepcion)}</td>
+                            <td className="text-end">{fmt(row.stock_actual)}</td>
+                            <td className="text-end" style={{whiteSpace:'nowrap'}}>
+                              <button className="btn btn-sm btn-success me-1"
+                                disabled={savIng === row.id}
+                                onClick={() => confirmarIngreso(row.id)}>
+                                {savIng === row.id
+                                  ? <span className="spinner-border spinner-border-sm"/>
+                                  : <><i className="bi bi-check-lg me-1"/>Confirmar</>}
+                              </button>
+                              {canWrite && (
+                                <button className="btn btn-sm btn-outline-danger"
+                                  disabled={savIng === row.id}
+                                  onClick={() => rechazarIngreso(row.id, row.producto_desc)}>
+                                  <i className="bi bi-x-lg"/>
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                }
+              </div>
+              <div className="modal-footer py-2">
+                <small className="text-muted me-auto">Confirmá cada material para que ingrese al stock.</small>
+                <button className="btn btn-secondary btn-sm" onClick={()=>setModalIngPend(false)}>Cerrar</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
