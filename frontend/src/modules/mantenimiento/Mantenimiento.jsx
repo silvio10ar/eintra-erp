@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import api from '../../api/client'
 import { puedeEscribir, getUser } from '../../store/authStore'
+import EmpleadoSelect from '../../components/EmpleadoSelect'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -960,7 +961,7 @@ export default function Mantenimiento() {
                       </div>
                       <div className="col-12">
                         <label className="form-label">Responsable</label>
-                        <input className="form-control" value={formEjec.responsable} onChange={e => setFormEjec(f => ({ ...f, responsable: e.target.value }))} />
+                        <EmpleadoSelect value={formEjec.responsable} onChange={v => setFormEjec(f => ({ ...f, responsable: v }))} />
                       </div>
                       <div className="col-12">
                         <label className="form-label">Observaciones</label>
@@ -1114,7 +1115,7 @@ export default function Mantenimiento() {
                     )}
                     <div className="col-md-6">
                       <label className="form-label">Responsable</label>
-                      <input className="form-control" value={formCo.responsable} onChange={e => setFormCo(f => ({ ...f, responsable: e.target.value }))} />
+                      <EmpleadoSelect value={formCo.responsable} onChange={v => setFormCo(f => ({ ...f, responsable: v }))} />
                     </div>
                     <div className="col-12">
                       <label className="form-label">Observaciones</label>
@@ -1189,7 +1190,7 @@ export default function Mantenimiento() {
                     </div>
                     <div className="col-md-6">
                       <label className="form-label">Responsable</label>
-                      <input className="form-control" value={formCierre.responsable} onChange={e => setFormCierre(f => ({ ...f, responsable: e.target.value }))} />
+                      <EmpleadoSelect value={formCierre.responsable} onChange={v => setFormCierre(f => ({ ...f, responsable: v }))} />
                     </div>
                     <div className="col-12">
                       <label className="form-label">Observaciones</label>

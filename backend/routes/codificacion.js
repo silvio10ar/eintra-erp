@@ -4,7 +4,11 @@ const path    = require('path')
 const fs      = require('fs')
 const { verificarToken } = require('../middleware/auth')
 
-const CONFIG_PATH = path.resolve(__dirname, '../data/cod_config.json')
+const CONFIG_PATH   = path.resolve(__dirname, '../data/cod_config.json')
+const PEDIDOS_PATH  = path.resolve(__dirname, '../data/cod_pedidos.json')
+
+const leerPedidos  = () => { try { return JSON.parse(fs.readFileSync(PEDIDOS_PATH, 'utf8')) } catch { return [] } }
+const guardarPedidos = p => fs.writeFileSync(PEDIDOS_PATH, JSON.stringify(p, null, 2), 'utf8')
 
 router.use(verificarToken)
 
@@ -41,5 +45,46 @@ router.put('/config', (req, res) => {
     res.status(500).json({ error: 'No se pudo guardar la configuración' })
   }
 })
+
+// ── GET /pedidos ─────────────────────────────────────────────────────────────
+// Solo admin — lista pedidos de opciones faltantes
+router.get('/pedidos', (req, res) => {
+  if (req.usuario?.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' })
+  res.json(leerPedidos())
+})
+
+// ── POST /pedido ──────────────────────────────────────────────────────────────
+// Cualquier usuario — reporta que le falta una opción en un paso del asistente
+router.post('/pedido', (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const { familia_codigo, familia_desc, pregunta_id, pregunta_label, descripcion } = req.body
+  if (!familia_codigo || !pregunta_id || !descripcion?.trim()) {
+    return res.status(400).json({ error: 'Datos incompletos' })
+  }
+  const pedidos = leerPedidos()
+  const nuevo = {
+    id:             Date.now().toString(),
+    familia_codigo,
+    familia_desc:   familia_desc || '',
+    pregunta_id,
+    pregunta_label: pregunta_label || '',
+    descripcion:    descripcion.trim(),
+    usuario:        req.usuario?.nombre || req.usuario?.username || '?',
+    fecha:          new Date().toISOString(),
+  }
+  pedidos.push(nuevo)
+  guardarPedidos(pedidos)
+  res.status(201).json({ ok: true })
+})
+
+// ── DELETE /pedidos/:id ───────────────────────────────────────────────────────
+// Solo admin — marca un pedido como resuelto (lo elimina)
+router.delete('/pedidos/:id', (req, res) => {
+  if (req.usuario?.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' })
+  const pedidos = leerPedidos().filter(p => p.id !== req.params.id)
+  guardarPedidos(pedidos)
+  res.json({ ok: true })
+})
+
 
 module.exports = router

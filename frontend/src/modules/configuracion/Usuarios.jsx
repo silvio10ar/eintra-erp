@@ -131,7 +131,11 @@ export default function Usuarios() {
     try {
       const body = {}
       for (const [m, v] of Object.entries(permisosForm)) {
-        if (v.activo) body[m] = { leer: v.leer, escribir: v.escribir }
+        if (!v.activo) continue
+        // No guardar submodulo si su padre ya está activo (la herencia lo cubre)
+        const padreId = modulos.find(mod => mod.id === m)?.padre
+        if (padreId && permisosForm[padreId]?.activo) continue
+        body[m] = { leer: v.leer, escribir: v.escribir }
       }
       await api.put(`/auth/usuarios/${userPermisos.id}/permisos`, body)
       setUserPermisos(null)
@@ -251,11 +255,48 @@ export default function Usuarios() {
                     </tr>
                   </thead>
                   <tbody>
-                    {modulos.map(({ id: m, label }) => {
+                    {modulos.map(({ id: m, label, padre: padreId }) => {
                       const v = permisosForm[m] ?? { activo: false, leer: false, escribir: false }
+                      const padreActivo = padreId ? (permisosForm[padreId]?.activo ?? false) : false
+                      const pV = padreActivo ? (permisosForm[padreId] ?? {}) : null
+
+                      if (padreActivo) {
+                        // Submodulo cuyo padre está activo → mostrar como "incluido"
+                        return (
+                          <tr key={m} style={{ background: '#f8f9fa' }}>
+                            <td className="ps-3 text-muted" style={{ paddingLeft: '2.25rem' }}>
+                              <span className="me-1 text-muted">└</span>
+                              <i className="bi bi-diagram-2 me-1 text-muted" style={{ fontSize: '0.72rem' }} />
+                              {label}
+                              <span className="ms-2 badge bg-secondary fw-normal" style={{ fontSize: '0.65rem' }}>
+                                incluido
+                              </span>
+                            </td>
+                            <td className="text-center text-muted" style={{ fontSize: '0.72rem' }}>auto</td>
+                            <td className="text-center">
+                              <input type="checkbox" className="form-check-input" checked={pV?.leer ?? false} disabled />
+                            </td>
+                            <td className="text-center">
+                              <input type="checkbox" className="form-check-input" checked={pV?.escribir ?? false} disabled />
+                            </td>
+                          </tr>
+                        )
+                      }
+
+                      // Módulo normal (padre o submodulo independiente)
                       return (
                         <tr key={m} className={v.activo ? '' : 'text-muted'}>
-                          <td className="ps-3 fw-medium">{label}</td>
+                          <td className="ps-3 fw-medium">
+                            {padreId && (
+                              <span className="me-1 text-muted" style={{ fontSize: '0.75rem' }}>└</span>
+                            )}
+                            {label}
+                            {padreId && (
+                              <span className="ms-1 text-muted" style={{ fontSize: '0.7rem' }}>
+                                (submódulo de {modulos.find(mod => mod.id === padreId)?.label})
+                              </span>
+                            )}
+                          </td>
                           <td className="text-center">
                             <div className="form-check form-switch d-flex justify-content-center m-0">
                               <input type="checkbox" className="form-check-input" role="switch"

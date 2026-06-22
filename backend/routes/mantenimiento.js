@@ -2,6 +2,7 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { db } = require('../db/database');
 const { verificarToken } = require('../middleware/auth');
+const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
 const puede = req => req.usuario?.rol === 'admin' || !!(req.permisos?.mantenimiento?.escribir);
@@ -70,7 +71,7 @@ router.get('/meta', verificarToken, (req, res) => {
 router.get('/equipos', verificarToken, (req, res) => {
   const { buscar, categoria, ubicacion, estado } = req.query;
   const conds = [], params = [];
-  if (buscar)    { conds.push('(codigo LIKE ? OR nombre LIKE ? OR marca LIKE ?)'); params.push(`%${buscar}%`, `%${buscar}%`, `%${buscar}%`); }
+  if (buscar)    { const b = buscarCondicion(buscar, ['codigo','nombre','marca']); conds.push(b.cond); params.push(...b.params); }
   if (categoria) { conds.push('categoria=?'); params.push(categoria); }
   if (ubicacion) { conds.push('ubicacion=?'); params.push(ubicacion); }
   if (estado)    { conds.push('estado=?');    params.push(estado); }

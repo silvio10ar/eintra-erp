@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
 import Form49 from './Form49'
 import { Asistente } from '../codificacion/AsistenteCore'
+import EmpleadoSelect from '../../components/EmpleadoSelect'
 
 const ESTADOS = [
   { v:'Emitida',   c:'warning' },
@@ -70,7 +71,8 @@ export default function Compras() {
   const [errOC, setErrOC]           = useState('')
   const [sugsP, setSugsP]           = useState([])
   const [provInfoOC, setProvInfoOC] = useState(null)  // datos completos del proveedor seleccionado
-  const [sugsItem, setSugsItem]     = useState({ idx: null, list: [] })
+  const [sugsItem, setSugsItem]     = useState({ idx: null, list: [], pos: null })
+  const itemDescRefs = useRef({})
   const [productos, setProductos]   = useState([])
 
   /* ── Modal recibir ──────────────────────────────────────────────── */
@@ -195,7 +197,7 @@ export default function Compras() {
     try {
       await api.post(`/compras/oc/${modalRec.id}/recibir`, { recepciones: recCants, fecha: fechaRec, numero_remito: nroRemito||undefined })
       setModalRec(null); setModalOC(null); cargarOC()
-      alert('Recepción registrada. Stock actualizado.')
+      alert('Recepción registrada. Los materiales quedaron pendientes de ingreso al stock.')
     } catch(err) { alert(err.response?.data?.error ?? 'Error al recibir') }
     finally { setSavRec(false) }
   }
@@ -215,12 +217,15 @@ export default function Compras() {
 
   const buscarProductoItem = (idx, txt) => {
     setItem(idx, 'descripcion', txt)
-    if (!txt) { setSugsItem({ idx: null, list: [] }); return }
+    if (!txt) { setSugsItem({ idx: null, list: [], pos: null }); return }
     const words = txt.toLowerCase().split(/\s+/).filter(Boolean)
-    setSugsItem({ idx, list: productos.filter(p => {
+    const list = productos.filter(p => {
       const hay = (p.codigo + ' ' + p.descripcion).toLowerCase()
       return words.every(w => hay.includes(w))
-    }).slice(0, 12) })
+    }).slice(0, 20)
+    const el = itemDescRefs.current[idx]
+    const pos = el ? (() => { const r = el.getBoundingClientRect(); return { top: r.bottom + window.scrollY, left: r.left + window.scrollX, width: Math.max(r.width, 480) } })() : null
+    setSugsItem({ idx, list, pos })
   }
 
   const selProductoItem = (idx, prod) => {
@@ -239,8 +244,9 @@ export default function Compras() {
     setErrNuevoMat('')
   }
 
-  const usarCodigoNuevoMat = codigo => {
+  const usarCodigoNuevoMat = (codigo, descripcion) => {
     setCodNuevoMat(codigo)
+    if (descripcion) setFormNuevoMat(p => ({ ...p, descripcion }))
     setPasoNuevoMat('datos')
   }
 
@@ -274,6 +280,9 @@ export default function Compras() {
     try {
       if (modalProv === 'nuevo') await api.post('/compras/proveedores', formProv)
       else await api.put(`/compras/proveedores/${modalProv.id}`, formProv)
+      // si el proveedor editado es el que está cargado en la OC activa, sincronizar la tira
+      if (provInfoOC && modalProv !== 'nuevo' && provInfoOC.id === modalProv.id)
+        setProvInfoOC(prev => ({ ...prev, ...formProv }))
       setModalProv(null); cargarProveedores()
       api.get('/compras/proveedores').then(r => setProvs(r.data))
     } catch(err) { setErrProv(err.response?.data?.error ?? 'Error al guardar') }
@@ -731,13 +740,13 @@ export default function Compras() {
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small fw-medium mb-1">Elaborado por</label>
-                      <input className="form-control form-control-sm" value={formOC.elaborado_por}
-                        onChange={e=>setFormOC(p=>({...p,elaborado_por:e.target.value}))}/>
+                      <EmpleadoSelect size="sm" value={formOC.elaborado_por}
+                        onChange={v=>setFormOC(p=>({...p,elaborado_por:v}))}/>
                     </div>
                     <div className="col-md-1">
                       <label className="form-label small fw-medium mb-1">Autorizado</label>
-                      <input className="form-control form-control-sm" value={formOC.autorizado_por}
-                        onChange={e=>setFormOC(p=>({...p,autorizado_por:e.target.value}))}/>
+                      <EmpleadoSelect size="sm" value={formOC.autorizado_por}
+                        onChange={v=>setFormOC(p=>({...p,autorizado_por:v}))}/>
                     </div>
                     <div className="col-md-1">
                       <label className="form-label small fw-medium mb-1">Observaciones</label>
@@ -748,12 +757,38 @@ export default function Compras() {
 
                   {/* Info del proveedor — tira de texto cuando hay uno seleccionado */}
                   {provInfoOC && (
-                    <div className="mt-2 pt-1 border-top d-flex flex-wrap gap-3" style={{fontSize:'0.73rem',color:'#555'}}>
-                      {provInfoOC.localidad && <span><i className="bi bi-geo-alt me-1 text-muted"/>{provInfoOC.localidad}{provInfoOC.cp ? ` (CP ${provInfoOC.cp})` : ''}</span>}
-                      {provInfoOC.direccion && <span><i className="bi bi-house me-1 text-muted"/>{provInfoOC.direccion}</span>}
-                      {provInfoOC.telefono  && <span><i className="bi bi-telephone me-1 text-muted"/>{provInfoOC.telefono}</span>}
-                      {provInfoOC.email     && <span><i className="bi bi-envelope me-1 text-muted"/>{provInfoOC.email}</span>}
-                      {provInfoOC.vendedor  && <span><i className="bi bi-person me-1 text-muted"/>Vendedor: {provInfoOC.vendedor}</span>}
+                    <div className="mt-2 pt-1 border-top d-flex align-items-center gap-3 flex-wrap" style={{fontSize:'0.73rem'}}>
+                      <span style={{color: provInfoOC.localidad ? '#555' : '#c0392b'}}>
+                        <i className="bi bi-geo-alt me-1 text-muted"/>
+                        {provInfoOC.localidad
+                          ? provInfoOC.localidad + (provInfoOC.cp ? ` (CP ${provInfoOC.cp})` : '')
+                          : 'Sin localidad'}
+                      </span>
+                      <span style={{color: provInfoOC.direccion ? '#555' : '#c0392b'}}>
+                        <i className="bi bi-house me-1 text-muted"/>
+                        {provInfoOC.direccion || 'Sin dirección'}
+                      </span>
+                      <span style={{color: provInfoOC.telefono ? '#555' : '#c0392b'}}>
+                        <i className="bi bi-telephone me-1 text-muted"/>
+                        {provInfoOC.telefono || 'Sin teléfono'}
+                      </span>
+                      <span style={{color: provInfoOC.email ? '#555' : '#c0392b'}}>
+                        <i className="bi bi-envelope me-1 text-muted"/>
+                        {provInfoOC.email || 'Sin email'}
+                      </span>
+                      <span style={{color: provInfoOC.vendedor ? '#555' : '#c0392b'}}>
+                        <i className="bi bi-person me-1 text-muted"/>
+                        {provInfoOC.vendedor ? `Vendedor: ${provInfoOC.vendedor}` : 'Sin vendedor'}
+                      </span>
+                      <button type="button" className="btn btn-xs btn-outline-secondary py-0 px-2 ms-auto"
+                        style={{fontSize:'0.7rem'}}
+                        onClick={() => {
+                          setFormProv(Object.fromEntries(CAMPOS_PROV.map(c => [c.k, provInfoOC[c.k] ?? ''])))
+                          setErrProv('')
+                          setModalProv(provInfoOC)
+                        }}>
+                        <i className="bi bi-pencil me-1"/>Editar proveedor
+                      </button>
                     </div>
                   )}
                 </div>
@@ -787,15 +822,17 @@ export default function Compras() {
                       {formOC.items.map((it, idx) => (
                         <tr key={idx}>
                           <td className="text-muted text-center align-middle">{idx+1}</td>
-                          <td className="position-relative">
+                          <td>
                             <input className="form-control form-control-sm border-0 p-0 px-1" value={it.descripcion}
+                              ref={el => { itemDescRefs.current[idx] = el }}
                               onChange={e => buscarProductoItem(idx, e.target.value)}
-                              onBlur={() => setTimeout(() => setSugsItem({ idx: null, list: [] }), 150)}/>
-                            {sugsItem.idx === idx && (
-                              <div className="border rounded shadow position-absolute bg-white"
-                                style={{zIndex:9999, top:'100%', left:0, minWidth:440, maxWidth:600}}>
-                                {/* lista scrollable */}
-                                <div style={{maxHeight:480, overflowY:'auto'}}>
+                              onBlur={() => setTimeout(() => setSugsItem({ idx: null, list: [], pos: null }), 150)}/>
+                            {sugsItem.idx === idx && sugsItem.pos && (
+                              <div className="border rounded shadow bg-white"
+                                style={{position:'fixed', zIndex:9999, top: sugsItem.pos.top, left: sugsItem.pos.left, width: sugsItem.pos.width, maxWidth:620}}
+                                onMouseDown={e => e.preventDefault()}>
+                                {/* lista scrollable — 6 filas visibles (~38px c/u), scroll para el resto */}
+                                <div style={{maxHeight:228, overflowY:'auto'}}>
                                   {sugsItem.list.length === 0
                                     ? <div className="px-3 py-2 text-muted small fst-italic">Sin coincidencias</div>
                                     : sugsItem.list.map(p => (

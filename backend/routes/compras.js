@@ -3,6 +3,7 @@ const XLSX    = require('xlsx');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
 const { verificarToken, ESCRITURA_COMPRAS, ESCRITURA_STOCK } = require('../middleware/auth');
+const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
 
@@ -14,10 +15,9 @@ router.get('/proveedores', verificarToken, (req, res) => {
   let where = soloActivos ? 'WHERE activo=1' : '';
   const params = [];
   if (buscar) {
-    where = soloActivos
-      ? 'WHERE (nombre LIKE ? OR cuit LIKE ?) AND activo=1'
-      : 'WHERE (nombre LIKE ? OR cuit LIKE ?)';
-    params.push(`%${buscar}%`, `%${buscar}%`);
+    const b = buscarCondicion(buscar, ['nombre', 'cuit']);
+    where = soloActivos ? `WHERE (${b.cond}) AND activo=1` : `WHERE (${b.cond})`;
+    params.push(...b.params);
   }
   res.json(db.prepare(`SELECT * FROM proveedores ${where} ORDER BY nombre`).all(...params));
 });
@@ -136,7 +136,7 @@ router.get('/oc', verificarToken, (req, res) => {
   if (proveedor_id) { conds.push('o.proveedor_id=?');    params.push(proveedor_id); }
   if (desde)        { conds.push('o.fecha>=?');           params.push(desde); }
   if (hasta)        { conds.push('o.fecha<=?');           params.push(hasta); }
-  if (buscar)       { conds.push('(o.numero LIKE ? OR o.proveedor_nombre LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`); }
+  if (buscar)       { const b = buscarCondicion(buscar, ['o.numero','o.proveedor_nombre']); conds.push(b.cond); params.push(...b.params); }
   const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';
   const offset = (parseInt(page)-1)*parseInt(limit);
   const total  = db.prepare(`SELECT COUNT(*) as c FROM ordenes_compra o ${where}`).get(...params).c;
@@ -222,7 +222,7 @@ router.put('/oc/:id', verificarToken, (req, res) => {
   res.json({ ...updated, items: db.prepare('SELECT * FROM oc_items WHERE oc_id=? ORDER BY item_num').all(req.params.id) });
 });
 
-// Recibir OC → actualiza stock automáticamente
+// Recibir OC → crea ingresos pendientes (stock se confirma desde el módulo Stock)
 router.post('/oc/:id/recibir', verificarToken, (req, res) => {
   if (!(req.permisos?.compras?.escribir || req.permisos?.stock?.escribir))
     return res.status(403).json({ error: 'Sin permisos' });
@@ -235,6 +235,12 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
   const { recepciones, fecha, numero_remito } = req.body;
   const fechaRec = fecha || new Date().toISOString().slice(0,10);
 
+  const insIngreso = db.prepare(`
+    INSERT INTO ingresos_pendientes
+      (oc_id,oc_numero,proveedor_nombre,oc_item_id,producto_id,producto_codigo,producto_desc,unidad,cantidad,precio_costo,numero_remito,fecha_recepcion)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+  `);
+
   const trx = db.transaction(() => {
     let todosRecibidos = true;
     for (const item of items) {
@@ -244,10 +250,11 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
       if (pendiente <= 0) continue;
       const real = Math.min(cantRecibir, pendiente);
       db.prepare("UPDATE oc_items SET cant_recibida=cant_recibida+? WHERE id=?").run(real, item.id);
-      db.prepare("UPDATE productos SET stock_actual=stock_actual+?, updated_at=datetime('now','localtime') WHERE id=?").run(real, item.producto_id);
-      db.prepare("INSERT INTO movimientos_stock (producto_id,tipo,cantidad,fecha,referencia,tipo_doc,doc_id,precio_unit,observaciones,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)")
-        .run(item.producto_id, 'entrada', real, fechaRec, oc.numero, 'oc', oc.id, item.precio_final||0, `Recepción OC ${oc.numero}`, req.usuario.id);
-      const itemActual = db.prepare('SELECT * FROM oc_items WHERE id=?').get(item.id);
+      const prod = db.prepare('SELECT codigo, descripcion, unidad FROM productos WHERE id=?').get(item.producto_id);
+      insIngreso.run(oc.id, oc.numero, oc.proveedor_nombre, item.id, item.producto_id,
+        prod?.codigo||'', prod?.descripcion||item.descripcion||'', prod?.unidad||item.unidad||'UND.',
+        real, item.precio_final||0, numero_remito||'', fechaRec);
+      const itemActual = db.prepare('SELECT cant_recibida FROM oc_items WHERE id=?').get(item.id);
       if (itemActual.cant_recibida < item.cantidad) todosRecibidos = false;
     }
     const nuevoEstado = todosRecibidos ? 'Recibida' : 'Parcial';
@@ -255,7 +262,19 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
       .run(nuevoEstado, fechaRec, ...(numero_remito ? [numero_remito] : []), oc.id);
   });
   trx();
-  res.json({ mensaje: 'Recepción registrada. Stock actualizado.' });
+  res.json({ mensaje: 'Recepción registrada. Los materiales quedaron pendientes de ingreso al stock.' });
+});
+
+// Resetear recepción de OC (solo admin) — vuelve a Emitida y limpia cant_recibida
+router.post('/oc/:id/resetear-recepcion', verificarToken, (req, res) => {
+  if (req.usuario?.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  const oc = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(req.params.id);
+  if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
+  db.transaction(() => {
+    db.prepare("UPDATE oc_items SET cant_recibida=0 WHERE oc_id=?").run(oc.id);
+    db.prepare("UPDATE ordenes_compra SET estado='Emitida',fecha_recepcion='',numero_remito='',updated_at=datetime('now','localtime') WHERE id=?").run(oc.id);
+  })();
+  res.json({ ok: true });
 });
 
 router.delete('/oc/:id', verificarToken, (req, res) => {
@@ -441,7 +460,7 @@ function nextNumeroF49() {
 router.get('/form49', verificarToken, (req, res) => {
   const { buscar, desde, hasta, page=1, limit=50 } = req.query;
   const conds=[], params=[];
-  if (buscar) { conds.push('(f.numero LIKE ? OR f.proveedor_nombre LIKE ? OR f.proyecto LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`,`%${buscar}%`); }
+  if (buscar) { const b = buscarCondicion(buscar, ['f.numero','f.proveedor_nombre','f.proyecto']); conds.push(b.cond); params.push(...b.params); }
   if (desde)  { conds.push('f.fecha>=?'); params.push(desde); }
   if (hasta)  { conds.push('f.fecha<=?'); params.push(hasta); }
   const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';

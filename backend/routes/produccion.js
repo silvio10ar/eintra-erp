@@ -2,6 +2,7 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
 const { verificarToken, ESCRITURA_PRODUCCION } = require('../middleware/auth');
+const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ router.get('/', verificarToken, (req, res) => {
   if (estado)      { conds.push('ot.estado=?');       params.push(estado); }
   if (prioridad)   { conds.push('ot.prioridad=?');    params.push(prioridad); }
   if (proyecto_id) { conds.push('ot.proyecto_id=?');  params.push(proyecto_id); }
-  if (buscar)      { conds.push('(ot.numero LIKE ? OR ot.descripcion LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`); }
+  if (buscar)      { const b = buscarCondicion(buscar, ['ot.numero','ot.descripcion']); conds.push(b.cond); params.push(...b.params); }
   const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';
   const offset = (parseInt(page)-1)*parseInt(limit);
   const total  = db.prepare(`SELECT COUNT(*) as c FROM ordenes_trabajo ot ${where}`).get(...params).c;

@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
+import api from '../../api/client'
 
 export function buildCodigo(codigoPos1, flujo, respuestas, preguntas) {
   const arr = Array(10).fill('0')
@@ -20,6 +21,7 @@ export function flujoActivo(flujo, respuestas) {
   return flujo.filter(p => {
     if (!p.si) return true
     const r = respuestas[p.si.pregunta_id] ?? ''
+    if (p.si.no_en) return !p.si.no_en.some(v => r === v)
     return p.si.en.some(v => r === v)
   })
 }
@@ -37,6 +39,10 @@ export function Asistente({ config, onUsar }) {
   const [respuestas, setRespuestas] = useState({})
   const [libreVal,   setLibreVal]   = useState({})
   const [copiado,    setCopiado]    = useState(false)
+  const [faltaId,    setFaltaId]    = useState(null)   // pregunta_id del paso donde se reporta falta
+  const [faltaTxt,   setFaltaTxt]   = useState('')
+  const [faltaEnv,   setFaltaEnv]   = useState(false)
+  const faltaRef = useRef()
 
   const tipo    = config.tipos.find(t => t.id === tipoId)
   const flujo   = tipo?.flujo || []
@@ -111,7 +117,7 @@ export function Asistente({ config, onUsar }) {
               <>
                 <p className="small fw-semibold mb-2 text-muted">¿Qué tipo de material vas a codificar?</p>
                 <div className="d-flex flex-column gap-1" style={{ maxHeight: 280, overflowY: 'auto' }}>
-                  {config.tipos.map(t => (
+                  {[...config.tipos].sort((a,b) => a.descripcion.localeCompare(b.descripcion, 'es')).map(t => (
                     <button key={t.id} className="btn btn-sm text-start btn-outline-secondary"
                       onClick={() => elegirTipo(t.id)}>
                       <span className="badge bg-dark me-2" style={{ fontFamily: 'monospace', minWidth: 26 }}>{t.codigo_pos1}</span>
@@ -175,16 +181,62 @@ export function Asistente({ config, onUsar }) {
               </div>
               <div className="card-body py-2">
                 {preg.tipo === 'opcion' && (
-                  <div className="d-flex flex-column gap-1" style={{ maxHeight: 320, overflowY: 'auto' }}>
-                    {preg.opciones.map(op => (
-                      <button key={op.codigo}
-                        className="btn btn-sm text-start d-flex align-items-center gap-2 btn-outline-secondary"
-                        onClick={() => responder(p.pregunta_id, op.codigo)}>
-                        <code style={{ minWidth: 32, fontWeight: 'bold' }}>{op.codigo}</code>
-                        <span>{op.descripcion || <em className="opacity-50">—</em>}</span>
+                  <>
+                    <div className="d-flex flex-column gap-1" style={{ maxHeight: 280, overflowY: 'auto' }}>
+                      {[...preg.opciones].sort((a,b) => (a.descripcion||'').localeCompare(b.descripcion||'', 'es')).map(op => (
+                        <button key={op.codigo}
+                          className="btn btn-sm text-start d-flex align-items-center gap-2 btn-outline-secondary"
+                          onClick={() => responder(p.pregunta_id, op.codigo)}>
+                          <code style={{ minWidth: 32, fontWeight: 'bold' }}>{op.codigo}</code>
+                          <span>{op.descripcion || <em className="opacity-50">—</em>}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* ── Reportar opción faltante ── */}
+                    {faltaId !== p.pregunta_id ? (
+                      <button className="btn btn-sm btn-link text-muted mt-2 px-0"
+                        style={{ fontSize: '0.78rem' }}
+                        onClick={() => { setFaltaId(p.pregunta_id); setFaltaTxt(''); setFaltaEnv(false); setTimeout(() => faltaRef.current?.focus(), 50) }}>
+                        <i className="bi bi-question-circle me-1"/>No encuentro la opción que necesito
                       </button>
-                    ))}
-                  </div>
+                    ) : faltaEnv ? (
+                      <div className="mt-2 small text-success">
+                        <i className="bi bi-check-circle me-1"/>Aviso enviado al administrador. Gracias.
+                        <button className="btn btn-sm btn-link text-muted py-0 ms-2" onClick={() => setFaltaId(null)}>cerrar</button>
+                      </div>
+                    ) : (
+                      <div className="mt-2 border rounded p-2 bg-light">
+                        <p className="small mb-1 fw-semibold">Describí qué opción necesitás:</p>
+                        <textarea ref={faltaRef} className="form-control form-control-sm mb-2"
+                          rows={2}
+                          placeholder="Ej: necesito agregar ROKER como fabricante..."
+                          value={faltaTxt}
+                          onChange={e => setFaltaTxt(e.target.value)}
+                          onKeyDown={e => e.key === 'Escape' && setFaltaId(null)}
+                        />
+                        <div className="d-flex gap-2">
+                          <button className="btn btn-sm btn-warning"
+                            disabled={!faltaTxt.trim()}
+                            onClick={() => {
+                              api.post('/codificacion/pedido', {
+                                familia_codigo: tipo.codigo_pos1,
+                                familia_desc:   tipo.descripcion,
+                                pregunta_id:    p.pregunta_id,
+                                pregunta_label: preg.label,
+                                descripcion:    faltaTxt.trim(),
+                              }).then(() => setFaltaEnv(true)).catch(() => setFaltaEnv(true))
+                            }}>
+                            <i className="bi bi-send me-1"/>Enviar al administrador
+                          </button>
+                          <button className="btn btn-sm btn-outline-secondary"
+                            onClick={() => setFaltaId(null)}>
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
                 {preg.tipo === 'libre' && (
                   <div className="d-flex gap-2 align-items-start">
@@ -253,7 +305,22 @@ export function Asistente({ config, onUsar }) {
                   <i className="bi bi-arrow-counterclockwise me-1" />Generar otro
                 </button>
                 {onUsar && (
-                  <button className="btn btn-success btn-sm" onClick={() => onUsar(codigo)}>
+                  <button className="btn btn-success btn-sm" onClick={() => {
+                    const partes = [tipo.descripcion]
+                    for (const paso of activos) {
+                      const val  = respuestas[paso.pregunta_id]
+                      if (val === undefined) continue
+                      const preg = config.preguntas[paso.pregunta_id]
+                      if (!preg) continue
+                      if (preg.tipo === 'opcion') {
+                        const op = preg.opciones.find(o => o.codigo === val)
+                        if (op?.descripcion) partes.push(op.descripcion)
+                      } else if (preg.tipo === 'libre' && val) {
+                        partes.push(val)
+                      }
+                    }
+                    onUsar(codigo, partes.join(' '))
+                  }}>
                     <i className="bi bi-plus-circle me-1" />Usar este código — continuar
                   </button>
                 )}

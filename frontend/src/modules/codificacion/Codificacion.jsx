@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
-import { puedeEscribir } from '../../store/authStore'
+import { getUser } from '../../store/authStore'
 import { buildCodigo, flujoActivo, copiarTexto, Asistente } from './AsistenteCore'
 
 
@@ -24,10 +24,14 @@ function Configuracion({ config, onSave }) {
   const [newPasoOpciones,  setNewPasoOpciones]   = useState([{ codigo: '', descripcion: '' }])
   const [newPasoSiPregId,  setNewPasoSiPregId]  = useState('')
   const [newPasoSiEn,      setNewPasoSiEn]       = useState('')
+  const [newPasoSiModo,    setNewPasoSiModo]     = useState('en')  // 'en' | 'no_en'
+  const [newPasoModo,         setNewPasoModo]         = useState('nuevo') // 'nuevo' | 'existente'
+  const [newPasoExistentePregId, setNewPasoExistentePregId] = useState('')
   // editor de condición inline
   const [editandoCondId,   setEditandoCondId]    = useState(null)
   const [condSiPregId,     setCondSiPregId]      = useState('')
   const [condSiEn,         setCondSiEn]          = useState('')
+  const [condSiModo,       setCondSiModo]        = useState('en')   // 'en' | 'no_en'
 
   function mutate(fn) {
     setLocal(prev => {
@@ -105,35 +109,76 @@ function Configuracion({ config, onSave }) {
   }
 
   function confirmarNuevoPaso() {
-    if (!newPasoLabel.trim()) return
-    const pregId = `${tipoId}_custom_${Date.now()}`
     let si = null
-    if (newPasoSiPregId && newPasoSiEn.trim())
-      si = { pregunta_id: newPasoSiPregId, en: newPasoSiEn.split(',').map(v => v.trim()).filter(Boolean) }
-    const opcs = newPasoOpciones.filter(o => o.codigo.trim())
-    mutate(c => {
-      c.preguntas[pregId] = {
-        label:   newPasoLabel.trim(),
-        tipo:    newPasoTipo,
-        ...(newPasoTipo === 'opcion' ? { opciones: opcs } : { longitud: newPasoHasta - newPasoDesde + 1 })
-      }
-      const t = c.tipos.find(t => t.id === tipoId)
-      const step = { pregunta_id: pregId, pos_desde: +newPasoDesde, pos_hasta: +newPasoHasta }
-      if (si) step.si = si
-      t.flujo.push(step)
-      t.flujo.sort((a, b) => a.pos_desde - b.pos_desde)
-    })
+    if (newPasoSiPregId && newPasoSiEn.trim()) {
+      const vals = newPasoSiEn.split(',').map(v => v.trim()).filter(Boolean)
+      si = newPasoSiModo === 'no_en'
+        ? { pregunta_id: newPasoSiPregId, no_en: vals }
+        : { pregunta_id: newPasoSiPregId, en: vals }
+    }
+    if (newPasoModo === 'existente') {
+      if (!newPasoExistentePregId) return
+      mutate(c => {
+        const t = c.tipos.find(t => t.id === tipoId)
+        const step = { pregunta_id: newPasoExistentePregId, pos_desde: +newPasoDesde, pos_hasta: +newPasoHasta }
+        if (si) step.si = si
+        t.flujo.push(step)
+        t.flujo.sort((a, b) => a.pos_desde - b.pos_desde)
+      })
+    } else {
+      if (!newPasoLabel.trim()) return
+      const pregId = `${tipoId}_custom_${Date.now()}`
+      const opcs = newPasoOpciones.filter(o => o.codigo.trim())
+      mutate(c => {
+        c.preguntas[pregId] = {
+          label:   newPasoLabel.trim(),
+          tipo:    newPasoTipo,
+          ...(newPasoTipo === 'opcion' ? { opciones: opcs } : { longitud: newPasoHasta - newPasoDesde + 1 })
+        }
+        const t = c.tipos.find(t => t.id === tipoId)
+        const step = { pregunta_id: pregId, pos_desde: +newPasoDesde, pos_hasta: +newPasoHasta }
+        if (si) step.si = si
+        t.flujo.push(step)
+        t.flujo.sort((a, b) => a.pos_desde - b.pos_desde)
+      })
+    }
     setAddingPaso(false)
+    setNewPasoModo('nuevo'); setNewPasoExistentePregId('')
     setNewPasoLabel(''); setNewPasoOpciones([{ codigo: '', descripcion: '' }])
-    setNewPasoTipo('opcion'); setNewPasoSiPregId(''); setNewPasoSiEn('')
+    setNewPasoTipo('opcion'); setNewPasoSiPregId(''); setNewPasoSiEn(''); setNewPasoSiModo('en')
   }
 
   // ── Editor inline — aparece debajo de las opciones del paso ──────────
   function renderEditor(pregId) {
     const preg = local.preguntas[pregId]
     if (!preg) return null
+    const pasoActual = flujo.find(p => p.pregunta_id === pregId)
     return (
       <div className="border-top mt-3 pt-3">
+        {/* Posición en el código */}
+        <div className="row g-2 mb-3 align-items-end">
+          <div className="col-auto">
+            <label className="form-label small mb-1 fw-semibold text-dark">Pos. desde</label>
+            <input type="number" className="form-control form-control-sm text-center"
+              style={{ width: 64, fontFamily: 'monospace' }} min={1} max={10}
+              value={pasoActual?.pos_desde ?? ''}
+              onChange={e => mutate(c => {
+                const s = c.tipos.find(t => t.id === tipoId)?.flujo.find(p => p.pregunta_id === pregId)
+                if (s) { s.pos_desde = +e.target.value; c.tipos.find(t => t.id === tipoId).flujo.sort((a,b) => a.pos_desde - b.pos_desde) }
+              })} />
+          </div>
+          <div className="col-auto pb-1 text-muted small">–</div>
+          <div className="col-auto">
+            <label className="form-label small mb-1 fw-semibold text-dark">Pos. hasta</label>
+            <input type="number" className="form-control form-control-sm text-center"
+              style={{ width: 64, fontFamily: 'monospace' }} min={1} max={10}
+              value={pasoActual?.pos_hasta ?? ''}
+              onChange={e => mutate(c => {
+                const s = c.tipos.find(t => t.id === tipoId)?.flujo.find(p => p.pregunta_id === pregId)
+                if (s) { s.pos_hasta = +e.target.value; c.tipos.find(t => t.id === tipoId).flujo.sort((a,b) => a.pos_desde - b.pos_desde) }
+              })} />
+          </div>
+        </div>
         <div className="row g-2 mb-3">
           <div className="col-8">
             <label className="form-label small mb-1 fw-semibold text-dark">Texto de la pregunta</label>
@@ -230,7 +275,7 @@ function Configuracion({ config, onSave }) {
               {!editCond && paso?.si && (
                 <div className="d-flex align-items-center gap-2 flex-wrap">
                   <span className="badge bg-warning text-dark" style={{ fontSize: '0.68rem' }}>
-                    si [{paso.si.en.join(', ')}] — {local.preguntas[paso.si.pregunta_id]?.label?.split('\n')[0]?.substring(0, 30) || paso.si.pregunta_id}
+                    {paso.si.no_en ? 'excepto' : 'solo si'} [{(paso.si.no_en || paso.si.en).join(', ')}] en {local.preguntas[paso.si.pregunta_id]?.label?.split('\n')[0]?.substring(0, 30) || paso.si.pregunta_id}
                   </span>
                   <button className="btn btn-sm btn-link py-0 text-danger" style={{ fontSize: '0.7rem' }}
                     onClick={() => mutate(c => {
@@ -249,21 +294,31 @@ function Configuracion({ config, onSave }) {
                     <option value="">-- elegir pregunta --</option>
                     {Object.entries(local.preguntas)
                       .filter(([pid]) => pid !== pregId)
+                      .sort(([, a], [, b]) => a.label.localeCompare(b.label, 'es'))
                       .map(([pid, p]) => (
                         <option key={pid} value={pid}>{p.label.split('\n')[0].substring(0, 55)}</option>
                       ))}
                   </select>
+                  <div className="btn-group btn-group-sm w-100 mb-1">
+                    <button className={`btn ${condSiModo==='en' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                      onClick={() => setCondSiModo('en')}>Solo cuando sea…</button>
+                    <button className={`btn ${condSiModo==='no_en' ? 'btn-warning' : 'btn-outline-secondary'}`}
+                      onClick={() => setCondSiModo('no_en')}>Excepto cuando sea…</button>
+                  </div>
                   <input className="form-control form-control-sm mb-1"
                     style={{ fontFamily: 'monospace' }}
-                    placeholder="valores separados por coma: 00, Q0, A0"
+                    placeholder="valores separados por coma: 70, A0"
                     value={condSiEn} onChange={e => setCondSiEn(e.target.value)} />
                   <div className="d-flex gap-1">
                     <button className="btn btn-sm btn-primary py-0"
                       disabled={!condSiPregId || !condSiEn.trim()}
                       onClick={() => {
+                        const vals = condSiEn.split(',').map(v => v.trim()).filter(Boolean)
                         mutate(c => {
                           const s = c.tipos.find(t => t.id === tipoId)?.flujo.find(p => p.pregunta_id === pregId)
-                          if (s) s.si = { pregunta_id: condSiPregId, en: condSiEn.split(',').map(v => v.trim()).filter(Boolean) }
+                          if (s) s.si = condSiModo === 'no_en'
+                            ? { pregunta_id: condSiPregId, no_en: vals }
+                            : { pregunta_id: condSiPregId, en: vals }
                         })
                         setEditandoCondId(null)
                       }}>
@@ -336,7 +391,7 @@ function Configuracion({ config, onSave }) {
               <>
                 <p className="small fw-semibold mb-2 text-muted">¿Qué tipo de material querés editar?</p>
                 <div className="d-flex flex-column gap-1" style={{ maxHeight: 280, overflowY: 'auto' }}>
-                  {local.tipos.map(t => (
+                  {[...local.tipos].sort((a,b) => a.descripcion.localeCompare(b.descripcion, 'es')).map(t => (
                     <button key={t.id} className="btn btn-sm text-start btn-outline-secondary"
                       onClick={() => elegirTipo(t.id)}>
                       <span className="badge bg-dark me-2" style={{ fontFamily: 'monospace', minWidth: 26 }}>{t.codigo_pos1}</span>
@@ -433,7 +488,7 @@ function Configuracion({ config, onSave }) {
               <div className="card-body py-2">
                 {preg.tipo === 'opcion' && (
                   <div className="d-flex flex-column gap-1" style={{ maxHeight: 320, overflowY: 'auto' }}>
-                    {preg.opciones.map(op => (
+                    {[...preg.opciones].sort((a,b) => (a.descripcion||'').localeCompare(b.descripcion||'', 'es')).map(op => (
                       <button key={op.codigo}
                         className="btn btn-sm text-start d-flex align-items-center gap-2 btn-outline-secondary"
                         onClick={() => responder(p.pregunta_id, op.codigo)}>
@@ -504,6 +559,14 @@ function Configuracion({ config, onSave }) {
                     onClick={() => setAddingPaso(false)}>✕</button>
                 </div>
                 <div className="card-body py-3">
+                  {/* Modo: nueva o existente */}
+                  <div className="btn-group btn-group-sm w-100 mb-3">
+                    <button className={`btn ${newPasoModo==='nuevo' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                      onClick={() => setNewPasoModo('nuevo')}>Nueva pregunta</button>
+                    <button className={`btn ${newPasoModo==='existente' ? 'btn-info' : 'btn-outline-secondary'}`}
+                      onClick={() => { setNewPasoModo('existente'); setNewPasoExistentePregId('') }}>
+                      Usar pregunta existente</button>
+                  </div>
                   {/* Posiciones */}
                   <div className="row g-2 mb-3 align-items-end">
                     <div className="col-auto">
@@ -521,16 +584,34 @@ function Configuracion({ config, onSave }) {
                         value={newPasoHasta}
                         onChange={e => setNewPasoHasta(+e.target.value)} />
                     </div>
-                    <div className="col">
-                      <label className="form-label small mb-1 fw-semibold">Tipo de respuesta</label>
-                      <select className="form-select form-select-sm" value={newPasoTipo}
-                        onChange={e => setNewPasoTipo(e.target.value)}>
-                        <option value="opcion">Lista de opciones</option>
-                        <option value="libre">Texto libre</option>
+                    {newPasoModo === 'nuevo' && (
+                      <div className="col">
+                        <label className="form-label small mb-1 fw-semibold">Tipo de respuesta</label>
+                        <select className="form-select form-select-sm" value={newPasoTipo}
+                          onChange={e => setNewPasoTipo(e.target.value)}>
+                          <option value="opcion">Lista de opciones</option>
+                          <option value="libre">Texto libre</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                  {/* Pregunta existente */}
+                  {newPasoModo === 'existente' && (
+                    <div className="mb-3">
+                      <label className="form-label small mb-1 fw-semibold">Pregunta a reutilizar</label>
+                      <select className="form-select form-select-sm" value={newPasoExistentePregId}
+                        onChange={e => setNewPasoExistentePregId(e.target.value)}>
+                        <option value="">-- elegir pregunta --</option>
+                        {Object.entries(local.preguntas)
+                          .sort(([,a],[,b]) => a.label.localeCompare(b.label, 'es'))
+                          .map(([pid, p]) => (
+                            <option key={pid} value={pid}>{p.label.split('\n')[0].substring(0, 60)}</option>
+                          ))}
                       </select>
                     </div>
-                  </div>
-                  {/* Label */}
+                  )}
+                  {/* Label — solo modo nuevo */}
+                  {newPasoModo === 'nuevo' && (
                   <div className="mb-3">
                     <label className="form-label small mb-1 fw-semibold">Texto de la pregunta</label>
                     <input className="form-control form-control-sm"
@@ -538,8 +619,9 @@ function Configuracion({ config, onSave }) {
                       value={newPasoLabel}
                       onChange={e => setNewPasoLabel(e.target.value)} />
                   </div>
-                  {/* Opciones */}
-                  {newPasoTipo === 'opcion' && (
+                  )}
+                  {/* Opciones — solo modo nuevo */}
+                  {newPasoModo === 'nuevo' && newPasoTipo === 'opcion' && (
                     <div className="mb-3">
                       <div className="d-flex justify-content-between align-items-center mb-2">
                         <span className="small fw-semibold text-muted">
@@ -579,25 +661,35 @@ function Configuracion({ config, onSave }) {
                     <select className="form-select form-select-sm mb-1" value={newPasoSiPregId}
                       onChange={e => { setNewPasoSiPregId(e.target.value); setNewPasoSiEn('') }}>
                       <option value="">Sin condición — siempre visible</option>
-                      {activos.map(p => (
+                      {[...activos].sort((a, b) => {
+                        const la = local.preguntas[a.pregunta_id]?.label || a.pregunta_id
+                        const lb = local.preguntas[b.pregunta_id]?.label || b.pregunta_id
+                        return la.localeCompare(lb, 'es')
+                      }).map(p => (
                         <option key={p.pregunta_id} value={p.pregunta_id}>
                           {local.preguntas[p.pregunta_id]?.label?.split('\n')[0]?.substring(0, 50) || p.pregunta_id}
                         </option>
                       ))}
                     </select>
-                    {newPasoSiPregId && (
+                    {newPasoSiPregId && (<>
+                      <div className="btn-group btn-group-sm w-100 mb-1">
+                        <button className={`btn ${newPasoSiModo==='en' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                          onClick={() => setNewPasoSiModo('en')}>Solo cuando sea…</button>
+                        <button className={`btn ${newPasoSiModo==='no_en' ? 'btn-warning' : 'btn-outline-secondary'}`}
+                          onClick={() => setNewPasoSiModo('no_en')}>Excepto cuando sea…</button>
+                      </div>
                       <input className="form-control form-control-sm" style={{ fontFamily: 'monospace' }}
-                        placeholder="valores separados por coma: 00, Q0, A0"
+                        placeholder="valores separados por coma: 70, A0"
                         value={newPasoSiEn} onChange={e => setNewPasoSiEn(e.target.value)} />
-                    )}
+                    </>)}
                   </div>
                   <div className="d-flex gap-2">
                     <button className="btn btn-sm btn-primary"
-                      disabled={!newPasoLabel.trim()}
+                      disabled={newPasoModo === 'existente' ? !newPasoExistentePregId : !newPasoLabel.trim()}
                       onClick={confirmarNuevoPaso}>
                       <i className="bi bi-check-lg me-1" />Agregar al flujo
                     </button>
-                    <button className="btn btn-sm btn-outline-secondary" onClick={() => setAddingPaso(false)}>
+                    <button className="btn btn-sm btn-outline-secondary" onClick={() => { setAddingPaso(false); setNewPasoModo('nuevo'); setNewPasoExistentePregId('') }}>
                       Cancelar
                     </button>
                   </div>
@@ -614,11 +706,12 @@ function Configuracion({ config, onSave }) {
 
 // ── componente principal ─────────────────────────────────────────────────────────
 export default function Codificacion() {
-  const puedeConfig  = puedeEscribir('codificacion')
+  const esAdmin = getUser()?.rol === 'admin'
 
-  const [tab,    setTab]    = useState('asistente')
-  const [config, setConfig] = useState(null)
-  const [error,  setError]  = useState(null)
+  const [tab,     setTab]     = useState('asistente')
+  const [config,  setConfig]  = useState(null)
+  const [error,   setError]   = useState(null)
+  const [pedidos, setPedidos] = useState([])
 
   const cargarConfig = useCallback(() => {
     api.get('/codificacion/config')
@@ -626,7 +719,18 @@ export default function Codificacion() {
       .catch(() => setError('No se pudo cargar la configuración del módulo.'))
   }, [])
 
-  useEffect(() => { cargarConfig() }, [cargarConfig])
+  const cargarPedidos = useCallback(() => {
+    if (!esAdmin) return
+    api.get('/codificacion/pedidos').then(r => setPedidos(r.data)).catch(() => {})
+  }, [esAdmin])
+
+  useEffect(() => { cargarConfig(); cargarPedidos() }, [cargarConfig, cargarPedidos])
+
+  const resolverPedido = id => {
+    api.delete(`/codificacion/pedidos/${id}`)
+      .then(() => setPedidos(prev => prev.filter(p => p.id !== id)))
+      .catch(() => {})
+  }
 
   if (error) return <div className="alert alert-danger m-3">{error}</div>
   if (!config) return <div className="text-center py-5"><span className="spinner-border" /></div>
@@ -643,17 +747,54 @@ export default function Codificacion() {
             <i className="bi bi-qr-code-scan me-1" />Asistente
           </button>
         </li>
-        {puedeConfig && (
+        {esAdmin && (
           <li className="nav-item">
             <button className={`nav-link py-1 ${tab === 'config' ? 'active' : ''}`} onClick={() => setTab('config')}>
               <i className="bi bi-gear me-1" />Configuración
+              {pedidos.length > 0 && (
+                <span className="badge bg-danger ms-1" style={{ fontSize: '0.65rem' }}>{pedidos.length}</span>
+              )}
             </button>
           </li>
         )}
       </ul>
 
       {tab === 'asistente' && <Asistente config={config} />}
-      {tab === 'config' && puedeConfig && <Configuracion config={config} onSave={c => setConfig(c)} />}
+      {tab === 'config' && esAdmin && (
+        <>
+          {/* Panel de pedidos pendientes */}
+          {pedidos.length > 0 && (
+            <div className="alert alert-warning py-2 mb-3">
+              <div className="fw-semibold small mb-2">
+                <i className="bi bi-exclamation-triangle me-1"/>
+                {pedidos.length} opción{pedidos.length > 1 ? 'es' : ''} solicitada{pedidos.length > 1 ? 's' : ''} por usuarios:
+              </div>
+              <div className="d-flex flex-column gap-1">
+                {pedidos.map(ped => (
+                  <div key={ped.id} className="d-flex align-items-start gap-2 bg-white border rounded px-3 py-2">
+                    <div className="flex-grow-1">
+                      <span className="badge bg-dark me-1" style={{ fontFamily: 'monospace' }}>{ped.familia_codigo}</span>
+                      <span className="fw-semibold small me-2">{ped.familia_desc}</span>
+                      <span className="text-muted small me-1">—</span>
+                      <span className="small me-2">{ped.pregunta_label}</span>
+                      <span className="text-muted small">· solicitado por <strong>{ped.usuario}</strong></span>
+                      <div className="mt-1 small">
+                        <i className="bi bi-chat-left-text me-1 text-muted"/><em>"{ped.descripcion}"</em>
+                      </div>
+                    </div>
+                    <button className="btn btn-sm btn-outline-success flex-shrink-0"
+                      onClick={() => resolverPedido(ped.id)}
+                      title="Marcar como resuelto">
+                      <i className="bi bi-check-lg"/>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <Configuracion config={config} onSave={c => setConfig(c)} />
+        </>
+      )}
     </div>
   )
 }

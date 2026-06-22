@@ -3,10 +3,28 @@ const XLSX    = require('xlsx');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
 const { verificarToken, ESCRITURA_VENTAS } = require('../middleware/auth');
+const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
 
 const puedeEscribirAdmin = (req) => req.usuario?.rol === 'admin' || req.permisos?.ventas?.escribir || req.permisos?.administracion?.escribir;
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+router.get('/stats', verificarToken, (req, res) => {
+  const total = db.prepare('SELECT COUNT(*) c FROM presupuestos').get().c
+  const porEstado = db.prepare(`
+    SELECT estado, COUNT(*) c,
+      SUM(COALESCE((SELECT SUM(cantidad*precio_final) FROM presupuesto_items WHERE presupuesto_id=presupuestos.id),0)) monto
+    FROM presupuestos GROUP BY estado
+  `).all()
+  const porMes = db.prepare(`
+    SELECT SUBSTR(fecha,1,7) mes, COUNT(*) c,
+      SUM(COALESCE((SELECT SUM(cantidad*precio_final) FROM presupuesto_items WHERE presupuesto_id=presupuestos.id),0)) monto
+    FROM presupuestos WHERE fecha >= date('now','-12 months') AND fecha != ''
+    GROUP BY mes ORDER BY mes DESC
+  `).all()
+  res.json({ total, porEstado, porMes })
+})
 
 // ── Clientes ──────────────────────────────────────────────────────────────────
 
@@ -16,10 +34,9 @@ router.get('/clientes', verificarToken, (req, res) => {
   let where = soloActivos ? 'WHERE activo=1' : '';
   const params = [];
   if (buscar) {
-    where = soloActivos
-      ? 'WHERE (nombre LIKE ? OR cuit LIKE ?) AND activo=1'
-      : 'WHERE (nombre LIKE ? OR cuit LIKE ?)';
-    params.push(`%${buscar}%`, `%${buscar}%`);
+    const b = buscarCondicion(buscar, ['nombre', 'cuit']);
+    where = soloActivos ? `WHERE (${b.cond}) AND activo=1` : `WHERE (${b.cond})`;
+    params.push(...b.params);
   }
   res.json(db.prepare(`SELECT * FROM clientes ${where} ORDER BY nombre`).all(...params));
 });
@@ -75,7 +92,7 @@ router.get('/presupuestos', verificarToken, (req, res) => {
   if (cliente_id) { conds.push('p.cliente_id=?');     params.push(cliente_id); }
   if (desde)      { conds.push('p.fecha>=?');          params.push(desde); }
   if (hasta)      { conds.push('p.fecha<=?');          params.push(hasta); }
-  if (buscar)     { conds.push('(p.numero LIKE ? OR p.cli_nombre LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`); }
+  if (buscar)     { const b = buscarCondicion(buscar, ['p.numero','p.cli_nombre']); conds.push(b.cond); params.push(...b.params); }
   const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';
   const offset = (parseInt(page)-1)*parseInt(limit);
   const total  = db.prepare(`SELECT COUNT(*) as c FROM presupuestos p ${where}`).get(...params).c;
@@ -163,6 +180,57 @@ router.delete('/presupuestos/:id', verificarToken, (req, res) => {
   db.prepare('DELETE FROM presupuesto_items WHERE presupuesto_id=?').run(req.params.id);
   db.prepare('DELETE FROM presupuestos WHERE id=?').run(req.params.id);
   res.json({ mensaje: 'Presupuesto eliminado' });
+});
+
+// ── Ofertas Técnicas ─────────────────────────────────────────────────────────
+
+router.get('/ofertas-tecnicas/:presupuesto_id', verificarToken, (req, res) => {
+  const ot = db.prepare('SELECT * FROM ofertas_tecnicas WHERE presupuesto_id=?').get(req.params.presupuesto_id);
+  if (!ot) return res.status(404).json({ error: 'No encontrada' });
+  res.json(ot);
+});
+
+router.post('/ofertas-tecnicas', verificarToken, (req, res) => {
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const { presupuesto_id, ref_codigo, tipo_equipo, modelo, introduccion,
+          principio_funcionamiento, seleccion_equipo, componentes, alcance,
+          exclusiones, plazo_ejecucion, garantias, antecedentes, elaborado_por } = req.body;
+  if (!presupuesto_id) return res.status(400).json({ error: 'presupuesto_id requerido' });
+  try {
+    const r = db.prepare(`INSERT INTO ofertas_tecnicas
+      (presupuesto_id,ref_codigo,tipo_equipo,modelo,introduccion,principio_funcionamiento,
+       seleccion_equipo,componentes,alcance,exclusiones,plazo_ejecucion,garantias,antecedentes,elaborado_por)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(presupuesto_id, ref_codigo||'', tipo_equipo||'', modelo||'',
+           introduccion||'', principio_funcionamiento||'', seleccion_equipo||'',
+           componentes||'', alcance||'', exclusiones||'', plazo_ejecucion||'',
+           garantias||'', antecedentes||'', elaborado_por||'');
+    res.status(201).json(db.prepare('SELECT * FROM ofertas_tecnicas WHERE id=?').get(r.lastInsertRowid));
+  } catch(e) {
+    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Ya existe OT para este presupuesto' });
+    throw e;
+  }
+});
+
+router.put('/ofertas-tecnicas/:presupuesto_id', verificarToken, (req, res) => {
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const ot = db.prepare('SELECT * FROM ofertas_tecnicas WHERE presupuesto_id=?').get(req.params.presupuesto_id);
+  if (!ot) return res.status(404).json({ error: 'No encontrada' });
+  const { ref_codigo, tipo_equipo, modelo, introduccion, principio_funcionamiento,
+          seleccion_equipo, componentes, alcance, exclusiones, plazo_ejecucion,
+          garantias, antecedentes, elaborado_por } = req.body;
+  db.prepare(`UPDATE ofertas_tecnicas SET
+    ref_codigo=?,tipo_equipo=?,modelo=?,introduccion=?,principio_funcionamiento=?,
+    seleccion_equipo=?,componentes=?,alcance=?,exclusiones=?,plazo_ejecucion=?,
+    garantias=?,antecedentes=?,elaborado_por=?,updated_at=datetime('now','localtime')
+    WHERE presupuesto_id=?`)
+    .run(ref_codigo??ot.ref_codigo, tipo_equipo??ot.tipo_equipo, modelo??ot.modelo,
+         introduccion??ot.introduccion, principio_funcionamiento??ot.principio_funcionamiento,
+         seleccion_equipo??ot.seleccion_equipo, componentes??ot.componentes,
+         alcance??ot.alcance, exclusiones??ot.exclusiones, plazo_ejecucion??ot.plazo_ejecucion,
+         garantias??ot.garantias, antecedentes??ot.antecedentes, elaborado_por??ot.elaborado_por,
+         req.params.presupuesto_id);
+  res.json(db.prepare('SELECT * FROM ofertas_tecnicas WHERE presupuesto_id=?').get(req.params.presupuesto_id));
 });
 
 router.get('/exportar/presupuestos', verificarToken, (req, res) => {

@@ -304,8 +304,9 @@ function inicializar() {
     try { db.exec(`ALTER TABLE movimientos_stock ADD COLUMN ${col} TEXT DEFAULT ''`) } catch(e) {}
   });
 
-  // ── Columna proveedor en productos (idempotente) ──────────────────────────────
+  // ── Columnas extra en productos (idempotente) ────────────────────────────────
   try { db.exec(`ALTER TABLE productos ADD COLUMN proveedor TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE productos ADD COLUMN codigo_proveedor TEXT DEFAULT ''`) } catch(e) {}
 
   // ── SGC Compras: columnas extra (idempotente) ─────────────────────────────────
   try { db.exec(`ALTER TABLE proveedores ADD COLUMN critico INTEGER DEFAULT 0`) } catch(e) {}
@@ -778,6 +779,165 @@ function inicializar() {
     const ins = db.prepare('INSERT OR IGNORE INTO rrhh_empleados (nombre,tipo) VALUES (?,?)');
     for (const [n,t] of EMPS_RRHH) ins.run(n,t);
   }
+
+  // ── Mensajería interna ───────────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mensajes (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      de_id        INTEGER NOT NULL REFERENCES usuarios(id),
+      de_nombre    TEXT DEFAULT '',
+      para_id      INTEGER NOT NULL REFERENCES usuarios(id),
+      para_nombre  TEXT DEFAULT '',
+      asunto       TEXT DEFAULT '',
+      cuerpo       TEXT NOT NULL DEFAULT '',
+      leido        INTEGER DEFAULT 0,
+      borrado_para INTEGER DEFAULT 0,
+      borrado_de   INTEGER DEFAULT 0,
+      created_at   TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_msg_para ON mensajes(para_id, leido);
+    CREATE INDEX IF NOT EXISTS idx_msg_de   ON mensajes(de_id);
+  `);
+
+  try { db.exec(`ALTER TABLE mensajes ADD COLUMN leido_at TEXT DEFAULT ''`) } catch(e) {}
+
+  // ── Ingresos pendientes (recepción OC → espera confirmación en stock) ────────
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ingresos_pendientes (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        oc_id            INTEGER REFERENCES ordenes_compra(id),
+        oc_numero        TEXT DEFAULT '',
+        proveedor_nombre TEXT DEFAULT '',
+        oc_item_id       INTEGER REFERENCES oc_items(id),
+        producto_id      INTEGER NOT NULL REFERENCES productos(id),
+        producto_codigo  TEXT DEFAULT '',
+        producto_desc    TEXT DEFAULT '',
+        unidad           TEXT DEFAULT 'UND.',
+        cantidad         REAL NOT NULL,
+        precio_costo     REAL DEFAULT 0,
+        numero_remito    TEXT DEFAULT '',
+        fecha_recepcion  TEXT DEFAULT '',
+        created_at       TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_ing_pend_prod ON ingresos_pendientes(producto_id);
+    `)
+  } catch(e) {}
+
+  // ── Documentos de proyecto (Form 30) ─────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proyecto_documentos (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      proyecto_id      INTEGER NOT NULL REFERENCES proyectos(id) ON DELETE CASCADE,
+      item_num         INTEGER DEFAULT 1,
+      item_nombre      TEXT DEFAULT '',
+      categoria        TEXT DEFAULT '',
+      item             TEXT DEFAULT '',
+      subitem          TEXT DEFAULT '',
+      responsable      TEXT DEFAULT '',
+      aplica           TEXT DEFAULT '',
+      estado           TEXT DEFAULT '',
+      fecha_solicitado TEXT DEFAULT '',
+      fecha_entregado  TEXT DEFAULT '',
+      created_at       TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_proy_docs ON proyecto_documentos(proyecto_id);
+  `);
+
+  // ── Configuración del sistema ─────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS configuracion (
+      clave      TEXT PRIMARY KEY,
+      valor      TEXT NOT NULL DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+  `)
+  // Migrar SMTP desde .env si la tabla está vacía
+  {
+    const ins = db.prepare('INSERT OR IGNORE INTO configuracion (clave, valor) VALUES (?, ?)')
+    const envMap = [
+      ['smtp_host',   process.env.SMTP_HOST   || ''],
+      ['smtp_port',   process.env.SMTP_PORT   || '587'],
+      ['smtp_user',   process.env.SMTP_USER   || ''],
+      ['smtp_pass',   process.env.SMTP_PASS   || ''],
+      ['smtp_from',   process.env.SMTP_FROM   || ''],
+      ['smtp_secure', process.env.SMTP_SECURE || 'false'],
+      ['backup_to',   process.env.BACKUP_TO   || ''],
+    ]
+    for (const [k, v] of envMap) if (v) ins.run(k, v)
+  }
+
+  // ── CRM / Ventas ──────────────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS crm_empresas (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre     TEXT NOT NULL,
+      activo     INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_crm_emp_nombre ON crm_empresas(nombre);
+
+    CREATE TABLE IF NOT EXISTS crm_contactos (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id INTEGER REFERENCES crm_empresas(id),
+      nombre     TEXT DEFAULT '',
+      posicion   TEXT DEFAULT '',
+      telefono   TEXT DEFAULT '',
+      mail       TEXT DEFAULT '',
+      activo     INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_crm_cont_emp ON crm_contactos(empresa_id);
+
+    CREATE TABLE IF NOT EXISTS crm_cotizaciones (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      empresa_id    INTEGER REFERENCES crm_empresas(id),
+      contacto_id   INTEGER REFERENCES crm_contactos(id),
+      fecha         TEXT DEFAULT '',
+      equipo        TEXT DEFAULT '',
+      indirecto     TEXT DEFAULT '',
+      moneda        TEXT DEFAULT 'USD' CHECK(moneda IN ('ARS','USD')),
+      presupuestado REAL DEFAULT 0,
+      ganado        REAL DEFAULT 0,
+      perdido       REAL DEFAULT 0,
+      estado        TEXT DEFAULT 'Activo' CHECK(estado IN ('Activo','Ganado','Perdido','Desestimado')),
+      observaciones TEXT DEFAULT '',
+      seguimiento   TEXT DEFAULT '',
+      actualizado   TEXT DEFAULT '',
+      created_at    TEXT DEFAULT (datetime('now','localtime')),
+      updated_at    TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_crm_cot_emp   ON crm_cotizaciones(empresa_id);
+    CREATE INDEX IF NOT EXISTS idx_crm_cot_est   ON crm_cotizaciones(estado);
+    CREATE INDEX IF NOT EXISTS idx_crm_cot_fecha ON crm_cotizaciones(fecha);
+  `)
+
+  // ── Oferta Técnica ────────────────────────────────────────────────────────────
+  try { db.exec(`ALTER TABLE presupuestos ADD COLUMN cotizacion_id INTEGER REFERENCES crm_cotizaciones(id)`) } catch(e) {}
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ofertas_tecnicas (
+      id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+      presupuesto_id           INTEGER UNIQUE REFERENCES presupuestos(id) ON DELETE CASCADE,
+      ref_codigo               TEXT DEFAULT '',
+      tipo_equipo              TEXT DEFAULT '',
+      modelo                   TEXT DEFAULT '',
+      introduccion             TEXT DEFAULT '',
+      principio_funcionamiento TEXT DEFAULT '',
+      seleccion_equipo         TEXT DEFAULT '',
+      componentes              TEXT DEFAULT '',
+      alcance                  TEXT DEFAULT '',
+      exclusiones              TEXT DEFAULT '',
+      plazo_ejecucion          TEXT DEFAULT '',
+      garantias                TEXT DEFAULT '',
+      antecedentes             TEXT DEFAULT '',
+      elaborado_por            TEXT DEFAULT '',
+      created_at               TEXT DEFAULT (datetime('now','localtime')),
+      updated_at               TEXT DEFAULT (datetime('now','localtime'))
+    );
+  `)
 
   // Seed inicial si no hay usuarios
   const hay = db.prepare('SELECT COUNT(*) as c FROM usuarios').get();

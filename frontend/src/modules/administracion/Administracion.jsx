@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 import { getPermisos, getUser } from '../../store/authStore'
 import Form11 from '../compras/Form11'
+import EmpleadoSelect from '../../components/EmpleadoSelect'
 
 const CONDICIONES_PAGO = [
   'TRANSF. BANCARIA', 'CHEQUE', 'EFECTIVO', 'CUENTA CORRIENTE',
@@ -344,11 +345,13 @@ function ModalProveedor({ modal, form, setForm, error, guardando, onClose, onSub
                 </div>
                 <div className="col-md-4">
                   <label className="form-label">Responsable de Selección</label>
-                  <input className="form-control" value={form.responsable_seleccion} onChange={set('responsable_seleccion')} />
+                  <EmpleadoSelect value={form.responsable_seleccion}
+                    onChange={v => setForm(f => ({ ...f, responsable_seleccion: v }))} />
                 </div>
                 <div className="col-md-4">
                   <label className="form-label">Responsable de Evaluación</label>
-                  <input className="form-control" value={form.responsable_evaluacion} onChange={set('responsable_evaluacion')} />
+                  <EmpleadoSelect value={form.responsable_evaluacion}
+                    onChange={v => setForm(f => ({ ...f, responsable_evaluacion: v }))} />
                 </div>
               </div>
             </div>

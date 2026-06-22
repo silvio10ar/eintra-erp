@@ -824,6 +824,17 @@ router.get('/resumen-ayer', verificarToken, (req, res) => {
   `).all(fecha);
   const partesMap = Object.fromEntries(partes.map(p => [p.empleado_id, p]));
 
+  const sinFichar = db.prepare(`
+    SELECT e.id, e.nombre
+    FROM rrhh_empleados e
+    WHERE e.activo = 1
+      AND e.id NOT IN (
+        SELECT DISTINCT empleado_id FROM rrhh_asistencia
+        WHERE fecha = ? AND empleado_id IS NOT NULL
+      )
+    ORDER BY e.nombre
+  `).all(fecha);
+
   res.json({
     fecha,
     empleados: fichadas.map(f => ({
@@ -831,6 +842,7 @@ router.get('/resumen-ayer', verificarToken, (req, res) => {
       tiene_parte:  !!partesMap[f.id],
       horas_parte:  partesMap[f.id]?.horas_parte || 0,
     })),
+    sin_fichar: sinFichar,
   });
 });
 

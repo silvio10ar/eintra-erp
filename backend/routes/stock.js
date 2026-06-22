@@ -3,6 +3,7 @@ const XLSX    = require('xlsx');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
 const { verificarToken } = require('../middleware/auth');
+const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
 const puede = req => !!(req.permisos?.stock?.escribir);
@@ -12,7 +13,7 @@ const puede = req => !!(req.permisos?.stock?.escribir);
 router.get('/productos', verificarToken, (req, res) => {
   const { buscar, categoria, ubicacion, alerta } = req.query;
   const conds = ['p.activo=1'], params = [];
-  if (buscar)   { conds.push('(p.codigo LIKE ? OR p.descripcion LIKE ? OR p.proveedor LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`,`%${buscar}%`); }
+  if (buscar)   { const b = buscarCondicion(buscar, ['p.codigo','p.descripcion','p.proveedor','p.codigo_proveedor']); conds.push(b.cond); params.push(...b.params); }
   if (categoria){ conds.push('p.categoria=?');  params.push(categoria); }
   if (ubicacion){ conds.push('p.ubicacion=?');  params.push(ubicacion); }
   if (alerta === 'bajo')     conds.push('p.stock_actual > 0 AND p.stock_minimo > 0 AND p.stock_actual <= p.stock_minimo');
@@ -57,13 +58,22 @@ router.post('/productos', verificarToken,
     if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
     const errs = validationResult(req);
     if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
-    const { codigo, descripcion, categoria, unidad, stock_actual, stock_minimo, ubicacion, precio_costo, precio_venta, proveedor } = req.body;
+    const { codigo, descripcion, categoria, unidad, stock_actual, stock_minimo, ubicacion, precio_costo, precio_venta, proveedor, codigo_proveedor } = req.body;
     try {
-      const r = db.prepare(`INSERT INTO productos (codigo,descripcion,categoria,unidad,stock_actual,stock_minimo,ubicacion,precio_costo,precio_venta,proveedor) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-        .run(codigo, descripcion, categoria||'', unidad||'UND.', stock_actual||0, stock_minimo||0, ubicacion||'', precio_costo||0, precio_venta||0, proveedor||'');
+      const r = db.prepare(`INSERT INTO productos (codigo,descripcion,categoria,unidad,stock_actual,stock_minimo,ubicacion,precio_costo,precio_venta,proveedor,codigo_proveedor) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(codigo, descripcion, categoria||'', unidad||'UND.', stock_actual||0, stock_minimo||0, ubicacion||'', precio_costo||0, precio_venta||0, proveedor||'', codigo_proveedor||'');
       res.status(201).json(db.prepare('SELECT * FROM productos WHERE id=?').get(r.lastInsertRowid));
     } catch(e) {
-      if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'El código ya existe' });
+      if (e.message.includes('UNIQUE')) {
+        // Si existe pero está inactivo, reactivarlo con los nuevos datos
+        const inactivo = db.prepare('SELECT id FROM productos WHERE codigo=? AND activo=0').get(codigo);
+        if (inactivo) {
+          db.prepare(`UPDATE productos SET descripcion=?,categoria=?,unidad=?,stock_actual=?,stock_minimo=?,ubicacion=?,precio_costo=?,precio_venta=?,proveedor=?,codigo_proveedor=?,activo=1,updated_at=datetime('now','localtime') WHERE id=?`)
+            .run(descripcion, categoria||'', unidad||'UND.', stock_actual||0, stock_minimo||0, ubicacion||'', precio_costo||0, precio_venta||0, proveedor||'', codigo_proveedor||'', inactivo.id);
+          return res.status(201).json(db.prepare('SELECT * FROM productos WHERE id=?').get(inactivo.id));
+        }
+        return res.status(409).json({ error: 'El código ya existe' });
+      }
       throw e;
     }
   }
@@ -73,11 +83,11 @@ router.put('/productos/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
   const p = db.prepare('SELECT * FROM productos WHERE id=?').get(req.params.id);
   if (!p) return res.status(404).json({ error: 'No encontrado' });
-  const { codigo, descripcion, categoria, unidad, stock_minimo, ubicacion, precio_costo, precio_venta, proveedor } = req.body;
-  db.prepare(`UPDATE productos SET codigo=?,descripcion=?,categoria=?,unidad=?,stock_minimo=?,ubicacion=?,precio_costo=?,precio_venta=?,proveedor=?,updated_at=datetime('now','localtime') WHERE id=?`)
+  const { codigo, descripcion, categoria, unidad, stock_minimo, ubicacion, precio_costo, precio_venta, proveedor, codigo_proveedor } = req.body;
+  db.prepare(`UPDATE productos SET codigo=?,descripcion=?,categoria=?,unidad=?,stock_minimo=?,ubicacion=?,precio_costo=?,precio_venta=?,proveedor=?,codigo_proveedor=?,updated_at=datetime('now','localtime') WHERE id=?`)
     .run(codigo??p.codigo, descripcion??p.descripcion, categoria??p.categoria, unidad??p.unidad,
          stock_minimo??p.stock_minimo, ubicacion??p.ubicacion, precio_costo??p.precio_costo,
-         precio_venta??p.precio_venta, proveedor??p.proveedor??'', req.params.id);
+         precio_venta??p.precio_venta, proveedor??p.proveedor??'', codigo_proveedor??p.codigo_proveedor??'', req.params.id);
   res.json(db.prepare('SELECT * FROM productos WHERE id=?').get(req.params.id));
 });
 
@@ -175,7 +185,7 @@ router.get('/exportar', verificarToken, (req, res) => {
   }
 
   const conds = ['p.activo=1'], params = [];
-  if (buscar)   { conds.push('(p.codigo LIKE ? OR p.descripcion LIKE ? OR p.proveedor LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`,`%${buscar}%`); }
+  if (buscar)   { const b = buscarCondicion(buscar, ['p.codigo','p.descripcion','p.proveedor','p.codigo_proveedor']); conds.push(b.cond); params.push(...b.params); }
   if (categoria){ conds.push('p.categoria=?'); params.push(categoria); }
   if (ubicacion){ conds.push('p.ubicacion=?'); params.push(ubicacion); }
   if (alerta === 'bajo')    conds.push('p.stock_actual > 0 AND p.stock_minimo > 0 AND p.stock_actual <= p.stock_minimo');
@@ -272,6 +282,94 @@ router.post('/migrar-movimientos', verificarToken, (req, res) => {
     }
   })();
   res.json({ ok:true, importados, sinProducto });
+});
+
+// ── Importación bulk de productos (admin only) ────────────────────────────────
+router.post('/importar', verificarToken, (req, res) => {
+  if (req.usuario?.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' })
+  const { productos = [] } = req.body
+  if (!Array.isArray(productos) || productos.length === 0)
+    return res.status(400).json({ error: 'Se esperaba un array "productos"' })
+  const ins = db.prepare(`
+    INSERT OR IGNORE INTO productos (codigo, descripcion, categoria, unidad, precio_costo, precio_venta, proveedor, codigo_proveedor)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const reactivar = db.prepare(`
+    UPDATE productos SET descripcion=?,categoria=?,unidad=?,precio_costo=?,precio_venta=?,proveedor=?,codigo_proveedor=?,activo=1,updated_at=datetime('now','localtime')
+    WHERE codigo=? AND activo=0
+  `)
+  const actualizarPrecio = db.prepare(`
+    UPDATE productos SET precio_costo=?,precio_venta=?,codigo_proveedor=?,updated_at=datetime('now','localtime')
+    WHERE codigo=? AND activo=1
+  `)
+  let creados = 0, actualizados = 0, omitidos = 0
+  db.transaction(() => {
+    for (const p of productos) {
+      const r = ins.run(p.codigo, p.descripcion, p.categoria || '', p.unidad || 'UND.', p.precio_costo || 0, p.precio_venta || 0, p.proveedor || '', p.codigo_proveedor || '')
+      if (r.changes) { creados++ } else {
+        const rv = reactivar.run(p.descripcion, p.categoria || '', p.unidad || 'UND.', p.precio_costo || 0, p.precio_venta || 0, p.proveedor || '', p.codigo_proveedor || '', p.codigo)
+        if (rv.changes) { creados++ } else {
+          const ra = actualizarPrecio.run(p.precio_costo || 0, p.precio_venta || 0, p.codigo_proveedor || '', p.codigo)
+          ra.changes ? actualizados++ : omitidos++
+        }
+      }
+    }
+  })()
+  res.json({ ok: true, creados, actualizados, omitidos })
+})
+
+// ── Eliminar movimiento (admin) — revierte el stock ───────────────────────────
+router.delete('/movimientos/:id', verificarToken, (req, res) => {
+  if (req.usuario?.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  const mov = db.prepare('SELECT * FROM movimientos_stock WHERE id=?').get(req.params.id);
+  if (!mov) return res.status(404).json({ error: 'Movimiento no encontrado' });
+  const delta = (mov.tipo === 'salida') ? mov.cantidad : -mov.cantidad;
+  db.transaction(() => {
+    db.prepare("UPDATE productos SET stock_actual=stock_actual+?, updated_at=datetime('now','localtime') WHERE id=?")
+      .run(delta, mov.producto_id);
+    db.prepare('DELETE FROM movimientos_stock WHERE id=?').run(mov.id);
+  })();
+  res.json({ ok: true });
+});
+
+// ── Ingresos pendientes ────────────────────────────────────────────────────────
+
+router.get('/ingresos-pendientes', verificarToken, (req, res) => {
+  const rows = db.prepare(`
+    SELECT ip.*, p.stock_actual
+    FROM ingresos_pendientes ip
+    LEFT JOIN productos p ON p.id = ip.producto_id
+    ORDER BY ip.created_at ASC
+  `).all();
+  res.json(rows);
+});
+
+router.post('/ingresos-pendientes/:id/confirmar', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const row = db.prepare('SELECT * FROM ingresos_pendientes WHERE id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'No encontrado' });
+  const hoyStr = new Date().toISOString().slice(0,10);
+  db.transaction(() => {
+    db.prepare("UPDATE productos SET stock_actual=stock_actual+?, updated_at=datetime('now','localtime') WHERE id=?")
+      .run(row.cantidad, row.producto_id);
+    db.prepare(`INSERT INTO movimientos_stock
+      (producto_id,tipo,cantidad,fecha,referencia,tipo_doc,doc_id,precio_unit,observaciones,created_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(row.producto_id, 'entrada', row.cantidad, row.fecha_recepcion||hoyStr,
+        row.oc_numero, 'oc', row.oc_id, row.precio_costo||0,
+        `Ingreso OC ${row.oc_numero}${row.numero_remito ? ' — Remito '+row.numero_remito : ''}`,
+        req.usuario.id);
+    db.prepare('DELETE FROM ingresos_pendientes WHERE id=?').run(row.id);
+  })();
+  res.json({ ok: true });
+});
+
+router.delete('/ingresos-pendientes/:id', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const row = db.prepare('SELECT * FROM ingresos_pendientes WHERE id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'No encontrado' });
+  db.prepare('DELETE FROM ingresos_pendientes WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 module.exports = router;

@@ -2,6 +2,7 @@ const express = require('express');
 const XLSX    = require('xlsx');
 const { db }  = require('../db/database');
 const { verificarToken, ESCRITURA_FINANZAS } = require('../middleware/auth');
+const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
 
@@ -75,7 +76,7 @@ router.get('/movimientos', verificarToken, (req, res) => {
   if (estado)    { conds.push('estado=?');      params.push(estado); }
   if (desde)     { conds.push('fecha>=?');       params.push(desde); }
   if (hasta)     { conds.push('fecha<=?');       params.push(hasta); }
-  if (buscar)    { conds.push('(descripcion LIKE ? OR referencia LIKE ?)'); params.push(`%${buscar}%`,`%${buscar}%`); }
+  if (buscar)    { const b = buscarCondicion(buscar, ['descripcion','referencia']); conds.push(b.cond); params.push(...b.params); }
   const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';
   const offset = (parseInt(page)-1)*parseInt(limit);
   const total  = db.prepare(`SELECT COUNT(*) as c FROM movimientos_caja ${where}`).get(...params).c;

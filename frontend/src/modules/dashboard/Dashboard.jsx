@@ -121,7 +121,7 @@ export default function Dashboard() {
     <div className="alert alert-danger"><i className="bi bi-exclamation-triangle-fill me-2" />{error}</div>
   )
 
-  const { stock, compras, ventas, proyectos, produccion, finanzas, alertas, fichadas_hoy = [] } = data
+  const { stock, compras, ventas, proyectos, produccion, finanzas, alertas, fichadas_hoy = [], sin_fichar_hoy = [] } = data
 
   const visAlertas = [verAlerta('ots_urgentes'), verAlerta('stock_bajo'), verAlerta('oc_pendientes')]
   const hayAlertas = visAlertas.some(Boolean)
@@ -282,7 +282,10 @@ export default function Dashboard() {
                         className={`nav-link py-0 px-2 ${tabFichadas === 'hoy' ? 'active' : 'text-secondary'}`}
                         style={{ fontSize: '0.78rem' }}
                         onClick={() => setTabFichadas('hoy')}>
-                        <i className="bi bi-calendar-check me-1" />Hoy ({fichadas_hoy.length})
+                        <i className="bi bi-calendar-check me-1" />Hoy ({fichadas_hoy.length}
+                        {sin_fichar_hoy.length > 0 && (
+                          <span className="ms-1 text-danger fw-bold">{sin_fichar_hoy.length} sin fichar</span>
+                        )})
                       </button>
                     </li>
                     <li className="nav-item">
@@ -307,7 +310,7 @@ export default function Dashboard() {
 
                 {/* Tab Hoy */}
                 {tabFichadas === 'hoy' && (
-                  fichadas_hoy.length === 0 ? (
+                  fichadas_hoy.length === 0 && sin_fichar_hoy.length === 0 ? (
                     <div className="text-muted text-center py-3 small">
                       <i className="bi bi-clock me-1" />Sin fichadas registradas hoy
                       {syncing && <span className="ms-2">— sincronizando…</span>}
@@ -345,6 +348,24 @@ export default function Dashboard() {
                               </tr>
                             )
                           })}
+                          {sin_fichar_hoy.length > 0 && (
+                            <>
+                              <tr>
+                                <td colSpan={4} className="py-1 px-2"
+                                  style={{ background: '#fff3cd', fontSize: '0.75rem', color: '#856404', fontWeight: 600 }}>
+                                  <i className="bi bi-person-x me-1" />No ficharon hoy — {sin_fichar_hoy.length} empleado{sin_fichar_hoy.length !== 1 ? 's' : ''}
+                                </td>
+                              </tr>
+                              {sin_fichar_hoy.map(e => (
+                                <tr key={e.id} style={{ opacity: 0.7 }}>
+                                  <td className="text-muted">—</td>
+                                  <td className="text-muted fst-italic">{e.nombre}</td>
+                                  <td><span className="badge bg-secondary" style={{ fontSize: '0.68rem' }}>Sin fichar</span></td>
+                                  <td></td>
+                                </tr>
+                              ))}
+                            </>
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -402,6 +423,24 @@ export default function Dashboard() {
                                 </tr>
                               )
                             })}
+                            {resumenAyer.sin_fichar?.length > 0 && (
+                              <>
+                                <tr>
+                                  <td colSpan={6} className="py-1 px-2"
+                                    style={{ background: '#f8d7da', fontSize: '0.75rem', color: '#842029', fontWeight: 600 }}>
+                                    <i className="bi bi-person-x me-1" />No ficharon ayer — {resumenAyer.sin_fichar.length} empleado{resumenAyer.sin_fichar.length !== 1 ? 's' : ''}
+                                  </td>
+                                </tr>
+                                {resumenAyer.sin_fichar.map(e => (
+                                  <tr key={e.id} style={{ opacity: 0.65 }}>
+                                    <td className="text-muted">—</td>
+                                    <td className="text-muted fst-italic">{e.nombre}</td>
+                                    <td colSpan={3} className="text-muted">—</td>
+                                    <td><span className="badge bg-danger" style={{ fontSize: '0.68rem' }}>No fichó</span></td>
+                                  </tr>
+                                ))}
+                              </>
+                            )}
                           </tbody>
                         </table>
                       </div>
