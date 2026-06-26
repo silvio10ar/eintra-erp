@@ -330,6 +330,16 @@ function inicializar() {
   try { db.exec(`ALTER TABLE proveedores ADD COLUMN responsable_seleccion TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE proveedores ADD COLUMN responsable_evaluacion TEXT DEFAULT ''`) } catch(e) {}
 
+  // Bonificaciones estándar del proveedor (se actualizan al emitir OC)
+  try { db.exec(`ALTER TABLE proveedores ADD COLUMN bonif1 REAL DEFAULT 0`) } catch(e) {}
+  try { db.exec(`ALTER TABLE proveedores ADD COLUMN bonif2 REAL DEFAULT 0`) } catch(e) {}
+  try { db.exec(`ALTER TABLE proveedores ADD COLUMN bonif3 REAL DEFAULT 0`) } catch(e) {}
+  try { db.exec(`ALTER TABLE proveedores ADD COLUMN bonif4 REAL DEFAULT 0`) } catch(e) {}
+
+  // Precio de última compra en catálogo de productos
+  try { db.exec(`ALTER TABLE productos ADD COLUMN precio_moneda TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE productos ADD COLUMN precio_fecha  TEXT DEFAULT ''`) } catch(e) {}
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS evaluaciones_proveedor (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -692,6 +702,7 @@ function inicializar() {
   try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN id_dispositivo  TEXT DEFAULT ''`); } catch(e) {}
   try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN horario_entrada TEXT DEFAULT ''`); } catch(e) {}
   try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN horario_salida  TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN obliga_fichar   INTEGER DEFAULT 1`); } catch(e) {}
 
   // Asociación usuario ↔ empleado RRHH
   try { db.exec(`ALTER TABLE usuarios ADD COLUMN rrhh_empleado_id INTEGER REFERENCES rrhh_empleados(id) ON DELETE SET NULL`); } catch(e) {}
@@ -749,7 +760,6 @@ function inicializar() {
     ['OSCAR PIÑANGO','interno'],
     ['JUAN EDER','interno'],
     ['JOSE LOPEZ','interno'],
-    ['IAN SALAZAR','interno'],
     ['FABIAN GARELLI','interno'],
     ['YONATHAN VALIENTE','interno'],
     ['AGUSTIN GANDULFO','contratista'],
@@ -914,6 +924,46 @@ function inicializar() {
     CREATE INDEX IF NOT EXISTS idx_crm_cot_fecha ON crm_cotizaciones(fecha);
   `)
 
+  // ── Correcciones de códigos de proyectos (idempotente) ───────────────────────
+  try { db.exec(`UPDATE proyectos SET codigo='NIKIT002C' WHERE codigo='NIKIT005C'`) } catch(e) {}
+
+  // ── Split NIKIT002C → NIKIT002C1 + NIKIT002C2 (idempotente) ─────────────────
+  try {
+    const orig = db.prepare(`SELECT * FROM proyectos WHERE codigo='NIKIT002C'`).get();
+    if (orig) {
+      db.prepare(`UPDATE proyectos SET codigo='NIKIT002C1' WHERE id=?`).run(orig.id);
+      const ya2 = db.prepare(`SELECT id FROM proyectos WHERE codigo='NIKIT002C2'`).get();
+      if (!ya2) {
+        const r2 = db.prepare(`
+          INSERT INTO proyectos (codigo, nombre, cliente_nombre, responsable, descripcion, fecha_inicio, fecha_fin_est, estado, presupuesto_venta)
+          VALUES ('NIKIT002C2', ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(orig.nombre, orig.cliente_nombre||'', orig.responsable||'', orig.descripcion||'',
+               orig.fecha_inicio||'', orig.fecha_fin_est||'', orig.estado, orig.presupuesto_venta||0);
+        const items = db.prepare(`SELECT DISTINCT item_num FROM proyecto_documentos WHERE proyecto_id=? ORDER BY item_num`).all(orig.id);
+        if (items.length >= 2) {
+          db.prepare(`UPDATE proyecto_documentos SET proyecto_id=?, item_num=1 WHERE proyecto_id=? AND item_num=?`)
+            .run(r2.lastInsertRowid, orig.id, items[1].item_num);
+        }
+      }
+    }
+  } catch(e) {}
+
+  // ── Fix: mover docs ítem 2 a NIKIT002C2 si quedó vacío (idempotente) ─────────
+  try {
+    const p1 = db.prepare(`SELECT id FROM proyectos WHERE codigo='NIKIT002C1'`).get();
+    const p2 = db.prepare(`SELECT id FROM proyectos WHERE codigo='NIKIT002C2'`).get();
+    if (p1 && p2) {
+      const vacios = db.prepare(`SELECT COUNT(*) as c FROM proyecto_documentos WHERE proyecto_id=?`).get(p2.id);
+      if (vacios.c === 0) {
+        const items = db.prepare(`SELECT DISTINCT item_num FROM proyecto_documentos WHERE proyecto_id=? ORDER BY item_num`).all(p1.id);
+        if (items.length >= 2) {
+          db.prepare(`UPDATE proyecto_documentos SET proyecto_id=?, item_num=1 WHERE proyecto_id=? AND item_num=?`)
+            .run(p2.id, p1.id, items[1].item_num);
+        }
+      }
+    }
+  } catch(e) {}
+
   // ── Oferta Técnica ────────────────────────────────────────────────────────────
   try { db.exec(`ALTER TABLE presupuestos ADD COLUMN cotizacion_id INTEGER REFERENCES crm_cotizaciones(id)`) } catch(e) {}
 
@@ -938,6 +988,226 @@ function inicializar() {
       updated_at               TEXT DEFAULT (datetime('now','localtime'))
     );
   `)
+
+  // ── Migrar rrhh_registros.proyecto_id → referencia proyectos(id) ─────────────
+  try {
+    const check = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='rrhh_registros'`).get();
+    if (check?.sql?.includes('rrhh_proyectos')) {
+      db.pragma('foreign_keys = OFF');
+      db.exec(`
+        CREATE TABLE rrhh_registros_new (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          fecha        TEXT NOT NULL,
+          empleado_id  INTEGER NOT NULL REFERENCES rrhh_empleados(id),
+          proyecto_id  INTEGER REFERENCES proyectos(id),
+          categoria_id INTEGER REFERENCES rrhh_categorias(id),
+          hora_inicio  TEXT DEFAULT '',
+          hora_fin     TEXT DEFAULT '',
+          horas        REAL DEFAULT 0,
+          modulo       TEXT DEFAULT '',
+          descripcion  TEXT DEFAULT '',
+          created_at   TEXT DEFAULT (datetime('now','localtime'))
+        );
+        INSERT INTO rrhh_registros_new SELECT * FROM rrhh_registros;
+        DROP TABLE rrhh_registros;
+        ALTER TABLE rrhh_registros_new RENAME TO rrhh_registros;
+        CREATE INDEX IF NOT EXISTS idx_rrhh_reg_fecha    ON rrhh_registros(fecha);
+        CREATE INDEX IF NOT EXISTS idx_rrhh_reg_empleado ON rrhh_registros(empleado_id);
+        CREATE INDEX IF NOT EXISTS idx_rrhh_reg_proyecto ON rrhh_registros(proyecto_id);
+      `);
+      db.pragma('foreign_keys = ON');
+      console.log('Migración: rrhh_registros.proyecto_id ahora referencia proyectos(id)');
+    }
+  } catch(e) { console.log('migration rrhh_registros FK:', e.message) }
+
+  // ── Entrega de documentación (Form 56) ───────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proyecto_entregas_doc (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      proyecto_id      INTEGER REFERENCES proyectos(id) ON DELETE SET NULL,
+      proyecto_nombre  TEXT DEFAULT '',
+      fecha            TEXT NOT NULL DEFAULT '',
+      nro_oc           TEXT DEFAULT '',
+      formato          TEXT DEFAULT '',
+      documento        TEXT DEFAULT '',
+      plano_nivel      TEXT DEFAULT '',
+      codigo_plano     TEXT DEFAULT '',
+      tipo             TEXT DEFAULT 'S',
+      individuo        TEXT DEFAULT '',
+      comentarios      TEXT DEFAULT '',
+      created_by       INTEGER,
+      created_at       TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_proy_ent_doc ON proyecto_entregas_doc(proyecto_id);
+  `)
+  try {
+    db.exec(`ALTER TABLE proyecto_entregas_doc ADD COLUMN codigo_plano TEXT DEFAULT ''`)
+  } catch(e) { /* columna ya existe */ }
+
+  // ── Materiales previstos de proyecto ─────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proyecto_materiales (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      proyecto_id   INTEGER NOT NULL REFERENCES proyectos(id) ON DELETE CASCADE,
+      producto_id   INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+      codigo        TEXT DEFAULT '',
+      descripcion   TEXT NOT NULL DEFAULT '',
+      unidad        TEXT DEFAULT 'UND.',
+      cantidad      REAL DEFAULT 1,
+      observaciones TEXT DEFAULT '',
+      created_by    INTEGER REFERENCES usuarios(id),
+      created_at    TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_proy_mat ON proyecto_materiales(proyecto_id);
+  `)
+
+  // ── Facturas ──────────────────────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS facturas_compra (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      tipo_factura      TEXT DEFAULT 'A',
+      numero            TEXT NOT NULL,
+      fecha             TEXT DEFAULT '',
+      proveedor_id      INTEGER REFERENCES proveedores(id),
+      proveedor_nombre  TEXT DEFAULT '',
+      cuit              TEXT DEFAULT '',
+      oc_id             INTEGER REFERENCES ordenes_compra(id),
+      oc_numero         TEXT DEFAULT '',
+      neto_gravado      REAL DEFAULT 0,
+      no_grav_exento    REAL DEFAULT 0,
+      iva_21            REAL DEFAULT 0,
+      iva_10_5          REAL DEFAULT 0,
+      iva_27            REAL DEFAULT 0,
+      otros_imp         REAL DEFAULT 0,
+      perc_iva          REAL DEFAULT 0,
+      perc_iibb         REAL DEFAULT 0,
+      importe           REAL DEFAULT 0,
+      moneda            TEXT DEFAULT 'PESO',
+      tasa_cambio       REAL DEFAULT 1,
+      fecha_vencimiento TEXT DEFAULT '',
+      pago_confirmado   INTEGER DEFAULT 0,
+      observaciones     TEXT DEFAULT '',
+      created_by        INTEGER REFERENCES usuarios(id),
+      created_at        TEXT DEFAULT (datetime('now','localtime')),
+      updated_at        TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_fact_compra_fecha ON facturas_compra(fecha);
+    CREATE INDEX IF NOT EXISTS idx_fact_compra_prov  ON facturas_compra(proveedor_id);
+
+    CREATE TABLE IF NOT EXISTS facturas_venta (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      tipo_factura      TEXT DEFAULT 'A',
+      numero            TEXT NOT NULL,
+      fecha             TEXT DEFAULT '',
+      cliente_id        INTEGER REFERENCES clientes(id),
+      cliente_nombre    TEXT DEFAULT '',
+      presupuesto_id    INTEGER REFERENCES presupuestos(id),
+      presupuesto_ref   TEXT DEFAULT '',
+      importe           REAL DEFAULT 0,
+      moneda            TEXT DEFAULT 'PESO',
+      tasa_cambio       REAL DEFAULT 1,
+      fecha_vencimiento TEXT DEFAULT '',
+      pago_confirmado   INTEGER DEFAULT 0,
+      observaciones     TEXT DEFAULT '',
+      created_by        INTEGER REFERENCES usuarios(id),
+      created_at        TEXT DEFAULT (datetime('now','localtime')),
+      updated_at        TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_fact_venta_fecha ON facturas_venta(fecha);
+    CREATE INDEX IF NOT EXISTS idx_fact_venta_cli   ON facturas_venta(cliente_id);
+  `);
+
+  // Migraciones: agregar columnas nuevas a facturas_compra si no existen
+  const colsFC = db.prepare('PRAGMA table_info(facturas_compra)').all().map(c => c.name);
+  if (!colsFC.includes('cuit'))           db.prepare("ALTER TABLE facturas_compra ADD COLUMN cuit TEXT DEFAULT ''").run();
+  if (!colsFC.includes('neto_gravado'))   db.prepare('ALTER TABLE facturas_compra ADD COLUMN neto_gravado REAL DEFAULT 0').run();
+  if (!colsFC.includes('no_grav_exento')) db.prepare('ALTER TABLE facturas_compra ADD COLUMN no_grav_exento REAL DEFAULT 0').run();
+  if (!colsFC.includes('iva_21'))         db.prepare('ALTER TABLE facturas_compra ADD COLUMN iva_21 REAL DEFAULT 0').run();
+  if (!colsFC.includes('iva_10_5'))       db.prepare('ALTER TABLE facturas_compra ADD COLUMN iva_10_5 REAL DEFAULT 0').run();
+  if (!colsFC.includes('iva_27'))         db.prepare('ALTER TABLE facturas_compra ADD COLUMN iva_27 REAL DEFAULT 0').run();
+  if (!colsFC.includes('otros_imp'))      db.prepare('ALTER TABLE facturas_compra ADD COLUMN otros_imp REAL DEFAULT 0').run();
+  if (!colsFC.includes('perc_iva'))       db.prepare('ALTER TABLE facturas_compra ADD COLUMN perc_iva REAL DEFAULT 0').run();
+  if (!colsFC.includes('perc_iibb'))      db.prepare('ALTER TABLE facturas_compra ADD COLUMN perc_iibb REAL DEFAULT 0').run();
+  if (!colsFC.includes('anticipo'))       db.prepare('ALTER TABLE facturas_compra ADD COLUMN anticipo REAL DEFAULT 0').run();
+  if (!colsFC.includes('fecha_anticipo')) db.prepare("ALTER TABLE facturas_compra ADD COLUMN fecha_anticipo TEXT DEFAULT ''").run();
+  if (!colsFC.includes('tipo_factura'))   db.prepare("ALTER TABLE facturas_compra ADD COLUMN tipo_factura TEXT DEFAULT 'A'").run();
+
+  const colsFV = db.prepare('PRAGMA table_info(facturas_venta)').all().map(c => c.name);
+  if (!colsFV.includes('anticipo'))         db.prepare('ALTER TABLE facturas_venta ADD COLUMN anticipo REAL DEFAULT 0').run();
+  if (!colsFV.includes('fecha_anticipo'))   db.prepare("ALTER TABLE facturas_venta ADD COLUMN fecha_anticipo TEXT DEFAULT ''").run();
+  if (!colsFV.includes('tipo_factura'))     db.prepare("ALTER TABLE facturas_venta ADD COLUMN tipo_factura TEXT DEFAULT 'A'").run();
+  if (!colsFV.includes('concepto'))         db.prepare("ALTER TABLE facturas_venta ADD COLUMN concepto TEXT DEFAULT ''").run();
+  if (!colsFV.includes('oc'))               db.prepare("ALTER TABLE facturas_venta ADD COLUMN oc TEXT DEFAULT ''").run();
+  if (!colsFV.includes('neto_gravado'))     db.prepare('ALTER TABLE facturas_venta ADD COLUMN neto_gravado REAL DEFAULT 0').run();
+  if (!colsFV.includes('iva_21'))           db.prepare('ALTER TABLE facturas_venta ADD COLUMN iva_21 REAL DEFAULT 0').run();
+  if (!colsFV.includes('ret_iibb'))         db.prepare('ALTER TABLE facturas_venta ADD COLUMN ret_iibb REAL DEFAULT 0').run();
+  if (!colsFV.includes('ret_iva'))          db.prepare('ALTER TABLE facturas_venta ADD COLUMN ret_iva REAL DEFAULT 0').run();
+  if (!colsFV.includes('ret_gcia'))         db.prepare('ALTER TABLE facturas_venta ADD COLUMN ret_gcia REAL DEFAULT 0').run();
+  if (!colsFV.includes('ret_contratista'))  db.prepare('ALTER TABLE facturas_venta ADD COLUMN ret_contratista REAL DEFAULT 0').run();
+  if (!colsFV.includes('ret_ss'))           db.prepare('ALTER TABLE facturas_venta ADD COLUMN ret_ss REAL DEFAULT 0').run();
+  if (!colsFV.includes('dif_cambio'))       db.prepare('ALTER TABLE facturas_venta ADD COLUMN dif_cambio REAL DEFAULT 0').run();
+  if (!colsFV.includes('total_cobrado'))    db.prepare('ALTER TABLE facturas_venta ADD COLUMN total_cobrado REAL DEFAULT 0').run();
+  if (!colsFV.includes('fecha_pago'))       db.prepare("ALTER TABLE facturas_venta ADD COLUMN fecha_pago TEXT DEFAULT ''").run();
+
+  // ── Pagos de facturas de venta ────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pagos_factura_venta (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      factura_id         INTEGER NOT NULL REFERENCES facturas_venta(id) ON DELETE CASCADE,
+      tipo               TEXT NOT NULL DEFAULT 'parcial',
+      forma_pago         TEXT NOT NULL DEFAULT 'transferencia',
+      entidad            TEXT DEFAULT '',
+      importe            REAL NOT NULL DEFAULT 0,
+      moneda             TEXT DEFAULT 'PESO',
+      fecha              TEXT DEFAULT '',
+      fecha_acreditacion TEXT DEFAULT '',
+      estado             TEXT DEFAULT 'confirmado',
+      observaciones      TEXT DEFAULT '',
+      created_by         INTEGER REFERENCES usuarios(id),
+      created_at         TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_pagos_fv ON pagos_factura_venta(factura_id);
+  `);
+
+  // Migrar anticipos existentes a pagos_factura_venta (idempotente)
+  try {
+    const conAnticipo = db.prepare(`
+      SELECT id, anticipo, fecha_anticipo, moneda FROM facturas_venta
+      WHERE anticipo > 0
+      AND NOT EXISTS (SELECT 1 FROM pagos_factura_venta WHERE factura_id = facturas_venta.id)
+    `).all();
+    const insPago = db.prepare(`
+      INSERT INTO pagos_factura_venta (factura_id, tipo, forma_pago, importe, moneda, fecha, estado)
+      VALUES (?, 'anticipo', 'transferencia', ?, ?, ?, 'confirmado')
+    `);
+    for (const f of conAnticipo) {
+      insPago.run(f.id, f.anticipo, f.moneda || 'PESO', f.fecha_anticipo || '');
+    }
+    if (conAnticipo.length > 0) console.log(`Migrados ${conAnticipo.length} anticipos a pagos_factura_venta`);
+  } catch(e) { console.log('Migración anticipos:', e.message) }
+
+  // ── Directivas del programa ───────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS directivas (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      titulo      TEXT NOT NULL,
+      descripcion TEXT DEFAULT '',
+      activa      INTEGER DEFAULT 1,
+      orden       INTEGER DEFAULT 0,
+      created_at  TEXT DEFAULT (datetime('now','localtime'))
+    )
+  `);
+  if (db.prepare('SELECT COUNT(*) as c FROM directivas').get().c === 0) {
+    const ins = db.prepare("INSERT INTO directivas (titulo, descripcion, orden) VALUES (?,?,?)");
+    db.transaction(() => {
+      ins.run('Formato de fecha', 'Usar formato DD/MM/AAAA en todo el sistema, en formularios, tablas y reportes.', 1);
+      ins.run('Fuente de datos', 'Siempre trabajar sobre los datos que están en la base de datos del servidor. Nunca reimportar desde archivos externos (Excel, CSV) sin autorización explícita.', 2);
+      ins.run('Archivos de importación', 'Eliminar scripts y dumps SQL después de cada importación para evitar re-ejecución accidental.', 3);
+      ins.run('Deploy solo código', 'El deploy.ps1 solo sube código (.jsx, .js, etc.). Los datos se modifican únicamente con comandos scp o sqlite3 por SSH, de forma explícita.', 4);
+      ins.run('Modificaciones de datos', 'Antes de modificar un archivo de configuración o datos del servidor, siempre descargarlo primero para trabajar sobre la versión actual.', 5);
+      ins.run('Tipo de cambio', 'Las facturas en moneda extranjera (dólar, euro) deben incluir la tasa de cambio vigente al momento de la emisión.', 6);
+    })();
+  }
 
   // Seed inicial si no hay usuarios
   const hay = db.prepare('SELECT COUNT(*) as c FROM usuarios').get();
