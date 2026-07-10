@@ -34,7 +34,7 @@ router.get('/clientes', verificarToken, (req, res) => {
   let where = soloActivos ? 'WHERE activo=1' : '';
   const params = [];
   if (buscar) {
-    const b = buscarCondicion(buscar, ['nombre', 'cuit']);
+    const b = buscarCondicion(buscar, ['nombre', 'cuit', 'codigo']);
     where = soloActivos ? `WHERE (${b.cond}) AND activo=1` : `WHERE (${b.cond})`;
     params.push(...b.params);
   }

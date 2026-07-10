@@ -322,6 +322,7 @@ function inicializar() {
   try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN pago_confirmado INTEGER DEFAULT 0`) } catch(e) {}
   try { db.exec(`ALTER TABLE oc_items ADD COLUMN estado_calidad TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE oc_items ADD COLUMN estado_factura TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE oc_items ADD COLUMN sin_codificar INTEGER DEFAULT 0`) } catch(e) {}
 
   // ── Form 11 — Selección y Evaluación de Proveedores (idempotente) ────────────
   try { db.exec(`ALTER TABLE proveedores ADD COLUMN categoria_provision TEXT DEFAULT ''`) } catch(e) {}
@@ -339,6 +340,12 @@ function inicializar() {
   // Precio de última compra en catálogo de productos
   try { db.exec(`ALTER TABLE productos ADD COLUMN precio_moneda TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE productos ADD COLUMN precio_fecha  TEXT DEFAULT ''`) } catch(e) {}
+
+  // Futura codificación — para migración gradual
+  try { db.exec(`ALTER TABLE productos ADD COLUMN codigo_futuro        TEXT    DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE productos ADD COLUMN codigo_futuro_estado TEXT    DEFAULT 'pendiente'`) } catch(e) {}
+  // Sistema correlativo nuevo — 0=código original, 1=código asignado por nuevo sistema
+  try { db.exec(`ALTER TABLE productos ADD COLUMN codigo_generado INTEGER DEFAULT 0`) } catch(e) {}
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS evaluaciones_proveedor (
@@ -384,9 +391,48 @@ function inicializar() {
       unidad      TEXT DEFAULT 'UND.',
       n_parte     TEXT DEFAULT '',
       n_serie     TEXT DEFAULT '',
-      n_lote      TEXT DEFAULT ''
+      n_lote      TEXT DEFAULT '',
+      destino     TEXT DEFAULT 'uso_inmediato'
     );
   `);
+  try { db.exec(`ALTER TABLE form49_items ADD COLUMN destino TEXT DEFAULT 'uso_inmediato'`) } catch(e) {}
+  // Columnas OC generada desde form49
+  for (const col of [
+    `ALTER TABLE form49_ingresos ADD COLUMN oc_id INTEGER REFERENCES ordenes_compra(id)`,
+    `ALTER TABLE form49_ingresos ADD COLUMN oc_numero TEXT DEFAULT ''`,
+  ]) { try { db.exec(col) } catch(e) {} }
+  // Nuevas columnas cabecera form49
+  for (const col of [
+    `ALTER TABLE form49_ingresos ADD COLUMN proveedor_cuit TEXT DEFAULT ''`,
+    `ALTER TABLE form49_ingresos ADD COLUMN moneda TEXT DEFAULT 'PESOS'`,
+    `ALTER TABLE form49_ingresos ADD COLUMN tasa_cambio REAL DEFAULT 0`,
+    `ALTER TABLE form49_ingresos ADD COLUMN condicion_pago TEXT DEFAULT ''`,
+    `ALTER TABLE form49_ingresos ADD COLUMN lugar_entrega TEXT DEFAULT ''`,
+    `ALTER TABLE form49_ingresos ADD COLUMN presupuesto_n TEXT DEFAULT ''`,
+    `ALTER TABLE form49_ingresos ADD COLUMN elaborado_por TEXT DEFAULT ''`,
+    `ALTER TABLE form49_items ADD COLUMN precio_unitario REAL DEFAULT 0`,
+    `ALTER TABLE form49_items ADD COLUMN precio_final REAL DEFAULT 0`,
+    `ALTER TABLE form49_items ADD COLUMN plazo TEXT DEFAULT 'INMEDIATO'`,
+    `ALTER TABLE form49_items ADD COLUMN producto_id INTEGER REFERENCES productos(id)`,
+    `ALTER TABLE form49_items ADD COLUMN producto_codigo TEXT DEFAULT ''`,
+  ]) { try { db.exec(col) } catch(e) {} }
+  // Pendientes sin OC para stock
+  try { db.exec(`
+    CREATE TABLE IF NOT EXISTS ingresos_sin_oc_pendientes (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      form49_id        INTEGER REFERENCES form49_ingresos(id) ON DELETE CASCADE,
+      form49_numero    TEXT DEFAULT '',
+      proveedor_nombre TEXT DEFAULT '',
+      descripcion      TEXT DEFAULT '',
+      unidad           TEXT DEFAULT 'UND.',
+      cantidad         REAL DEFAULT 0,
+      n_parte          TEXT DEFAULT '',
+      precio_costo     REAL DEFAULT 0,
+      producto_id      INTEGER REFERENCES productos(id),
+      producto_codigo  TEXT DEFAULT '',
+      created_at       TEXT DEFAULT (datetime('now','localtime'))
+    )
+  `) } catch(e) {}
 
   // ── Mantenimiento ─────────────────────────────────────────────────────────────
   db.exec(`
@@ -1149,6 +1195,25 @@ function inicializar() {
   if (!colsFV.includes('total_cobrado'))    db.prepare('ALTER TABLE facturas_venta ADD COLUMN total_cobrado REAL DEFAULT 0').run();
   if (!colsFV.includes('fecha_pago'))       db.prepare("ALTER TABLE facturas_venta ADD COLUMN fecha_pago TEXT DEFAULT ''").run();
 
+  // ── Pagos de facturas de compra ───────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pagos_factura_compra (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      factura_id         INTEGER NOT NULL REFERENCES facturas_compra(id) ON DELETE CASCADE,
+      tipo               TEXT NOT NULL DEFAULT 'parcial',
+      forma_pago         TEXT NOT NULL DEFAULT 'transferencia',
+      entidad            TEXT DEFAULT '',
+      importe            REAL NOT NULL DEFAULT 0,
+      moneda             TEXT DEFAULT 'PESO',
+      fecha              TEXT DEFAULT '',
+      fecha_acreditacion TEXT DEFAULT '',
+      estado             TEXT DEFAULT 'confirmado',
+      observaciones      TEXT DEFAULT '',
+      created_by         INTEGER REFERENCES usuarios(id),
+      created_at         TEXT DEFAULT (datetime('now','localtime'))
+    )
+  `);
+
   // ── Pagos de facturas de venta ────────────────────────────────────────────────
   db.exec(`
     CREATE TABLE IF NOT EXISTS pagos_factura_venta (
@@ -1185,6 +1250,85 @@ function inicializar() {
     }
     if (conAnticipo.length > 0) console.log(`Migrados ${conAnticipo.length} anticipos a pagos_factura_venta`);
   } catch(e) { console.log('Migración anticipos:', e.message) }
+
+  // ── Saldo bancario ────────────────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS saldo_bancario (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      entidad    TEXT NOT NULL,
+      monto      REAL NOT NULL,
+      moneda     TEXT NOT NULL DEFAULT 'PESO',
+      created_by INTEGER REFERENCES usuarios(id),
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tipo_cambio (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      moneda     TEXT NOT NULL DEFAULT 'DÓLAR',
+      valor      REAL NOT NULL,
+      fuente     TEXT DEFAULT 'BNA',
+      fecha      TEXT DEFAULT '',
+      created_by INTEGER REFERENCES usuarios(id),
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    )
+  `)
+
+  // ── Servicios recurrentes ─────────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS servicios (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      descripcion  TEXT NOT NULL,
+      usuario      TEXT DEFAULT '',
+      info_pago    TEXT DEFAULT '',
+      periodicidad TEXT NOT NULL DEFAULT 'mensual',
+      activo       INTEGER DEFAULT 1,
+      created_at   TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS servicios_cuotas (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      servicio_id  INTEGER NOT NULL REFERENCES servicios(id) ON DELETE CASCADE,
+      monto        REAL,
+      vencimiento  TEXT DEFAULT '',
+      fecha_pagada TEXT DEFAULT '',
+      estado       TEXT NOT NULL DEFAULT 'pendiente',
+      created_at   TEXT DEFAULT (datetime('now','localtime'))
+    )
+  `);
+
+  // ── Control OC Clientes ───────────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS fin_oc_clientes (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      cliente_id          INTEGER REFERENCES clientes(id),
+      cliente             TEXT NOT NULL DEFAULT '',
+      numero_oc           TEXT NOT NULL DEFAULT '',
+      monto_oc            REAL,
+      fecha_oc            TEXT DEFAULT '',
+      fecha_recepcion_oc  TEXT DEFAULT '',
+      anticipo_pct        REAL,
+      monto_anticipo_usd  REAL,
+      fecha_fact_anticipo TEXT DEFAULT '',
+      fecha_pago_anticipo TEXT DEFAULT '',
+      numero_poliza       TEXT DEFAULT '',
+      fecha_pedido_poliza TEXT DEFAULT '',
+      fecha_poliza        TEXT DEFAULT '',
+      vigencia_poliza     TEXT DEFAULT '',
+      fecha_entrega_doc   TEXT DEFAULT '',
+      observaciones       TEXT DEFAULT '',
+      final_pct           REAL,
+      monto_final_usd     REAL,
+      fecha_fact_final    TEXT DEFAULT '',
+      cierre_tipo         TEXT DEFAULT '',
+      fecha_cierre_admin  TEXT DEFAULT '',
+      comentarios         TEXT DEFAULT '',
+      activo              INTEGER NOT NULL DEFAULT 1,
+      created_at          TEXT DEFAULT (datetime('now','localtime')),
+      updated_at          TEXT DEFAULT (datetime('now','localtime'))
+    )
+  `);
+
+  try { db.exec(`ALTER TABLE fin_oc_clientes ADD COLUMN cliente_id INTEGER REFERENCES clientes(id)`) } catch(e) {}
 
   // ── Directivas del programa ───────────────────────────────────────────────────
   db.exec(`
@@ -1240,6 +1384,291 @@ function inicializar() {
 
     console.log('DB inicializada. Usuarios creados (contraseña: eintra2026)');
   }
+
+  // ── Calidad ────────────────────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hoja_ruta (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero          TEXT UNIQUE NOT NULL,
+      proyecto_id     INTEGER REFERENCES proyectos(id) ON DELETE SET NULL,
+      descripcion     TEXT NOT NULL DEFAULT '',
+      cliente_nombre  TEXT DEFAULT '',
+      responsable     TEXT DEFAULT '',
+      fecha_inicio    TEXT DEFAULT '',
+      fecha_fin_est   TEXT DEFAULT '',
+      fecha_despacho  TEXT DEFAULT '',
+      estado          TEXT DEFAULT 'En proceso',
+      observaciones   TEXT DEFAULT '',
+      created_at      TEXT DEFAULT (datetime('now','localtime')),
+      updated_at      TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_estado ON hoja_ruta(estado);
+
+    CREATE TABLE IF NOT EXISTS hoja_ruta_etapa (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      hoja_ruta_id   INTEGER NOT NULL REFERENCES hoja_ruta(id) ON DELETE CASCADE,
+      nombre         TEXT NOT NULL,
+      orden          INTEGER DEFAULT 0,
+      responsable    TEXT DEFAULT '',
+      fecha_prog     TEXT DEFAULT '',
+      fecha_real     TEXT DEFAULT '',
+      estado         TEXT DEFAULT 'Pendiente',
+      criterios      TEXT DEFAULT '',
+      medicion       TEXT DEFAULT '',
+      observaciones  TEXT DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_hr_etapa ON hoja_ruta_etapa(hoja_ruta_id);
+
+    CREATE TABLE IF NOT EXISTS no_conformidad (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero             TEXT UNIQUE NOT NULL,
+      hoja_ruta_id       INTEGER REFERENCES hoja_ruta(id) ON DELETE SET NULL,
+      proyecto_id        INTEGER REFERENCES proyectos(id) ON DELETE SET NULL,
+      fecha              TEXT DEFAULT '',
+      tipo               TEXT DEFAULT 'Producto',
+      descripcion        TEXT NOT NULL DEFAULT '',
+      causa              TEXT DEFAULT '',
+      detectado_por      TEXT DEFAULT '',
+      accion_correctiva  TEXT DEFAULT '',
+      responsable        TEXT DEFAULT '',
+      fecha_limite       TEXT DEFAULT '',
+      fecha_cierre       TEXT DEFAULT '',
+      estado             TEXT DEFAULT 'Abierta',
+      created_at         TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_nc_estado ON no_conformidad(estado);
+
+    CREATE TABLE IF NOT EXISTS calidad_inspeccion (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      hoja_ruta_id  INTEGER REFERENCES hoja_ruta(id) ON DELETE CASCADE,
+      tipo          TEXT NOT NULL,
+      fecha         TEXT DEFAULT '',
+      inspector     TEXT DEFAULT '',
+      resultado     TEXT DEFAULT 'Aprobado',
+      datos         TEXT DEFAULT '',
+      observaciones TEXT DEFAULT '',
+      created_at    TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_cal_insp ON calidad_inspeccion(hoja_ruta_id);
+  `);
+
+  // Migraciones: agregar columnas nuevas si no existen
+  try { db.prepare("ALTER TABLE hoja_ruta_etapa ADD COLUMN criterios TEXT DEFAULT ''").run() } catch {}
+  try { db.prepare("ALTER TABLE hoja_ruta_etapa ADD COLUMN medicion  TEXT DEFAULT ''").run() } catch {}
+
+  // ── Formularios de Calidad ─────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS form21 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero TEXT UNIQUE NOT NULL,
+      hoja_ruta_id INTEGER REFERENCES hoja_ruta(id) ON DELETE SET NULL,
+      fecha TEXT DEFAULT '',
+      pintor TEXT DEFAULT '',
+      operador_granalla TEXT DEFAULT '',
+      observaciones TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS form21_item (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      form21_id INTEGER NOT NULL REFERENCES form21(id) ON DELETE CASCADE,
+      item INTEGER DEFAULT 0,
+      partida TEXT DEFAULT '',
+      nro_chapa TEXT DEFAULT '',
+      espesor TEXT DEFAULT '',
+      conf_a INTEGER DEFAULT 0,
+      noconf_a INTEGER DEFAULT 0,
+      conf_b INTEGER DEFAULT 0,
+      noconf_b INTEGER DEFAULT 0,
+      observacion TEXT DEFAULT '',
+      verificacion TEXT DEFAULT 'Pendiente'
+    );
+
+    CREATE TABLE IF NOT EXISTS form22 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero TEXT UNIQUE NOT NULL,
+      hoja_ruta_id INTEGER REFERENCES hoja_ruta(id) ON DELETE SET NULL,
+      form21_numero TEXT DEFAULT '',
+      controlo TEXT DEFAULT '',
+      fecha TEXT DEFAULT '',
+      pintura_tipo TEXT DEFAULT '',
+      partida_nro TEXT DEFAULT '',
+      chapa_nro TEXT DEFAULT '',
+      cano_nro TEXT DEFAULT '',
+      perfil_nro TEXT DEFAULT '',
+      med_a TEXT DEFAULT '[]',
+      med_b TEXT DEFAULT '[]',
+      med_cano TEXT DEFAULT '[]',
+      observaciones TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS form26 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero TEXT UNIQUE NOT NULL,
+      hoja_ruta_id INTEGER REFERENCES hoja_ruta(id) ON DELETE SET NULL,
+      fecha TEXT DEFAULT '',
+      id_proyecto TEXT DEFAULT '',
+      pintor TEXT DEFAULT '',
+      controlo TEXT DEFAULT '',
+      aparato TEXT DEFAULT '',
+      mediciones TEXT DEFAULT '{}',
+      observaciones TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS form34 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero TEXT UNIQUE NOT NULL,
+      hoja_ruta_id INTEGER REFERENCES hoja_ruta(id) ON DELETE SET NULL,
+      proyecto TEXT DEFAULT '',
+      oc TEXT DEFAULT '',
+      fecha TEXT DEFAULT '',
+      soldador TEXT DEFAULT '',
+      observaciones TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS form34_item (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      form34_id INTEGER NOT NULL REFERENCES form34(id) ON DELETE CASCADE,
+      item INTEGER DEFAULT 0,
+      nro_chapa TEXT DEFAULT '',
+      codigo TEXT DEFAULT '',
+      lado TEXT DEFAULT 'Externo',
+      u_long_der TEXT DEFAULT '',
+      u_long_izq TEXT DEFAULT '',
+      u_trans_der TEXT DEFAULT '',
+      u_trans_izq TEXT DEFAULT '',
+      observacion TEXT DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS form10 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero TEXT UNIQUE NOT NULL,
+      tema TEXT DEFAULT '',
+      fecha TEXT DEFAULT '',
+      expositor TEXT DEFAULT '',
+      duracion TEXT DEFAULT '',
+      observaciones TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS form10_asistente (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      form10_id INTEGER NOT NULL REFERENCES form10(id) ON DELETE CASCADE,
+      nro_leg TEXT DEFAULT '',
+      apellido_nombre TEXT DEFAULT '',
+      area TEXT DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS form37 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero TEXT UNIQUE NOT NULL,
+      anio INTEGER DEFAULT (CAST(strftime('%Y','now','localtime') AS INTEGER)),
+      hoja_ruta_id INTEGER REFERENCES hoja_ruta(id) ON DELETE SET NULL,
+      equipo_tipo TEXT DEFAULT '',
+      codigo TEXT DEFAULT '',
+      cliente TEXT DEFAULT '',
+      proyecto TEXT DEFAULT '',
+      descripcion TEXT DEFAULT '',
+      fecha_fabricacion TEXT DEFAULT '',
+      observaciones TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS form_epp (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero TEXT UNIQUE NOT NULL,
+      empleado TEXT DEFAULT '',
+      dni TEXT DEFAULT '',
+      puesto TEXT DEFAULT '',
+      fecha TEXT DEFAULT '',
+      observaciones TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS form_epp_item (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      epp_id INTEGER NOT NULL REFERENCES form_epp(id) ON DELETE CASCADE,
+      producto TEXT DEFAULT '',
+      tipo_modelo TEXT DEFAULT '',
+      marca TEXT DEFAULT '',
+      certificacion INTEGER DEFAULT 0,
+      cantidad INTEGER DEFAULT 1,
+      fecha_entrega TEXT DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS form_packing (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero TEXT UNIQUE NOT NULL,
+      hoja_ruta_id INTEGER REFERENCES hoja_ruta(id) ON DELETE SET NULL,
+      cliente TEXT DEFAULT '',
+      obra_oc TEXT DEFAULT '',
+      ubicacion TEXT DEFAULT '',
+      preparo TEXT DEFAULT '',
+      revisado TEXT DEFAULT '',
+      pallet TEXT DEFAULT '',
+      bulto TEXT DEFAULT '',
+      lista_nro TEXT DEFAULT '',
+      fecha TEXT DEFAULT '',
+      observaciones TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS form_packing_item (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      packing_id INTEGER NOT NULL REFERENCES form_packing(id) ON DELETE CASCADE,
+      item INTEGER DEFAULT 0,
+      descripcion TEXT DEFAULT '',
+      codigo TEXT DEFAULT '',
+      cantidad TEXT DEFAULT ''
+    );
+  `);
+
+  // ── Plan / Gantt de Proyectos ──────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proyecto_tarea (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      proyecto_id     INTEGER NOT NULL REFERENCES proyectos(id) ON DELETE CASCADE,
+      orden           INTEGER DEFAULT 0,
+      nombre          TEXT NOT NULL DEFAULT '',
+      duracion_dias   INTEGER DEFAULT 1,
+      responsable     TEXT DEFAULT '',
+      estado          TEXT DEFAULT 'Pendiente',
+      avance          INTEGER DEFAULT 0,
+      fecha_inicio_calc TEXT DEFAULT '',
+      fecha_fin_calc    TEXT DEFAULT '',
+      color           TEXT DEFAULT '',
+      observaciones   TEXT DEFAULT '',
+      created_at      TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_pt_proyecto ON proyecto_tarea(proyecto_id);
+
+    CREATE TABLE IF NOT EXISTS proyecto_tarea_predecesora (
+      tarea_id       INTEGER NOT NULL REFERENCES proyecto_tarea(id) ON DELETE CASCADE,
+      predecesora_id INTEGER NOT NULL REFERENCES proyecto_tarea(id) ON DELETE CASCADE,
+      PRIMARY KEY (tarea_id, predecesora_id)
+    );
+
+    -- ── Plantilla base para Gantt (Master Plan + HR) ──────────────────────────
+    CREATE TABLE IF NOT EXISTS gantt_plantilla_tarea (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      grupo         TEXT DEFAULT '',
+      nombre        TEXT NOT NULL,
+      duracion_dias INTEGER DEFAULT 1,
+      es_grupo      INTEGER DEFAULT 0,
+      origen        TEXT DEFAULT 'masterplan',
+      color         TEXT DEFAULT '',
+      orden         INTEGER DEFAULT 0
+    );
+
+    -- ── Sets de plantillas nombradas ──────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS gantt_plantilla_set (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre      TEXT NOT NULL,
+      descripcion TEXT DEFAULT '',
+      created_at  TEXT DEFAULT (datetime('now','localtime'))
+    );
+  `);
+
+  // Migraciones incrementales
+  try { db.exec(`ALTER TABLE gantt_plantilla_tarea ADD COLUMN plantilla_set_id INTEGER DEFAULT NULL`) } catch (_) {}
 }
 
 module.exports = { db, inicializar };

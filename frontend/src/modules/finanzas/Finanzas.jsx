@@ -3,6 +3,7 @@ import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
 import DateInput from '../../components/DateInput'
 import FinanzasDashboard from './FinanzasDashboard'
+import FinanzasOCClientes from './FinanzasOCClientes'
 
 const fmtF = s => {
   if (!s) return '—'
@@ -23,7 +24,7 @@ const esNC = tipo => typeof tipo === 'string' && tipo.startsWith('NC')
 
 const FORM_PAGO = { tipo: 'parcial', forma_pago: 'transferencia', entidad: '', importe: '', moneda: 'PESO', fecha: new Date().toISOString().slice(0,10), fecha_acreditacion: '', observaciones: '' }
 
-const FORMAS_PAGO = ['transferencia','cheque','cheque_diferido','efectivo','deposito']
+const FORMAS_PAGO = ['transferencia','cheque','cheque_diferido','e-cheq','efectivo','deposito']
 const TIPOS_PAGO  = ['anticipo','parcial','final']
 
 const FORM_C = { tipo_factura: 'A', numero: '', fecha: '', proveedor_id: '', proveedor_nombre: '', cuit: '', oc_id: '', oc_numero: '', neto_gravado: '', no_grav_exento: '', iva_21: '', iva_10_5: '', iva_27: '', otros_imp: '', perc_iva: '', perc_iibb: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha_vencimiento: '', observaciones: '' }
@@ -62,9 +63,9 @@ function FiltroBarra({ filt, setFilt }) {
   )
 }
 
-export default function Finanzas({ canWrite: canWriteProp } = {}) {
+export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
   const canWrite = canWriteProp !== undefined ? canWriteProp : puedeEscribir('finanzas')
-  const [tab, setTab] = useState('compras')
+  const [tab, setTab] = useState(noDashboard ? 'compras' : 'dashboard')
 
   const [factC, setFactC] = useState([])
   const [filtC, setFiltC] = useState({ buscar: '', desde: '', hasta: '', moneda: '', pago: '' })
@@ -77,12 +78,19 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
   const [anticipoModal, setAnticipoModal] = useState(null) // solo compras
   const [anticipoForm, setAnticipoForm] = useState({ anticipo: '', fecha_anticipo: '' })
 
-  const [pagosModal,   setPagosModal]   = useState(null)  // factura activa
+  const [pagosModal,   setPagosModal]   = useState(null)
   const [pagos,        setPagos]        = useState([])
   const [pagosLoad,    setPagosLoad]    = useState(false)
   const [pagoForm,     setPagoForm]     = useState(FORM_PAGO)
   const [pagoSaving,   setPagoSaving]   = useState(false)
   const [mostrarForm,  setMostrarForm]  = useState(false)
+
+  const [pagosModalC,  setPagosModalC]  = useState(null)
+  const [pagosC,       setPagosC]       = useState([])
+  const [pagosLoadC,   setPagosLoadC]   = useState(false)
+  const [pagoFormC,    setPagoFormC]    = useState(FORM_PAGO)
+  const [pagoSavingC,  setPagoSavingC]  = useState(false)
+  const [mostrarFormC, setMostrarFormC] = useState(false)
 
   const [factV, setFactV] = useState([])
   const [filtV, setFiltV] = useState({ buscar: '', desde: '', hasta: '', moneda: '', pago: '' })
@@ -90,6 +98,134 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
   const [modalV, setModalV] = useState(null)
   const [formV, setFormV] = useState(FORM_V)
   const [savV, setSavV] = useState(false)
+
+  // ── Saldo bancario ───────────────────────────────────────────────────────────
+  const BANCOS = ['Banco ICBC', 'Banco Galicia']
+  const FORM_SALDO = { entidad: 'Banco ICBC', monto: '', moneda: 'PESO' }
+  const [saldos,     setSaldos]     = useState([])
+  const [loadSaldos, setLoadSaldos] = useState(false)
+  const [formSaldo,  setFormSaldo]  = useState(FORM_SALDO)
+  const [savSaldo,   setSavSaldo]   = useState(false)
+
+  const [tcBNA,     setTcBNA]     = useState([])
+  const [formTC,    setFormTC]    = useState({ valor: '', fecha: new Date().toISOString().slice(0,10) })
+  const [savTC,     setSavTC]     = useState(false)
+
+  const cargarSaldos = useCallback(async () => {
+    setLoadSaldos(true)
+    try {
+      const [rs, rt] = await Promise.all([
+        api.get('/finanzas/saldo-bancario'),
+        api.get('/finanzas/tipo-cambio'),
+      ])
+      setSaldos(rs.data)
+      setTcBNA(rt.data)
+    } finally { setLoadSaldos(false) }
+  }, [])
+
+  useEffect(() => { if (tab === 'saldos') cargarSaldos() }, [tab, cargarSaldos])
+
+  const guardarSaldo = async () => {
+    if (!formSaldo.monto || isNaN(parseFloat(formSaldo.monto))) return alert('Ingresá el monto')
+    setSavSaldo(true)
+    try {
+      const r = await api.post('/finanzas/saldo-bancario', formSaldo)
+      setSaldos(prev => [r.data, ...prev])
+      setFormSaldo(p => ({ ...p, monto: '' }))
+    } catch(e) { alert(e.response?.data?.error || 'Error') }
+    finally { setSavSaldo(false) }
+  }
+
+  const eliminarSaldo = async s => {
+    if (!confirm('¿Eliminar este registro?')) return
+    await api.delete(`/finanzas/saldo-bancario/${s.id}`)
+    setSaldos(prev => prev.filter(x => x.id !== s.id))
+  }
+
+  const guardarTC = async () => {
+    if (!formTC.valor || isNaN(parseFloat(formTC.valor))) return alert('Ingresá el valor')
+    setSavTC(true)
+    try {
+      const r = await api.post('/finanzas/tipo-cambio', { moneda: 'DÓLAR', valor: formTC.valor, fuente: 'BNA', fecha: formTC.fecha })
+      setTcBNA(prev => [r.data, ...prev])
+      setFormTC(p => ({ ...p, valor: '' }))
+    } catch(e) { alert(e.response?.data?.error || 'Error') }
+    finally { setSavTC(false) }
+  }
+
+  const eliminarTC = async t => {
+    if (!confirm('¿Eliminar este registro?')) return
+    await api.delete(`/finanzas/tipo-cambio/${t.id}`)
+    setTcBNA(prev => prev.filter(x => x.id !== t.id))
+  }
+
+  // ── Servicios ────────────────────────────────────────────────────────────────
+  const PERIODICIDADES = ['mensual','bimestral','trimestral','semestral','anual']
+  const FORM_SERV = { descripcion: '', usuario: '', info_pago: '', periodicidad: 'mensual', vencimiento_inicial: '' }
+  const [servicios,     setServicios]     = useState([])
+  const [loadServ,      setLoadServ]      = useState(false)
+  const [modalServ,     setModalServ]     = useState(null)  // null | 'new' | obj
+  const [formServ,      setFormServ]      = useState(FORM_SERV)
+  const [savServ,       setSavServ]       = useState(false)
+  const [montoEdit,     setMontoEdit]     = useState({})    // { cuota_id: valor_string }
+  const [pagandoId,     setPagandoId]     = useState(null)
+  const [filtServ,      setFiltServ]      = useState({ estado: 'todos', periodicidad: '', buscar: '' })
+
+  const [ctrlOC,    setCtrlOC]    = useState([])
+  const [loadCtrlOC, setLoadCtrlOC] = useState(false)
+
+  const cargarCtrlOC = useCallback(async () => {
+    setLoadCtrlOC(true)
+    try { const r = await api.get('/finanzas/control-oc'); setCtrlOC(r.data) }
+    catch (e) { console.error(e) }
+    finally { setLoadCtrlOC(false) }
+  }, [])
+
+  useEffect(() => { if (tab === 'control') cargarCtrlOC() }, [tab, cargarCtrlOC])
+
+  const cargarServicios = useCallback(async () => {
+    setLoadServ(true)
+    try { const r = await api.get('/finanzas/servicios'); setServicios(r.data) }
+    finally { setLoadServ(false) }
+  }, [])
+
+  useEffect(() => { if (tab === 'servicios') cargarServicios() }, [tab, cargarServicios])
+
+  const guardarServ = async () => {
+    if (!formServ.descripcion.trim()) return alert('La descripción es requerida')
+    setSavServ(true)
+    try {
+      if (modalServ === 'new') await api.post('/finanzas/servicios', formServ)
+      else await api.put(`/finanzas/servicios/${modalServ.id}`, formServ)
+      setModalServ(null)
+      cargarServicios()
+    } catch(e) { alert(e.response?.data?.error || 'Error') }
+    finally { setSavServ(false) }
+  }
+
+  const eliminarServ = async s => {
+    if (!confirm(`¿Desactivar "${s.descripcion}"?`)) return
+    await api.delete(`/finanzas/servicios/${s.id}`)
+    cargarServicios()
+  }
+
+  const pagarCuota = async s => {
+    if (!s.cuota_id) return
+    setPagandoId(s.cuota_id)
+    try {
+      const fecha = new Date().toISOString().slice(0, 10)
+      await api.post(`/finanzas/servicios-cuotas/${s.cuota_id}/pagar`, { fecha_pagada: fecha })
+      cargarServicios()
+    } catch(e) { alert(e.response?.data?.error || 'Error') }
+    finally { setPagandoId(null) }
+  }
+
+  const guardarMonto = async (cuotaId, monto) => {
+    if (!monto || isNaN(parseFloat(monto))) return
+    await api.put(`/finanzas/servicios-cuotas/${cuotaId}`, { monto: parseFloat(monto) })
+    setMontoEdit(p => { const n = {...p}; delete n[cuotaId]; return n })
+    cargarServicios()
+  }
 
   const [proveedores, setProveedores] = useState([])
   const [ocs,         setOcs]         = useState([])
@@ -214,6 +350,12 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
     setFactC(prev => prev.map(x => (x.fuente === f.fuente && x.id === f.id) ? { ...x, pago_confirmado: x.pago_confirmado ? 0 : 1, anticipo: 0, fecha_anticipo: '' } : x))
   }
 
+  const reabrirC = async f => {
+    if (!confirm('¿Marcar esta factura como pendiente de pago? Podrás corregir los pagos desde el modal.')) return
+    await api.patch('/finanzas/facturas-compra/reabrir', { fuente: f.fuente, id: f.id })
+    setFactC(prev => prev.map(x => (x.fuente === f.fuente && x.id === f.id) ? { ...x, pago_confirmado: 0 } : x))
+  }
+
   const abrirAnticipoC = f => { setAnticipoForm({ anticipo: f.anticipo || '', fecha_anticipo: f.fecha_anticipo || '' }); setAnticipoModal({ f, tipo: 'compra' }) }
 
   const guardarAnticipo = async () => {
@@ -223,6 +365,60 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
     if (tipo === 'compra') setFactC(prev => prev.map(x => x.id === f.id ? { ...x, ...r.data } : x))
     else setFactV(prev => prev.map(x => x.id === f.id ? { ...x, ...r.data } : x))
     setAnticipoModal(null)
+  }
+
+  // ── Pagos de compras ───────────────────────────────────────────────────────
+  const abrirPagosC = async f => {
+    setPagosModalC(f); setMostrarFormC(false)
+    setPagoFormC({ ...FORM_PAGO, moneda: f.moneda || 'PESO' })
+    setPagosLoadC(true)
+    try { const r = await api.get(`/finanzas/facturas-compra/${f.id}/pagos`); setPagosC(r.data) }
+    finally { setPagosLoadC(false) }
+  }
+
+  const agregarPagoC = async () => {
+    if (!pagoFormC.importe || parseFloat(pagoFormC.importe) <= 0) return alert('Importe requerido')
+    if (!pagoFormC.fecha) return alert('Fecha requerida')
+    setPagoSavingC(true)
+    try {
+      const r = await api.post(`/finanzas/facturas-compra/${pagosModalC.id}/pagos`, pagoFormC)
+      setPagosC(p => [...p, r.data])
+      setPagoFormC({ ...FORM_PAGO, moneda: pagosModalC.moneda || 'PESO' })
+      setMostrarFormC(false)
+      const totalPagado = [...pagosC, r.data].filter(p => p.estado === 'confirmado').reduce((s, p) => s + p.importe, 0)
+      const saldo = Math.max(0, (pagosModalC.importe * (pagosModalC.tasa_cambio || 1)) - totalPagado)
+      const cobrada = saldo <= 0.01 ? 1 : 0
+      setFactC(prev => prev.map(x => x.id === pagosModalC.id
+        ? { ...x, total_pagado: totalPagado, count_pagos: (x.count_pagos||0)+1, saldo_pendiente: saldo, pago_confirmado: cobrada }
+        : x))
+      setPagosModalC(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: cobrada }))
+    } catch(e) { alert(e.response?.data?.error || 'Error al guardar') }
+    finally { setPagoSavingC(false) }
+  }
+
+  const confirmarPagoC = async pago => {
+    const r = await api.patch(`/finanzas/facturas-compra/${pagosModalC.id}/pagos/${pago.id}`, { estado: 'confirmado' })
+    const nuevos = pagosC.map(p => p.id === pago.id ? r.data : p)
+    setPagosC(nuevos)
+    const totalPagado = nuevos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + p.importe, 0)
+    const saldo = Math.max(0, (pagosModalC.importe * (pagosModalC.tasa_cambio || 1)) - totalPagado)
+    setFactC(prev => prev.map(x => x.id === pagosModalC.id
+      ? { ...x, total_pagado: totalPagado, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }
+      : x))
+    setPagosModalC(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }))
+  }
+
+  const eliminarPagoC = async pago => {
+    if (!confirm('¿Eliminar este pago?')) return
+    await api.delete(`/finanzas/facturas-compra/${pagosModalC.id}/pagos/${pago.id}`)
+    const nuevos = pagosC.filter(p => p.id !== pago.id)
+    setPagosC(nuevos)
+    const totalPagado = nuevos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + p.importe, 0)
+    const saldo = Math.max(0, (pagosModalC.importe * (pagosModalC.tasa_cambio || 1)) - totalPagado)
+    setFactC(prev => prev.map(x => x.id === pagosModalC.id
+      ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }
+      : x))
+    setPagosModalC(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }))
   }
 
   // ── Ventas ─────────────────────────────────────────────────────────────────
@@ -256,6 +452,12 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
     const fecha_pago = nuevoPago ? new Date().toISOString().slice(0, 10) : ''
     await api.patch(`/finanzas/facturas-venta/${f.id}/pago`, { pago_confirmado: nuevoPago, fecha_pago })
     setFactV(prev => prev.map(x => x.id === f.id ? { ...x, pago_confirmado: nuevoPago ? 1 : 0, anticipo: 0, fecha_anticipo: '', fecha_pago } : x))
+  }
+
+  const reabrirV = async f => {
+    if (!confirm('¿Marcar esta factura como pendiente de cobro? Podrás corregir los pagos desde el modal.')) return
+    await api.patch(`/finanzas/facturas-venta/${f.id}/reabrir`)
+    setFactV(prev => prev.map(x => x.id === f.id ? { ...x, pago_confirmado: 0, fecha_pago: '' } : x))
   }
 
   // ── Pagos de ventas ────────────────────────────────────────────────────────
@@ -322,11 +524,13 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
       </div>
 
       <ul className="nav nav-tabs mb-3">
-        <li className="nav-item">
-          <button className={`nav-link py-1 px-3 ${tab === 'dashboard' ? 'active' : ''}`} onClick={() => setTab('dashboard')}>
-            <i className="bi bi-speedometer2 me-1" />Dashboard
-          </button>
-        </li>
+        {!noDashboard && (
+          <li className="nav-item">
+            <button className={`nav-link py-1 px-3 ${tab === 'dashboard' ? 'active' : ''}`} onClick={() => setTab('dashboard')}>
+              <i className="bi bi-speedometer2 me-1" />Dashboard
+            </button>
+          </li>
+        )}
         <li className="nav-item">
           <button className={`nav-link py-1 px-3 ${tab === 'compras' ? 'active' : ''}`} onClick={() => setTab('compras')}>
             <i className="bi bi-cart3 me-1" />Compras
@@ -337,6 +541,34 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
           <button className={`nav-link py-1 px-3 ${tab === 'ventas' ? 'active' : ''}`} onClick={() => setTab('ventas')}>
             <i className="bi bi-shop me-1" />Ventas
             {factV.length > 0 && <span className="badge bg-secondary ms-1" style={{ fontSize: '0.65rem' }}>{factV.length}</span>}
+          </button>
+        </li>
+        <li className="nav-item">
+          <button className={`nav-link py-1 px-3 ${tab === 'saldos' ? 'active' : ''}`} onClick={() => setTab('saldos')}>
+            <i className="bi bi-bank me-1" />Saldos
+          </button>
+        </li>
+        <li className="nav-item">
+          <button className={`nav-link py-1 px-3 ${tab === 'servicios' ? 'active' : ''}`} onClick={() => setTab('servicios')}>
+            <i className="bi bi-lightning-charge me-1" />Servicios
+            {servicios.filter(s => s.cuota_estado === 'pendiente').length > 0 && (
+              <span className="badge bg-warning text-dark ms-1" style={{ fontSize: '0.65rem' }}>
+                {servicios.filter(s => s.cuota_estado === 'pendiente').length}
+              </span>
+            )}
+          </button>
+        </li>
+        <li className="nav-item">
+          <button className={`nav-link py-1 px-3 ${tab === 'control' ? 'active' : ''}`} onClick={() => setTab('control')}>
+            <i className="bi bi-exclamation-triangle me-1" />Control OC
+            {ctrlOC.length > 0 && (
+              <span className="badge bg-danger ms-1" style={{ fontSize: '0.65rem' }}>{ctrlOC.length}</span>
+            )}
+          </button>
+        </li>
+        <li className="nav-item">
+          <button className={`nav-link py-1 px-3 ${tab === 'oc-clientes' ? 'active' : ''}`} onClick={() => setTab('oc-clientes')}>
+            <i className="bi bi-file-earmark-text me-1" />OC Clientes
           </button>
         </li>
       </ul>
@@ -403,38 +635,34 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
                       <td className="text-end">{f.perc_iibb ? fmtM(f.perc_iibb, f.moneda) : '—'}</td>
                       <td className="text-end fw-semibold">{fmtM(f.importe, f.moneda)}</td>
                       <td className="text-muted" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.observaciones}>{f.observaciones || '—'}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {canWrite ? (
-                          <div className="d-flex gap-1 align-items-center">
-                            {f.pago_confirmado ? (
-                              <button className="btn py-0 px-2 btn-sm btn-success" style={{ fontSize: '0.72rem' }} onClick={() => togglePagoC(f)}>
-                                <i className="bi bi-check-circle-fill me-1" />Pagada
+                      <td style={{ whiteSpace: 'nowrap', minWidth: 130 }}>
+                        {f.pago_confirmado ? (
+                          <div className="d-flex align-items-center gap-1">
+                            <span className="badge bg-success"><i className="bi bi-check2-circle me-1" />Pagada</span>
+                            {canWrite && (
+                              <button className="btn btn-sm btn-outline-warning py-0 px-1" style={{ fontSize: '0.65rem' }}
+                                title="Reabrir para corregir pagos" onClick={() => reabrirC(f)}>
+                                <i className="bi bi-arrow-counterclockwise" />
                               </button>
-                            ) : f.anticipo > 0 ? (
-                              <>
-                                <button className="btn py-0 px-2 btn-sm btn-warning" style={{ fontSize: '0.72rem' }} onClick={() => abrirAnticipoC(f)}
-                                  title={`Anticipo: ${fmtM(f.anticipo, f.moneda)} — Saldo: ${fmtM(f.importe - f.anticipo, f.moneda)}`}>
-                                  <i className="bi bi-clock-history me-1" />Anticipo
-                                </button>
-                                <button className="btn py-0 px-1 btn-sm btn-outline-success" style={{ fontSize: '0.7rem' }} title="Marcar pagada" onClick={() => togglePagoC(f)}>
-                                  <i className="bi bi-check-lg" />
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <button className="btn py-0 px-2 btn-sm btn-outline-secondary" style={{ fontSize: '0.72rem' }} onClick={() => togglePagoC(f)}>
-                                  <i className="bi bi-circle me-1" />Pendiente
-                                </button>
-                                <button className="btn py-0 px-1 btn-sm btn-outline-warning" style={{ fontSize: '0.7rem' }} title="Registrar anticipo" onClick={() => abrirAnticipoC(f)}>
-                                  <i className="bi bi-clock-history" />
-                                </button>
-                              </>
                             )}
                           </div>
+                        ) : f.count_pagos > 0 ? (
+                          <div style={{ fontSize: '0.72rem', lineHeight: 1.4 }}>
+                            <div className="text-success fw-semibold">
+                              <i className="bi bi-check2 me-1" />Pag: {fmtM(f.total_pagado, 'PESO')}
+                            </div>
+                            <div className="text-danger fw-semibold">
+                              <i className="bi bi-hourglass-split me-1" />Rest: {fmtM(f.saldo_pendiente, 'PESO')}
+                            </div>
+                          </div>
                         ) : (
-                          <span className={`badge bg-${f.pago_confirmado ? 'success' : f.anticipo > 0 ? 'warning' : 'secondary'}`}>
-                            {f.pago_confirmado ? 'Pagada' : f.anticipo > 0 ? 'Anticipo' : 'Pendiente'}
-                          </span>
+                          <span className="badge bg-secondary"><i className="bi bi-clock me-1" />Pendiente</span>
+                        )}
+                        {canWrite && (
+                          <button className="btn btn-sm btn-outline-primary py-0 px-1 ms-1" style={{ fontSize: '0.72rem' }}
+                            title="Ver/registrar pagos" onClick={() => abrirPagosC(f)}>
+                            <i className="bi bi-cash-coin" />
+                          </button>
                         )}
                       </td>
                       {canWrite && (
@@ -521,16 +749,24 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
                         ) : (
                           <div className="d-flex gap-1 align-items-center">
                             {f.pago_confirmado ? (
-                              <span className="badge bg-success" style={{ fontSize: '0.68rem' }}>
-                                <i className="bi bi-check-circle-fill me-1" />Cobrada
-                              </span>
+                              <>
+                                <span className="badge bg-success" style={{ fontSize: '0.68rem' }}>
+                                  <i className="bi bi-check-circle-fill me-1" />Cobrada
+                                </span>
+                                {canWrite && (
+                                  <button className="btn btn-sm btn-outline-warning py-0 px-1" style={{ fontSize: '0.65rem' }}
+                                    title="Reabrir para corregir pagos" onClick={() => reabrirV(f)}>
+                                    <i className="bi bi-arrow-counterclockwise" />
+                                  </button>
+                                )}
+                              </>
                             ) : f.count_pagos > 0 ? (
                               <div style={{ fontSize: '0.72rem', lineHeight: 1.4 }}>
                                 <div className="text-success fw-semibold">
-                                  <i className="bi bi-check2 me-1" />Cob: {fmtM(f.total_pagado, f.moneda)}
+                                  <i className="bi bi-check2 me-1" />Cob: {fmtM(f.total_pagado, 'PESO')}
                                 </div>
                                 <div className="text-danger fw-semibold">
-                                  <i className="bi bi-hourglass-split me-1" />Rest: {fmtM(f.saldo_pendiente, f.moneda)}
+                                  <i className="bi bi-hourglass-split me-1" />Rest: {fmtM(f.saldo_pendiente, 'PESO')}
                                 </div>
                               </div>
                             ) : (
@@ -782,6 +1018,153 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
           </div>
         </div>
       )})()}
+
+      {/* ── MODAL PAGOS COMPRAS ── */}
+      {pagosModalC && (
+        <div className="modal d-block" style={{ background: 'rgba(0,0,0,.45)', zIndex: 1055 }}>
+          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header py-2">
+                <div>
+                  <h6 className="modal-title fw-bold mb-0">
+                    <i className="bi bi-cash-coin me-2" />Pagos — {pagosModalC.numero}
+                  </h6>
+                  <small className="text-muted">{pagosModalC.proveedor_nombre} · Total: {fmtM(pagosModalC.importe * (pagosModalC.tasa_cambio||1), 'PESO')}</small>
+                </div>
+                <button className="btn-close btn-sm" onClick={() => setPagosModalC(null)} />
+              </div>
+              <div className="modal-body" style={{ fontSize: '0.85rem' }}>
+                {/* Resumen saldo */}
+                {!pagosModalC.pago_confirmado && (
+                  <div className="alert alert-warning py-1 px-2 mb-3 small">
+                    <i className="bi bi-hourglass-split me-1" />
+                    Saldo pendiente: <strong>{fmtM(pagosModalC.saldo_pendiente ?? (pagosModalC.importe * (pagosModalC.tasa_cambio||1)), 'PESO')}</strong>
+                  </div>
+                )}
+                {pagosLoadC ? (
+                  <div className="text-center py-3"><span className="spinner-border spinner-border-sm" /></div>
+                ) : pagosC.length === 0 ? (
+                  <p className="text-muted text-center py-2">Sin pagos registrados</p>
+                ) : (
+                  <table className="table table-sm mb-3">
+                    <thead className="table-light"><tr>
+                      <th>Fecha</th><th>Tipo</th><th>Forma</th><th>Entidad</th>
+                      <th className="text-end">Importe</th><th>Estado</th>{canWrite && <th />}
+                    </tr></thead>
+                    <tbody>
+                      {pagosC.map(p => (
+                        <tr key={p.id}>
+                          <td>{fmtF(p.fecha)}</td>
+                          <td>{p.tipo}</td>
+                          <td>{p.forma_pago}</td>
+                          <td>{p.entidad || '—'}</td>
+                          <td className="text-end fw-semibold">{fmtM(p.importe, p.moneda)}</td>
+                          <td>
+                            {p.estado === 'confirmado'
+                              ? <span className="badge bg-success">Confirmado</span>
+                              : <button className="btn btn-xs btn-warning py-0 px-1" style={{ fontSize: '0.72rem' }} onClick={() => confirmarPagoC(p)}>Confirmar</button>}
+                          </td>
+                          {canWrite && (
+                            <td>
+                              <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => eliminarPagoC(p)}>
+                                <i className="bi bi-trash" />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {canWrite && !mostrarFormC && (
+                  <button className="btn btn-sm btn-outline-primary" onClick={() => setMostrarFormC(true)}>
+                    <i className="bi bi-plus-lg me-1" />Registrar pago
+                  </button>
+                )}
+                {canWrite && mostrarFormC && (
+                  <div className="border rounded p-3" style={{ background: '#f8f9ff' }}>
+                    <p className="small fw-semibold mb-2">Nuevo pago</p>
+                    <div className="row g-2 mb-2">
+                      <div className="col-md-3">
+                        <label className="form-label small">Tipo</label>
+                        <select className="form-select form-select-sm" value={pagoFormC.tipo}
+                          onChange={e => setPagoFormC(p => ({ ...p, tipo: e.target.value }))}>
+                          {TIPOS_PAGO.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small">Forma de pago</label>
+                        <select className="form-select form-select-sm" value={pagoFormC.forma_pago}
+                          onChange={e => setPagoFormC(p => ({ ...p, forma_pago: e.target.value }))}>
+                          {FORMAS_PAGO.map(f => <option key={f} value={f}>{f}</option>)}
+                        </select>
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small">
+                          {pagoFormC.forma_pago === 'e-cheq' ? 'Banco a debitar' : 'Entidad / Banco'}
+                        </label>
+                        {pagoFormC.forma_pago === 'e-cheq' ? (
+                          <select className="form-select form-select-sm" value={pagoFormC.entidad}
+                            onChange={e => setPagoFormC(p => ({ ...p, entidad: e.target.value }))}>
+                            <option value="">— Seleccionar banco —</option>
+                            {BANCOS.map(b => <option key={b} value={b}>{b}</option>)}
+                          </select>
+                        ) : (
+                          <input className="form-control form-control-sm" value={pagoFormC.entidad}
+                            onChange={e => setPagoFormC(p => ({ ...p, entidad: e.target.value }))} placeholder="Banco..." />
+                        )}
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small">Moneda</label>
+                        <select className="form-select form-select-sm" value={pagoFormC.moneda}
+                          onChange={e => setPagoFormC(p => ({ ...p, moneda: e.target.value }))}>
+                          {MONEDAS.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="row g-2 mb-2">
+                      <div className="col-md-3">
+                        <label className="form-label small">Importe *</label>
+                        <input type="number" className="form-control form-control-sm" value={pagoFormC.importe}
+                          onChange={e => setPagoFormC(p => ({ ...p, importe: e.target.value }))}
+                          min="0" step="0.01" placeholder="0.00" />
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small">Fecha *</label>
+                        <DateInput className="form-control form-control-sm" value={pagoFormC.fecha}
+                          onChange={v => setPagoFormC(p => ({ ...p, fecha: v }))} />
+                      </div>
+                      {(pagoFormC.forma_pago === 'cheque_diferido' || pagoFormC.forma_pago === 'e-cheq') && (
+                        <div className="col-md-3">
+                          <label className="form-label small">Fecha acreditación / débito</label>
+                          <DateInput className="form-control form-control-sm" value={pagoFormC.fecha_acreditacion}
+                            onChange={v => setPagoFormC(p => ({ ...p, fecha_acreditacion: v }))} />
+                        </div>
+                      )}
+                      <div className={(pagoFormC.forma_pago === 'cheque_diferido' || pagoFormC.forma_pago === 'e-cheq') ? 'col-md-3' : 'col-md-6'}>
+                        <label className="form-label small">Observaciones</label>
+                        <input className="form-control form-control-sm" value={pagoFormC.observaciones}
+                          onChange={e => setPagoFormC(p => ({ ...p, observaciones: e.target.value }))} />
+                      </div>
+                    </div>
+                    <div className="d-flex gap-2">
+                      <button className="btn btn-sm btn-primary" onClick={agregarPagoC} disabled={pagoSavingC}>
+                        {pagoSavingC ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-check-lg me-1" />}
+                        Guardar pago
+                      </button>
+                      <button className="btn btn-sm btn-outline-secondary" onClick={() => setMostrarFormC(false)}>Cancelar</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer py-2">
+                <button className="btn btn-sm btn-secondary" onClick={() => setPagosModalC(null)}>Cerrar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── MODAL ANTICIPO ── */}
       {anticipoModal && (
@@ -1122,10 +1505,20 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
                         </select>
                       </div>
                       <div className="col-md-3">
-                        <label className="form-label small">Entidad / Banco</label>
-                        <input className="form-control form-control-sm" value={pagoForm.entidad}
-                          onChange={e => setPagoForm(p => ({ ...p, entidad: e.target.value }))}
-                          placeholder="Banco Galicia..." />
+                        <label className="form-label small">
+                          {pagoForm.forma_pago === 'e-cheq' ? 'Banco a acreditar' : 'Entidad / Banco'}
+                        </label>
+                        {pagoForm.forma_pago === 'e-cheq' ? (
+                          <select className="form-select form-select-sm" value={pagoForm.entidad}
+                            onChange={e => setPagoForm(p => ({ ...p, entidad: e.target.value }))}>
+                            <option value="">— Seleccionar banco —</option>
+                            {BANCOS.map(b => <option key={b} value={b}>{b}</option>)}
+                          </select>
+                        ) : (
+                          <input className="form-control form-control-sm" value={pagoForm.entidad}
+                            onChange={e => setPagoForm(p => ({ ...p, entidad: e.target.value }))}
+                            placeholder="Banco Galicia..." />
+                        )}
                       </div>
                       <div className="col-md-3">
                         <label className="form-label small">Moneda</label>
@@ -1147,14 +1540,14 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
                         <DateInput className="form-control form-control-sm" value={pagoForm.fecha}
                           onChange={v => setPagoForm(p => ({ ...p, fecha: v }))} />
                       </div>
-                      {pagoForm.forma_pago === 'cheque_diferido' && (
+                      {(pagoForm.forma_pago === 'cheque_diferido' || pagoForm.forma_pago === 'e-cheq') && (
                         <div className="col-md-3">
-                          <label className="form-label small">Fecha acreditación</label>
+                          <label className="form-label small">Fecha acreditación / débito</label>
                           <DateInput className="form-control form-control-sm" value={pagoForm.fecha_acreditacion}
                             onChange={v => setPagoForm(p => ({ ...p, fecha_acreditacion: v }))} />
                         </div>
                       )}
-                      <div className={pagoForm.forma_pago === 'cheque_diferido' ? 'col-md-3' : 'col-md-6'}>
+                      <div className={(pagoForm.forma_pago === 'cheque_diferido' || pagoForm.forma_pago === 'e-cheq') ? 'col-md-3' : 'col-md-6'}>
                         <label className="form-label small">Observaciones</label>
                         <input className="form-control form-control-sm" value={pagoForm.observaciones}
                           onChange={e => setPagoForm(p => ({ ...p, observaciones: e.target.value }))} />
@@ -1183,6 +1576,451 @@ export default function Finanzas({ canWrite: canWriteProp } = {}) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── TAB SALDOS ── */}
+      {tab === 'saldos' && (
+        <div className="flex-grow-1 d-flex flex-column overflow-hidden">
+          {/* Formulario de carga */}
+          {canWrite && (
+            <div className="card mb-3" style={{ maxWidth: 520 }}>
+              <div className="card-body py-3">
+                <h6 className="fw-bold mb-3"><i className="bi bi-bank me-2 text-primary" />Registrar saldo bancario</h6>
+                <div className="row g-2 align-items-end">
+                  <div className="col-sm-5">
+                    <label className="form-label small fw-semibold mb-1">Entidad</label>
+                    <select className="form-select form-select-sm" value={formSaldo.entidad}
+                      onChange={e => setFormSaldo(p => ({ ...p, entidad: e.target.value }))}>
+                      {BANCOS.map(b => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-sm-4">
+                    <label className="form-label small fw-semibold mb-1">Monto</label>
+                    <input type="number" className="form-control form-control-sm" value={formSaldo.monto}
+                      onChange={e => setFormSaldo(p => ({ ...p, monto: e.target.value }))}
+                      onKeyDown={e => e.key === 'Enter' && guardarSaldo()}
+                      min="0" step="0.01" placeholder="0.00" autoFocus />
+                  </div>
+                  <div className="col-sm-3">
+                    <label className="form-label small fw-semibold mb-1">Moneda</label>
+                    <select className="form-select form-select-sm" value={formSaldo.moneda}
+                      onChange={e => setFormSaldo(p => ({ ...p, moneda: e.target.value }))}>
+                      {MONEDAS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="mt-2 d-flex align-items-center gap-2">
+                  <button className="btn btn-sm btn-primary" onClick={guardarSaldo} disabled={savSaldo}>
+                    {savSaldo ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-save me-1" />}
+                    Registrar
+                  </button>
+                  <small className="text-muted"><i className="bi bi-clock me-1" />La fecha y hora se guardan automáticamente</small>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tipo de cambio BNA */}
+          {canWrite && (
+            <div className="card mb-3" style={{ maxWidth: 520 }}>
+              <div className="card-body py-3">
+                <h6 className="fw-bold mb-3"><i className="bi bi-currency-exchange me-2 text-success" />Tipo de Cambio BNA (Dólar)</h6>
+                <div className="row g-2 align-items-end">
+                  <div className="col-sm-4">
+                    <label className="form-label small fw-semibold mb-1">Valor $ por USD</label>
+                    <input type="number" className="form-control form-control-sm" value={formTC.valor}
+                      onChange={e => setFormTC(p => ({ ...p, valor: e.target.value }))}
+                      onKeyDown={e => e.key === 'Enter' && guardarTC()}
+                      min="0" step="0.01" placeholder="Ej: 1250.00" />
+                  </div>
+                  <div className="col-sm-4">
+                    <label className="form-label small fw-semibold mb-1">Fecha</label>
+                    <DateInput className="form-control form-control-sm" value={formTC.fecha}
+                      onChange={v => setFormTC(p => ({ ...p, fecha: v }))} />
+                  </div>
+                  <div className="col-sm-4">
+                    <button className="btn btn-sm btn-success w-100" onClick={guardarTC} disabled={savTC}>
+                      {savTC ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-save me-1" />}
+                      Registrar
+                    </button>
+                  </div>
+                </div>
+                {tcBNA.length > 0 && (
+                  <div className="mt-3" style={{ fontSize: '0.82rem' }}>
+                    <div className="fw-semibold text-muted mb-2" style={{ fontSize: '0.72rem', letterSpacing: '0.04em' }}>HISTORIAL</div>
+                    {tcBNA.slice(0, 5).map(t => (
+                      <div key={t.id} className="d-flex justify-content-between align-items-center py-1 border-bottom">
+                        <span className="text-muted">{t.fecha || t.created_at?.slice(0,10)}</span>
+                        <span className="fw-semibold">$ {parseFloat(t.valor).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-muted small">{t.usuario_nombre || '—'}</span>
+                        <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => eliminarTC(t)}>
+                          <i className="bi bi-trash" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Historial */}
+          {loadSaldos ? (
+            <div className="text-center py-4 text-muted"><span className="spinner-border spinner-border-sm me-2" />Cargando...</div>
+          ) : saldos.length === 0 ? (
+            <div className="text-center py-5 text-muted">
+              <i className="bi bi-bank display-6 d-block mb-2" />Sin registros de saldo
+            </div>
+          ) : (
+            <div className="overflow-auto flex-grow-1">
+              <table className="table table-sm table-hover align-middle" style={{ fontSize: '0.85rem', maxWidth: 700 }}>
+                <thead className="table-light sticky-top">
+                  <tr>
+                    <th>Fecha y hora</th>
+                    <th>Entidad</th>
+                    <th className="text-end">Monto</th>
+                    <th>Cargado por</th>
+                    {canWrite && <th />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {saldos.map(s => (
+                    <tr key={s.id}>
+                      <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>
+                        {s.created_at ? s.created_at.replace('T', ' ').slice(0, 16) : '—'}
+                      </td>
+                      <td className="fw-semibold">
+                        <i className="bi bi-bank me-1 text-primary" />{s.entidad}
+                      </td>
+                      <td className="text-end fw-semibold fs-6">{fmtM(s.monto, s.moneda)}</td>
+                      <td className="text-muted small">{s.usuario_nombre || '—'}</td>
+                      {canWrite && (
+                        <td>
+                          <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => eliminarSaldo(s)}>
+                            <i className="bi bi-trash" />
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── TAB SERVICIOS ── */}
+      {tab === 'servicios' && (
+        <div className="flex-grow-1 d-flex flex-column overflow-hidden">
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <span className="text-muted small">Servicios recurrentes — vencimientos y pagos</span>
+            <div className="d-flex gap-2 align-items-center flex-wrap">
+              <input className="form-control form-control-sm" style={{ width: 180 }}
+                placeholder="Buscar descripción, usuario..."
+                value={filtServ.buscar}
+                onChange={e => setFiltServ(p => ({ ...p, buscar: e.target.value }))} />
+              <select className="form-select form-select-sm" style={{ width: 150 }}
+                value={filtServ.estado}
+                onChange={e => setFiltServ(p => ({ ...p, estado: e.target.value }))}>
+                <option value="todos">Todos los estados</option>
+                <option value="pendiente">Pendientes</option>
+                <option value="sin_importe">Sin importe</option>
+                <option value="vencido">Vencidos</option>
+                <option value="pagado">Pagados</option>
+              </select>
+              <select className="form-select form-select-sm" style={{ width: 140 }}
+                value={filtServ.periodicidad}
+                onChange={e => setFiltServ(p => ({ ...p, periodicidad: e.target.value }))}>
+                <option value="">Periodicidad</option>
+                {PERIODICIDADES.map(p => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
+              </select>
+              {(filtServ.estado !== 'todos' || filtServ.periodicidad || filtServ.buscar) && (
+                <button className="btn btn-sm btn-outline-secondary py-0 px-2"
+                  onClick={() => setFiltServ({ estado: 'todos', periodicidad: '', buscar: '' })}>
+                  <i className="bi bi-x" />
+                </button>
+              )}
+              {canWrite && (
+                <button className="btn btn-sm btn-primary" onClick={() => { setFormServ(FORM_SERV); setModalServ('new') }}>
+                  <i className="bi bi-plus-lg me-1" />Nuevo servicio
+                </button>
+              )}
+            </div>
+          </div>
+
+          {loadServ ? (
+            <div className="text-center py-4 text-muted"><span className="spinner-border spinner-border-sm me-2" />Cargando...</div>
+          ) : servicios.length === 0 ? (
+            <div className="text-center py-5 text-muted">
+              <i className="bi bi-lightning-charge display-6 d-block mb-2" />
+              No hay servicios registrados
+            </div>
+          ) : (
+            <div className="overflow-auto flex-grow-1">
+              <table className="table table-sm table-hover align-middle" style={{ fontSize: '0.85rem' }}>
+                <thead className="table-light sticky-top">
+                  <tr>
+                    <th>Descripción</th>
+                    <th>Periodicidad</th>
+                    <th>Usuario / Datos de pago</th>
+                    <th className="text-end">Monto</th>
+                    <th>Vencimiento</th>
+                    <th>Estado</th>
+                    {canWrite && <th />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {servicios.filter(s => {
+                    const hoy = new Date().toISOString().slice(0, 10)
+                    const sinMonto = s.cuota_estado === 'pendiente' && (s.cuota_monto == null || s.cuota_monto === '')
+                    const pendiente = s.cuota_estado === 'pendiente' && !sinMonto
+                    const vencido   = pendiente && s.cuota_vencimiento && s.cuota_vencimiento < hoy
+                    if (filtServ.estado === 'pendiente'   && !pendiente)               return false
+                    if (filtServ.estado === 'sin_importe' && !sinMonto)               return false
+                    if (filtServ.estado === 'vencido'     && !vencido)                return false
+                    if (filtServ.estado === 'pagado'      && s.cuota_estado === 'pendiente') return false
+                    if (filtServ.periodicidad && s.periodicidad !== filtServ.periodicidad) return false
+                    if (filtServ.buscar) {
+                      const q = filtServ.buscar.toLowerCase()
+                      if (!s.descripcion?.toLowerCase().includes(q) && !s.usuario?.toLowerCase().includes(q)) return false
+                    }
+                    return true
+                  }).map(s => {
+                    const pendiente = s.cuota_estado === 'pendiente'
+                    const sinMonto  = pendiente && (s.cuota_monto == null || s.cuota_monto === '')
+                    const editando  = montoEdit[s.cuota_id] !== undefined
+
+                    return (
+                      <tr key={s.id} style={sinMonto ? { opacity: 0.65, fontSize: '0.78rem' } : {}}>
+                        <td className="fw-semibold">{s.descripcion}</td>
+                        <td><span className="badge bg-light text-dark border">{s.periodicidad}</span></td>
+                        <td>
+                          <div>{s.usuario || '—'}</div>
+                          {s.info_pago && <div className="text-muted" style={{ fontSize: '0.75rem' }}>{s.info_pago}</div>}
+                        </td>
+                        <td className="text-end" style={{ minWidth: 130 }}>
+                          {sinMonto ? (
+                            <div className="d-flex align-items-center gap-1 justify-content-end">
+                              <input
+                                type="number" min="0" step="0.01" placeholder="$ importe"
+                                className="form-control form-control-sm text-end"
+                                style={{ width: 110, fontSize: '0.78rem' }}
+                                value={editando ? montoEdit[s.cuota_id] : ''}
+                                onChange={e => setMontoEdit(p => ({ ...p, [s.cuota_id]: e.target.value }))}
+                                onKeyDown={e => e.key === 'Enter' && guardarMonto(s.cuota_id, montoEdit[s.cuota_id])}
+                              />
+                              {editando && (
+                                <button className="btn btn-sm btn-success py-0 px-1"
+                                  onClick={() => guardarMonto(s.cuota_id, montoEdit[s.cuota_id])}>
+                                  <i className="bi bi-check-lg" />
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="fw-semibold">{fmtM(s.cuota_monto, 'PESO')}</span>
+                          )}
+                        </td>
+                        <td className={vctoColor(s.cuota_vencimiento, !pendiente)}>
+                          {fmtF(s.cuota_vencimiento)}
+                        </td>
+                        <td>
+                          {!pendiente ? (
+                            <span className="badge bg-success">
+                              <i className="bi bi-check2 me-1" />Pagado {fmtF(s.cuota_fecha_pagada)}
+                            </span>
+                          ) : sinMonto ? (
+                            <span className="badge bg-light text-muted border" style={{ fontSize: '0.72rem' }}>
+                              <i className="bi bi-hourglass me-1" />Sin importe
+                            </span>
+                          ) : (
+                            <span className="badge bg-warning text-dark">
+                              <i className="bi bi-clock me-1" />Pendiente
+                            </span>
+                          )}
+                        </td>
+                        {canWrite && (
+                          <td>
+                            <div className="d-flex gap-1 align-items-center">
+                              {pendiente && !sinMonto && (
+                                <button className="btn btn-sm btn-outline-success py-0 px-2"
+                                  style={{ fontSize: '0.72rem' }}
+                                  disabled={pagandoId === s.cuota_id}
+                                  onClick={() => pagarCuota(s)}>
+                                  {pagandoId === s.cuota_id
+                                    ? <span className="spinner-border spinner-border-sm" />
+                                    : <><i className="bi bi-check2-circle me-1" />Pagar</>}
+                                </button>
+                              )}
+                              <button className="btn btn-sm btn-outline-primary py-0 px-1" title="Editar"
+                                onClick={() => { setFormServ({ descripcion: s.descripcion, usuario: s.usuario||'', info_pago: s.info_pago||'', periodicidad: s.periodicidad, vencimiento_inicial: '' }); setModalServ(s) }}>
+                                <i className="bi bi-pencil" />
+                              </button>
+                              <button className="btn btn-sm btn-outline-danger py-0 px-1" title="Desactivar"
+                                onClick={() => eliminarServ(s)}>
+                                <i className="bi bi-trash" />
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── MODAL SERVICIO ── */}
+      {modalServ && (
+        <div className="modal d-block" style={{ background: 'rgba(0,0,0,.45)', zIndex: 1060 }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header py-2">
+                <h6 className="modal-title fw-bold">
+                  <i className="bi bi-lightning-charge me-2" />
+                  {modalServ === 'new' ? 'Nuevo servicio' : 'Editar servicio'}
+                </h6>
+                <button className="btn-close btn-sm" onClick={() => setModalServ(null)} />
+              </div>
+              <div className="modal-body" style={{ fontSize: '0.87rem' }}>
+                <div className="mb-2">
+                  <label className="form-label small fw-semibold">Descripción *</label>
+                  <input className="form-control form-control-sm" value={formServ.descripcion}
+                    onChange={e => setFormServ(p => ({ ...p, descripcion: e.target.value }))}
+                    placeholder="Ej: EDENOR Burzaco 6363" autoFocus />
+                </div>
+                <div className="row g-2 mb-2">
+                  <div className="col-md-6">
+                    <label className="form-label small fw-semibold">Periodicidad</label>
+                    <select className="form-select form-select-sm" value={formServ.periodicidad}
+                      onChange={e => setFormServ(p => ({ ...p, periodicidad: e.target.value }))}>
+                      {PERIODICIDADES.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label small fw-semibold">Usuario / Email</label>
+                    <input className="form-control form-control-sm" value={formServ.usuario}
+                      onChange={e => setFormServ(p => ({ ...p, usuario: e.target.value }))}
+                      placeholder="silvio@e-intrasrl.com" />
+                  </div>
+                </div>
+                <div className="mb-2">
+                  <label className="form-label small fw-semibold">Datos de pago <span className="fw-normal text-muted">(código, CBU, instrucciones)</span></label>
+                  <input className="form-control form-control-sm" value={formServ.info_pago}
+                    onChange={e => setFormServ(p => ({ ...p, info_pago: e.target.value }))}
+                    placeholder="Ej: código de pago 6554969-608" />
+                </div>
+                {modalServ === 'new' && (
+                  <div className="mb-0">
+                    <label className="form-label small fw-semibold">Próximo vencimiento</label>
+                    <DateInput className="form-control form-control-sm" value={formServ.vencimiento_inicial}
+                      onChange={v => setFormServ(p => ({ ...p, vencimiento_inicial: v }))} />
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer py-2">
+                <button className="btn btn-sm btn-secondary" onClick={() => setModalServ(null)}>Cancelar</button>
+                <button className="btn btn-sm btn-primary" onClick={guardarServ} disabled={savServ}>
+                  {savServ ? <><span className="spinner-border spinner-border-sm me-1" />Guardando...</> : 'Guardar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB CONTROL OC ── */}
+      {tab === 'control' && (
+        <div className="flex-grow-1 d-flex flex-column overflow-hidden">
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <div>
+              <span className="fw-semibold">Facturas con diferencia de neto respecto a la OC</span>
+              <span className="text-muted small ms-2">(diferencia &gt; $1, valor sin impuestos)</span>
+            </div>
+            <button className="btn btn-sm btn-outline-secondary" onClick={cargarCtrlOC} disabled={loadCtrlOC}>
+              <i className="bi bi-arrow-clockwise me-1" />Actualizar
+            </button>
+          </div>
+          <div className="flex-grow-1 overflow-auto">
+            {loadCtrlOC ? (
+              <div className="text-center text-muted py-5">
+                <span className="spinner-border spinner-border-sm me-2" />Cargando...
+              </div>
+            ) : ctrlOC.length === 0 ? (
+              <div className="text-center text-muted py-5">
+                <i className="bi bi-check-circle display-6 d-block mb-2 text-success" />
+                <div>Todas las facturas con OC coinciden en su neto</div>
+              </div>
+            ) : (
+              <table className="table table-sm table-hover table-bordered" style={{ fontSize: '0.82rem' }}>
+                <thead className="table-light sticky-top">
+                  <tr>
+                    <th>OC</th>
+                    <th>Proveedor</th>
+                    <th>Facturas</th>
+                    <th className="text-end">Neto OC (en $)</th>
+                    <th className="text-end">Total neto facturas ($)</th>
+                    <th className="text-end">Diferencia ($)</th>
+                    <th className="text-center">Moneda OC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ctrlOC.map(r => {
+                    const diff = (r.facturas_neto_total || 0) - (r.oc_neto_pesos || 0)
+                    const esPeso = r.oc_moneda === 'PESOS' || r.oc_moneda === 'PESO'
+                    return (
+                      <tr key={r.oc_id} className={Math.abs(diff) > 1000 ? 'table-danger' : 'table-warning'}>
+                        <td className="fw-semibold text-primary">{r.oc_numero}</td>
+                        <td>{r.proveedor_nombre}</td>
+                        <td>
+                          <div>{r.facturas_lista}</div>
+                          {r.cant_facturas > 1 && (
+                            <div className="text-muted" style={{ fontSize: '0.72rem' }}>{r.cant_facturas} facturas · última {fmtF(r.fecha_ultima)}</div>
+                          )}
+                          {r.cant_facturas === 1 && (
+                            <div className="text-muted" style={{ fontSize: '0.72rem' }}>{fmtF(r.fecha_ultima)}</div>
+                          )}
+                        </td>
+                        <td className="text-end">
+                          {fmtM(r.oc_neto_pesos, 'PESO')}
+                          {!esPeso && (
+                            <div className="text-muted" style={{ fontSize: '0.72rem' }}>
+                              {r.oc_moneda === 'DÓLAR' ? 'USD' : r.oc_moneda} {fmtM(r.oc_neto_orig, r.oc_moneda)} × {(r.oc_tc||1).toLocaleString('es-AR')}
+                            </div>
+                          )}
+                        </td>
+                        <td className="text-end">{fmtM(r.facturas_neto_total, 'PESO')}</td>
+                        <td className={`text-end fw-bold ${diff > 0 ? 'text-danger' : 'text-success'}`}>
+                          {diff > 0 ? '+' : ''}{fmtM(diff, 'PESO')}
+                        </td>
+                        <td className="text-center">
+                          <span className={`badge ${esPeso ? 'bg-secondary' : 'bg-info text-dark'}`}>{r.oc_moneda}</span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot className="table-light fw-semibold">
+                  <tr>
+                    <td colSpan={3}>{ctrlOC.length} OC{ctrlOC.length !== 1 ? 's' : ''} con diferencia</td>
+                    <td className="text-end">{fmtM(ctrlOC.reduce((s, r) => s + (r.oc_neto_pesos || 0), 0), 'PESO')}</td>
+                    <td className="text-end">{fmtM(ctrlOC.reduce((s, r) => s + (r.facturas_neto_total || 0), 0), 'PESO')}</td>
+                    <td className="text-end">{fmtM(ctrlOC.reduce((s, r) => s + ((r.facturas_neto_total||0) - (r.oc_neto_pesos||0)), 0), 'PESO')}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB OC CLIENTES ── */}
+      {tab === 'oc-clientes' && (
+        <FinanzasOCClientes canWrite={canWrite} />
       )}
 
     </div>
