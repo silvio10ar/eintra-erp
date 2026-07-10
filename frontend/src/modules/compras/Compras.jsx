@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
 import Form49 from './Form49'
-import { Asistente } from '../codificacion/AsistenteCore'
+import DateInput from '../../components/DateInput'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
+import { PREFIJOS, FAM_NOMBRES } from './prefijos'
 
 const ESTADOS = [
   { v:'Emitida',   c:'warning' },
@@ -29,7 +31,7 @@ const CAMPOS_PROV = [
   { k:'vendedor',       l:'Vendedor'       },
   { k:'condicion_pago', l:'Cond. de Pago'  },
 ]
-const ITEM_VACIO = { producto_id:'', descripcion:'', unidad:'UND.', cantidad:1, precio_unitario:0, bonif1:0, bonif2:0, bonif3:0, bonif4:0, precio_final:0, plazo:'INMEDIATO', cant_recibida:0 }
+const ITEM_VACIO = { producto_id:'', producto_codigo:'', descripcion:'', unidad:'UND.', cantidad:1, precio_unitario:0, bonif1:0, bonif2:0, bonif3:0, bonif4:0, precio_final:0, plazo:'INMEDIATO', cant_recibida:0, sin_codificar:false }
 const FORM_OC = { proveedor_id:'', proveedor_nombre:'', proveedor_cuit:'', fecha:hoy(), moneda:'DÓLAR', tasa_cambio:0, autorizado_por:'', elaborado_por:'', condicion_pago:'TRANSF. BANCARIA', lugar_entrega:'e-intra', presupuesto_n:'', observaciones:'', fecha_entrega_est:'', estado_doc:'', items:[{ ...ITEM_VACIO }] }
 
 const ESTADOS_DOC = ['', 'PENDIENTE', 'RECIBIDA', 'CONFORME', 'NO CONFORME', 'OBSERVADA']
@@ -42,6 +44,7 @@ function calcFinal(p, b1, b2, b3, b4) {
 
 export default function Compras() {
   const canWrite = puedeEscribir('compras')
+  const location  = useLocation()
   const [tab, setTab] = useState('oc')
 
   /* ── OC ─────────────────────────────────────────────────────────── */
@@ -49,7 +52,7 @@ export default function Compras() {
   const [totalOC, setTotalOC] = useState(0)
   const [pageOC, setPageOC]   = useState(1)
   const [loadOC, setLoadOC]   = useState(true)
-  const [filtOC, setFiltOC]   = useState({ estado:'', buscar:'', desde:'', hasta:'' })
+  const [filtOC, setFiltOC]   = useState({ estado: location.state?.filtroEstado || '', buscar:'', desde:'', hasta:'' })
   const [selOC, setSelOC]     = useState(null)
 
   /* ── Proveedores ────────────────────────────────────────────────── */
@@ -72,6 +75,7 @@ export default function Compras() {
   const [sugsP, setSugsP]           = useState([])
   const [provInfoOC, setProvInfoOC] = useState(null)  // datos completos del proveedor seleccionado
   const [sugsItem, setSugsItem]     = useState({ idx: null, list: [], pos: null })
+  const [refPrecios, setRefPrecios] = useState({})
   const itemDescRefs = useRef({})
   const [productos, setProductos]   = useState([])
 
@@ -81,12 +85,14 @@ export default function Compras() {
   const [fechaRec, setFechaRec]     = useState(hoy())
   const [nroRemito, setNroRemito]   = useState('')
   const [savRec, setSavRec]         = useState(false)
+  const [linkRecItem, setLinkRecItem] = useState(null) // { itemId, mode, query, sugs, crearPrefijo, crearCodigo, crearLoadingCod }
 
   /* ── Modal nuevo material ───────────────────────────────────────── */
-  const [codConfig,      setCodConfig]     = useState(null)
-  const [modalNuevoMat,  setModalNuevoMat] = useState(null)  // null | { idx }
-  const [pasoNuevoMat,   setPasoNuevoMat]  = useState('codigo')  // 'codigo' | 'datos'
-  const [codNuevoMat,    setCodNuevoMat]   = useState('')
+  const [modalNuevoMat,   setModalNuevoMat]  = useState(null)  // null | { idx }
+  const [pasoNuevoMat,    setPasoNuevoMat]   = useState('codigo')
+  const [codNuevoMat,     setCodNuevoMat]    = useState('')
+  const [prefNuevoMat,    setPrefNuevoMat]   = useState('')
+  const [loadCodNuevoMat, setLoadCodNuevoMat] = useState(false)
   const [formNuevoMat,   setFormNuevoMat]  = useState({ descripcion:'', categoria:'', unidad:'UND.', precio_costo:0, ubicacion:'', stock_minimo:0 })
   const [savNuevoMat,    setSavNuevoMat]   = useState(false)
   const [errNuevoMat,    setErrNuevoMat]   = useState('')
@@ -122,10 +128,12 @@ export default function Compras() {
 
   useEffect(() => { if (tab === 'proveedores') cargarProveedores() }, [cargarProveedores, tab])
 
+  const [proyectos, setProyectos] = useState([])
+
   useEffect(() => {
     api.get('/compras/proveedores').then(r => setProvs(r.data)).catch(() => {})
     api.get('/stock/productos').then(r => setProductos(r.data)).catch(() => {})
-    api.get('/codificacion/config').then(r => setCodConfig(r.data)).catch(() => {})
+    api.get('/proyectos', { params: { estado: 'Activo' } }).then(r => setProyectos(r.data)).catch(() => {})
   }, [])
 
   /* ── Detalle OC ─────────────────────────────────────────────────── */
@@ -137,12 +145,18 @@ export default function Compras() {
   /* ── Form OC ────────────────────────────────────────────────────── */
   const abrirNuevaOC = () => {
     setFormOC({ ...FORM_OC, fecha: hoy(), items: [{ ...ITEM_VACIO }] })
-    setErrOC(''); setSugsP([]); setSugsItem({ idx: null, list: [] }); setProvInfoOC(null); setModalForm('nuevo')
+    setErrOC(''); setSugsP([]); setSugsItem({ idx: null, list: [] }); setProvInfoOC(null); setRefPrecios({}); setModalForm('nuevo')
   }
 
   const abrirEditarOC = oc => {
+    // Si la OC tiene nombre pero no id, intentar resolverlo desde provs ya cargados
+    let pId = String(oc.proveedor_id || '')
+    if (!pId && oc.proveedor_nombre) {
+      const match = provs.find(p => p.nombre === oc.proveedor_nombre)
+      if (match) pId = String(match.id)
+    }
     setFormOC({
-      proveedor_id: oc.proveedor_id || '', proveedor_nombre: oc.proveedor_nombre, proveedor_cuit: oc.proveedor_cuit || '',
+      proveedor_id: pId, proveedor_nombre: oc.proveedor_nombre, proveedor_cuit: oc.proveedor_cuit || '',
       fecha: oc.fecha, moneda: oc.moneda, tasa_cambio: oc.tasa_cambio || 0,
       autorizado_por: oc.autorizado_por || '', elaborado_por: oc.elaborado_por || '',
       condicion_pago: oc.condicion_pago || 'TRANSF. BANCARIA', lugar_entrega: oc.lugar_entrega || 'e-intra',
@@ -150,10 +164,10 @@ export default function Compras() {
       fecha_entrega_est: oc.fecha_entrega_est || '',
       estado_doc: oc.estado_doc || '',
       items: oc.items?.length
-        ? oc.items.map(it => ({ id: it.id, producto_id: it.producto_id||'', descripcion: it.descripcion||'', unidad: it.unidad||'UND.', cantidad: it.cantidad, precio_unitario: it.precio_unitario, bonif1: it.bonif1||0, bonif2: it.bonif2||0, bonif3: it.bonif3||0, bonif4: it.bonif4||0, precio_final: it.precio_final, plazo: it.plazo||'INMEDIATO', cant_recibida: it.cant_recibida||0 }))
+        ? oc.items.map(it => ({ id: it.id, producto_id: it.producto_id||'', producto_codigo: it.producto_codigo||'', descripcion: it.descripcion||'', unidad: it.unidad||'UND.', cantidad: it.cantidad, precio_unitario: it.precio_unitario, bonif1: it.bonif1||0, bonif2: it.bonif2||0, bonif3: it.bonif3||0, bonif4: it.bonif4||0, precio_final: it.precio_final, plazo: it.plazo||'INMEDIATO', cant_recibida: it.cant_recibida||0, sin_codificar: !!it.sin_codificar }))
         : [{ ...ITEM_VACIO }],
     })
-    setErrOC(''); setSugsP([]); setSugsItem({ idx: null, list: [] }); setModalForm(oc)
+    setErrOC(''); setSugsP([]); setSugsItem({ idx: null, list: [] }); setRefPrecios({}); setModalForm(oc)
     // Cargar datos de contacto del proveedor
     if (oc.proveedor_id) {
       api.get('/compras/proveedores/buscar', { params: { id: oc.proveedor_id } })
@@ -189,17 +203,70 @@ export default function Compras() {
     for (const it of oc.items || []) {
       if (it.producto_id) { const pend = it.cantidad - (it.cant_recibida||0); cants[it.id] = pend > 0 ? pend : 0 }
     }
-    setRecCants(cants); setFechaRec(hoy()); setNroRemito(''); setSavRec(false); setModalRec(oc)
+    setLinkRecItem(null); setRecCants(cants); setFechaRec(hoy()); setNroRemito(''); setSavRec(false); setModalRec(oc)
   }
 
   const confirmarRecibir = async () => {
+    const sinCodigo = (modalRec.items||[]).filter(it => !it.producto_id)
+    if (sinCodigo.length) {
+      alert(`${sinCodigo.length} ítem${sinCodigo.length!==1?'s':''} sin producto asignado. Asigná un producto a cada ítem antes de confirmar la recepción.`)
+      return
+    }
     setSavRec(true)
     try {
-      await api.post(`/compras/oc/${modalRec.id}/recibir`, { recepciones: recCants, fecha: fechaRec, numero_remito: nroRemito||undefined })
+      const producto_ids = {}
+      for (const it of (modalRec.items||[])) {
+        if (it.producto_id) producto_ids[it.id] = it.producto_id
+      }
+      await api.post(`/compras/oc/${modalRec.id}/recibir`, { recepciones: recCants, fecha: fechaRec, numero_remito: nroRemito||undefined, producto_ids })
       setModalRec(null); setModalOC(null); cargarOC()
       alert('Recepción registrada. Los materiales quedaron pendientes de ingreso al stock.')
     } catch(err) { alert(err.response?.data?.error ?? 'Error al recibir') }
     finally { setSavRec(false) }
+  }
+
+  /* ── Helpers inline codificación en recepción OC ────────────────── */
+  const iniciarLinkRec  = (itemId) => setLinkRecItem({ itemId, mode:'search', query:'', sugs:[] })
+  const iniciarCrearRec = (itemId) => setLinkRecItem({ itemId, mode:'create', query:'', sugs:[], crearPrefijo:'', crearCodigo:'', crearLoadingCod:false })
+
+  const buscarLinkRecProd = (query) => {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+    const sugs = query.length > 1
+      ? productos.filter(p => { const h=(p.codigo+' '+p.descripcion).toLowerCase(); return words.every(w=>h.includes(w)) }).slice(0,10)
+      : []
+    setLinkRecItem(p => ({ ...p, query, sugs }))
+  }
+
+  const confirmarLinkRecProd = (prod) => {
+    if (!linkRecItem) return
+    const item = (modalRec.items||[]).find(it => it.id === linkRecItem.itemId)
+    if (item) {
+      const pend = item.cantidad - (item.cant_recibida||0)
+      setRecCants(p => ({ ...p, [linkRecItem.itemId]: pend > 0 ? pend : 0 }))
+    }
+    setModalRec(p => ({ ...p, items: p.items.map(it => it.id === linkRecItem.itemId ? { ...it, producto_id: prod.id, producto_codigo: prod.codigo } : it) }))
+    setLinkRecItem(null)
+  }
+
+  const onCrearPrefijoCambioRec = async (prefijo) => {
+    setLinkRecItem(p => ({ ...p, crearPrefijo: prefijo, crearCodigo:'', crearLoadingCod: !!prefijo }))
+    if (!prefijo) return
+    try {
+      const { data } = await api.get(`/materiales/next-codigo/${prefijo}`)
+      setLinkRecItem(p => p?.crearPrefijo === prefijo ? { ...p, crearCodigo: data.codigo, crearLoadingCod: false } : p)
+    } catch { setLinkRecItem(p => ({ ...p, crearCodigo:'', crearLoadingCod: false })) }
+  }
+
+  const confirmarCrearRecProd = async (descripcion) => {
+    if (!linkRecItem?.crearCodigo) return
+    setLinkRecItem(p => ({ ...p, crearLoadingCod: true }))
+    try {
+      const { data: prod } = await api.post('/materiales', { codigo: linkRecItem.crearCodigo, descripcion, unidad:'UND.', codigo_generado:1 })
+      confirmarLinkRecProd(prod)
+    } catch(e) {
+      alert(e.response?.data?.error || 'Error al crear el producto')
+      setLinkRecItem(p => ({ ...p, crearLoadingCod: false }))
+    }
   }
 
   /* ── Items OC ───────────────────────────────────────────────────── */
@@ -213,7 +280,10 @@ export default function Compras() {
   }))
 
   const agregarItem = () => setFormOC(p => ({ ...p, items: [...p.items, { ...ITEM_VACIO }] }))
-  const quitarItem  = idx => setFormOC(p => ({ ...p, items: p.items.filter((_,i)=>i!==idx) }))
+  const quitarItem  = idx => {
+    setFormOC(p => ({ ...p, items: p.items.filter((_,i)=>i!==idx) }))
+    setRefPrecios(prev => { const n={}; Object.keys(prev).forEach(k => { const ki=parseInt(k); if(ki<idx) n[ki]=prev[k]; else if(ki>idx) n[ki-1]=prev[k] }); return n })
+  }
 
   const buscarProductoItem = (idx, txt) => {
     setItem(idx, 'descripcion', txt)
@@ -230,9 +300,44 @@ export default function Compras() {
 
   const selProductoItem = (idx, prod) => {
     setFormOC(prev => ({
-      ...prev, items: prev.items.map((it, i) => i !== idx ? it : { ...it, producto_id: prod.id, descripcion: prod.descripcion, unidad: prod.unidad||'UND.', precio_unitario: prod.precio_costo||0, precio_final: calcFinal(prod.precio_costo||0, it.bonif1, it.bonif2, it.bonif3, it.bonif4) })
+      ...prev, items: prev.items.map((it, i) => i !== idx ? it : {
+        ...it, producto_id: prod.id, producto_codigo: prod.codigo, descripcion: prod.descripcion, unidad: prod.unidad||'UND.',
+        precio_unitario: prod.precio_costo||0, sin_codificar: false,
+        precio_final: calcFinal(prod.precio_costo||0, it.bonif1, it.bonif2, it.bonif3, it.bonif4),
+      })
     }))
     setSugsItem({ idx: null, list: [] })
+    setRefPrecios(prev => { const n = { ...prev }; delete n[idx]; return n })
+    // Buscar precio fresco del producto (el array puede estar desactualizado)
+    api.get(`/stock/productos/${prod.id}`)
+      .then(r => {
+        const p = r.data
+        if (p.precio_costo > 0) {
+          // Actualizar también el precio en el formulario con el valor fresco
+          setFormOC(prev => ({
+            ...prev, items: prev.items.map((it, i) => i !== idx ? it : {
+              ...it, precio_unitario: p.precio_costo,
+              precio_final: calcFinal(p.precio_costo, it.bonif1, it.bonif2, it.bonif3, it.bonif4),
+            })
+          }))
+          setRefPrecios(prev => ({ ...prev, [idx]: {
+            precio_unitario: p.precio_costo,
+            precio_moneda:   p.precio_moneda || '',
+            precio_fecha:    p.precio_fecha  || '',
+            precio_final:    p.precio_costo,
+            bonif1: 0, bonif2: 0, bonif3: 0, bonif4: 0,
+            _fuente: 'stock',
+          }}))
+        } else {
+          // Sin precio en catálogo → buscar en historial de OC
+          const provId    = formOC.proveedor_id
+          const shortDesc = prod.descripcion.trim().split(/\s+/).slice(0, 5).join(' ')
+          api.get('/compras/ultimo-precio', { params: { producto_id: prod.id, descripcion: shortDesc, ...(provId ? { proveedor_id: provId } : {}) } })
+            .then(r2 => { if (r2.data) setRefPrecios(prev => ({ ...prev, [idx]: { ...r2.data, _fuente: 'oc' } })) })
+            .catch(() => {})
+        }
+      })
+      .catch(() => {})
   }
 
   const abrirNuevoMat = idx => {
@@ -240,14 +345,20 @@ export default function Compras() {
     setModalNuevoMat({ idx })
     setPasoNuevoMat('codigo')
     setCodNuevoMat('')
+    setPrefNuevoMat('')
     setFormNuevoMat({ descripcion:'', categoria:'', unidad:'UND.', precio_costo:0, ubicacion:'', stock_minimo:0 })
     setErrNuevoMat('')
   }
 
-  const usarCodigoNuevoMat = (codigo, descripcion) => {
-    setCodNuevoMat(codigo)
-    if (descripcion) setFormNuevoMat(p => ({ ...p, descripcion }))
-    setPasoNuevoMat('datos')
+  const onPrefNuevoMatCambio = async (pref) => {
+    setPrefNuevoMat(pref); setCodNuevoMat('')
+    if (!pref) return
+    setLoadCodNuevoMat(true)
+    try {
+      const { data } = await api.get(`/materiales/next-codigo/${pref}`)
+      setCodNuevoMat(data.codigo)
+    } catch {}
+    finally { setLoadCodNuevoMat(false) }
   }
 
   const guardarNuevoMat = async () => {
@@ -338,13 +449,13 @@ export default function Compras() {
         </li>
         <li className="nav-item">
           <button className={`nav-link ${tab==='form49'?'active':''}`} onClick={() => setTab('form49')}>
-            <i className="bi bi-box-arrow-in-down me-1"/>Form 49
+            <i className="bi bi-box-arrow-in-down me-1"/>Ingreso sin OC
           </button>
         </li>
       </ul>
 
       {/* ─── TAB: FORM 49 ───────────────────────────────────────────── */}
-      {tab === 'form49' && <Form49 canWrite={canWrite} proveedores={provs} />}
+      {tab === 'form49' && <Form49 canWrite={canWrite} proveedores={provs} productos={productos} proyectos={proyectos} />}
 
       {/* ─── TAB: ÓRDENES DE COMPRA ─────────────────────────────────── */}
       {tab === 'oc' && <>
@@ -364,10 +475,10 @@ export default function Compras() {
             <option value="">Todos los estados</option>
             {ESTADOS.map(s => <option key={s.v} value={s.v}>{s.v}</option>)}
           </select>
-          <input type="date" className="form-control form-control-sm" style={{width:135}}
-            value={filtOC.desde} onChange={e => { setFiltOC(p=>({...p,desde:e.target.value})); setPageOC(1) }}/>
-          <input type="date" className="form-control form-control-sm" style={{width:135}}
-            value={filtOC.hasta} onChange={e => { setFiltOC(p=>({...p,hasta:e.target.value})); setPageOC(1) }}/>
+          <DateInput className="form-control form-control-sm" style={{width:135}}
+            value={filtOC.desde} onChange={v => { setFiltOC(p=>({...p,desde:v})); setPageOC(1) }}/>
+          <DateInput className="form-control form-control-sm" style={{width:135}}
+            value={filtOC.hasta} onChange={v => { setFiltOC(p=>({...p,hasta:v})); setPageOC(1) }}/>
           {(filtOC.buscar || filtOC.estado || filtOC.desde || filtOC.hasta) &&
             <button className="btn btn-sm btn-outline-secondary" onClick={() => { setFiltOC({estado:'',buscar:'',desde:'',hasta:''}); setPageOC(1) }}>Limpiar</button>}
         </div>
@@ -473,14 +584,32 @@ export default function Compras() {
                   <tbody>
                     {provs.length === 0
                       ? <tr><td colSpan={canWrite?9:8} className="text-center text-muted py-4">Sin proveedores</td></tr>
-                      : provs.map(p => (
-                          <tr key={p.id} className={selProvs.has(p.id)?'table-warning':''}>
+                      : (() => {
+                          const nc = {}, cc = {}
+                          for (const p of provs) {
+                            const n = p.nombre.trim().toLowerCase()
+                            nc[n] = (nc[n]||0)+1
+                            if (p.cuit?.trim()) { const c=p.cuit.replace(/\D/g,''); if(c) cc[c]=(cc[c]||0)+1 }
+                          }
+                          const dN = new Set(provs.filter(p=>nc[p.nombre.trim().toLowerCase()]>1).map(p=>p.id))
+                          const dC = new Set(provs.filter(p=>{ const c=p.cuit?.replace(/\D/g,''); return c&&cc[c]>1 }).map(p=>p.id))
+                          return provs.map(p => {
+                          const isDupN = dN.has(p.id), isDupC = dC.has(p.id)
+                          const rc = isDupC ? 'table-danger' : isDupN ? 'table-warning' : selProvs.has(p.id) ? 'table-active' : ''
+                          return (
+                          <tr key={p.id} className={rc}>
                             <td className="text-center">
                               <input type="checkbox" className="form-check-input mt-0"
                                 checked={selProvs.has(p.id)} onChange={() => toggleSelProv(p.id)}/>
                             </td>
-                            <td className="fw-semibold">{p.nombre}</td>
-                            <td className="text-muted">{p.cuit||'—'}</td>
+                            <td className="fw-semibold">
+                              {p.nombre}
+                              {isDupN && <span className="badge bg-warning text-dark ms-1" style={{fontSize:'0.6rem'}}>dup.</span>}
+                            </td>
+                            <td className="text-muted">
+                              {p.cuit||'—'}
+                              {isDupC && <span className="badge bg-danger ms-1" style={{fontSize:'0.6rem'}}>dup.</span>}
+                            </td>
                             <td>{p.contacto||'—'}</td>
                             <td>{p.telefono||'—'}</td>
                             <td>{p.email||'—'}</td>
@@ -493,7 +622,8 @@ export default function Compras() {
                               </td>
                             )}
                           </tr>
-                        ))
+                        )})
+                        })()
                     }
                   </tbody>
                 </table>
@@ -616,6 +746,18 @@ export default function Compras() {
                           <i className="bi bi-box-arrow-in-down me-1"/>Recibir mercadería
                         </button>
                       )}
+                      {canWrite && (modalOC.estado === 'Recibida' || modalOC.estado === 'Parcial') && (
+                        <button className="btn btn-sm btn-outline-warning"
+                          onClick={async () => {
+                            if (!confirm(`¿Volver la OC #${modalOC.numero} a estado Emitida? Se borrarán los ingresos pendientes de esta OC.`)) return
+                            try {
+                              await api.post(`/compras/oc/${modalOC.id}/resetear-recepcion`)
+                              setModalOC(null); cargarOC()
+                            } catch(e) { alert(e.response?.data?.error || 'Error') }
+                          }}>
+                          <i className="bi bi-arrow-counterclockwise me-1"/>Volver a Emitida
+                        </button>
+                      )}
                       {canWrite && <>
                         <button className="btn btn-sm btn-outline-primary" onClick={() => { setModalOC(null); abrirEditarOC(modalOC) }}>
                           <i className="bi bi-pencil me-1"/>Editar
@@ -668,22 +810,23 @@ export default function Compras() {
 
                   {/* Fila 1: Proveedor + datos principales */}
                   <div className="row g-2 mb-2">
-                    <div className="col-md-4 position-relative">
+                    <div className="col-md-4">
                       <label className="form-label small fw-medium mb-1">Proveedor *</label>
-                      <input className="form-control form-control-sm" value={formOC.proveedor_nombre} required
-                        placeholder="Buscar o escribir proveedor…" onChange={e => buscarProvOC(e.target.value)}/>
-                      {sugsP.length > 0 && (
-                        <div className="border rounded shadow-sm position-absolute bg-white" style={{zIndex:9999,top:'100%',left:0,width:'100%',maxHeight:360,overflowY:'auto'}}>
-                          {sugsP.map(p => (
-                            <div key={p.id} className="px-3 py-2 border-bottom" style={{cursor:'pointer',fontSize:'0.83rem'}}
-                              onMouseEnter={e=>e.currentTarget.classList.add('bg-light')}
-                              onMouseLeave={e=>e.currentTarget.classList.remove('bg-light')}
-                              onClick={() => { setFormOC(prev=>({...prev,proveedor_id:p.id,proveedor_nombre:p.nombre,proveedor_cuit:p.cuit||''})); setSugsP([]); setProvInfoOC(p) }}>
-                              <strong>{p.nombre}</strong>{p.cuit && <span className="text-muted ms-2 small">{p.cuit}</span>}
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      <select className="form-select form-select-sm" required
+                        value={formOC.proveedor_id}
+                        onChange={e => {
+                          const p = provs.find(x => String(x.id) === e.target.value)
+                          const b1 = p?.bonif1||0, b2 = p?.bonif2||0, b3 = p?.bonif3||0, b4 = p?.bonif4||0
+                          setFormOC(prev => ({
+                            ...prev,
+                            proveedor_id: e.target.value, proveedor_nombre: p?.nombre||'', proveedor_cuit: p?.cuit||'',
+                            items: prev.items.map(it => ({ ...it, bonif1: b1, bonif2: b2, bonif3: b3, bonif4: b4, precio_final: calcFinal(it.precio_unitario, b1, b2, b3, b4) })),
+                          }))
+                          setProvInfoOC(p || null)
+                        }}>
+                        <option value="">— Seleccionar proveedor —</option>
+                        {provs.map(p => <option key={p.id} value={String(p.id)}>{p.nombre}</option>)}
+                      </select>
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small fw-medium mb-1">CUIT</label>
@@ -692,8 +835,8 @@ export default function Compras() {
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small fw-medium mb-1">Fecha *</label>
-                      <input type="date" className="form-control form-control-sm" value={formOC.fecha} required
-                        onChange={e=>setFormOC(p=>({...p,fecha:e.target.value}))}/>
+                      <DateInput className="form-control form-control-sm" value={formOC.fecha} required
+                        onChange={v=>setFormOC(p=>({...p,fecha:v}))}/>
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small fw-medium mb-1">Moneda</label>
@@ -728,8 +871,8 @@ export default function Compras() {
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small fw-medium mb-1">Fecha Entrega Est.</label>
-                      <input type="date" className="form-control form-control-sm" value={formOC.fecha_entrega_est}
-                        onChange={e=>setFormOC(p=>({...p,fecha_entrega_est:e.target.value}))}/>
+                      <DateInput className="form-control form-control-sm" value={formOC.fecha_entrega_est}
+                        onChange={v=>setFormOC(p=>({...p,fecha_entrega_est:v}))}/>
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small fw-medium mb-1">Estado Doc.</label>
@@ -780,6 +923,12 @@ export default function Compras() {
                         <i className="bi bi-person me-1 text-muted"/>
                         {provInfoOC.vendedor ? `Vendedor: ${provInfoOC.vendedor}` : 'Sin vendedor'}
                       </span>
+                      {(provInfoOC.bonif1 > 0 || provInfoOC.bonif2 > 0 || provInfoOC.bonif3 > 0 || provInfoOC.bonif4 > 0) && (
+                        <span style={{color:'#555'}}>
+                          <i className="bi bi-percent me-1 text-muted"/>
+                          Bonif: {[provInfoOC.bonif1, provInfoOC.bonif2, provInfoOC.bonif3, provInfoOC.bonif4].filter(b=>b>0).map(b=>`${b}%`).join('+')}
+                        </span>
+                      )}
                       <button type="button" className="btn btn-xs btn-outline-secondary py-0 px-2 ms-auto"
                         style={{fontSize:'0.7rem'}}
                         onClick={() => {
@@ -805,7 +954,8 @@ export default function Compras() {
                     <thead className="table-light">
                       <tr>
                         <th style={{width:28}}>#</th>
-                        <th>DESCRIPCIÓN</th>
+                        <th style={{width:90}}>CÓDIGO</th>
+                        <th style={{minWidth:450}}>DESCRIPCIÓN</th>
                         <th style={{width:68}}>UNID.</th>
                         <th style={{width:76}}>CANT.</th>
                         <th style={{width:96}}>PRECIO U.</th>
@@ -814,6 +964,7 @@ export default function Compras() {
                         <th style={{width:56}}>B3%</th>
                         <th style={{width:56}}>B4%</th>
                         <th style={{width:96}}>PRECIO F.</th>
+                        <th style={{width:96}}>SUBTOTAL</th>
                         <th style={{width:96}}>PLAZO</th>
                         <th style={{width:28}}/>
                       </tr>
@@ -822,11 +973,30 @@ export default function Compras() {
                       {formOC.items.map((it, idx) => (
                         <tr key={idx}>
                           <td className="text-muted text-center align-middle">{idx+1}</td>
-                          <td>
+                          <td className="text-center align-middle" style={{verticalAlign:'middle'}}>
+                            {it.producto_id
+                              ? <span className="badge bg-dark" style={{fontFamily:'monospace', fontSize:'0.68rem', letterSpacing:0.5}}>{it.producto_codigo||'—'}</span>
+                              : <div className="d-flex flex-column align-items-center gap-1">
+                                  <span className="badge bg-warning text-dark" style={{fontSize:'0.65rem'}}>S/C</span>
+                                  <div className="form-check mb-0" style={{lineHeight:1}}>
+                                    <input className="form-check-input mt-0" type="checkbox" id={`sc_${idx}`}
+                                      checked={!!it.sin_codificar}
+                                      onChange={e => setItem(idx, 'sin_codificar', e.target.checked)}/>
+                                    <label className="form-check-label text-muted" htmlFor={`sc_${idx}`} style={{fontSize:'0.6rem'}}>pend.</label>
+                                  </div>
+                                </div>
+                            }
+                          </td>
+                          <td style={{minWidth:450}}>
                             <input className="form-control form-control-sm border-0 p-0 px-1" value={it.descripcion}
                               ref={el => { itemDescRefs.current[idx] = el }}
                               onChange={e => buscarProductoItem(idx, e.target.value)}
                               onBlur={() => setTimeout(() => setSugsItem({ idx: null, list: [], pos: null }), 150)}/>
+                            {refPrecios[idx] && <div className="text-secondary" style={{fontSize:'0.62rem',lineHeight:1.2,marginTop:1}}>
+                              {refPrecios[idx]._fuente === 'oc'
+                                ? `Ref. OC #${refPrecios[idx].numero} · ${fmtF(refPrecios[idx].fecha)}`
+                                : `Ref. stock${refPrecios[idx].precio_moneda ? ` · ${refPrecios[idx].precio_moneda}` : ''}${refPrecios[idx].precio_fecha ? ` · ${fmtF(refPrecios[idx].precio_fecha)}` : ''}`}
+                            </div>}
                             {sugsItem.idx === idx && sugsItem.pos && (
                               <div className="border rounded shadow bg-white"
                                 style={{position:'fixed', zIndex:9999, top: sugsItem.pos.top, left: sugsItem.pos.left, width: sugsItem.pos.width, maxWidth:620}}
@@ -837,7 +1007,7 @@ export default function Compras() {
                                     ? <div className="px-3 py-2 text-muted small fst-italic">Sin coincidencias</div>
                                     : sugsItem.list.map(p => (
                                         <div key={p.id}
-                                          className="d-flex align-items-center gap-2 px-2 py-2 border-bottom"
+                                          className="d-flex align-items-start gap-2 px-2 py-2 border-bottom"
                                           style={{cursor:'pointer'}}
                                           onMouseEnter={e=>e.currentTarget.classList.add('bg-light')}
                                           onMouseLeave={e=>e.currentTarget.classList.remove('bg-light')}
@@ -846,7 +1016,7 @@ export default function Compras() {
                                             style={{fontFamily:'monospace', fontSize:'0.72rem', minWidth:72, letterSpacing:0.5}}>
                                             {p.codigo}
                                           </span>
-                                          <span className="flex-grow-1 text-truncate" style={{fontSize:'0.82rem'}}>
+                                          <span className="flex-grow-1" style={{fontSize:'0.82rem'}}>
                                             {p.descripcion}
                                           </span>
                                           <span className="d-flex flex-column align-items-end flex-shrink-0 gap-0"
@@ -861,25 +1031,42 @@ export default function Compras() {
                                   }
                                 </div>
                                 {/* botón siempre visible, fuera del scroll */}
-                                {codConfig && (
-                                  <div className="px-2 py-2 border-top d-flex align-items-center gap-2"
-                                    style={{background:'#eef2ff', cursor:'pointer'}}
-                                    onMouseDown={e => { e.preventDefault(); abrirNuevoMat(idx) }}>
-                                    <i className="bi bi-plus-circle-fill text-primary"/>
-                                    <span className="small text-primary fw-semibold">Crear nuevo material en stock</span>
-                                  </div>
-                                )}
+                                <div className="px-2 py-2 border-top d-flex align-items-center gap-2"
+                                  style={{background:'#eef2ff', cursor:'pointer'}}
+                                  onMouseDown={e => { e.preventDefault(); abrirNuevoMat(idx) }}>
+                                  <i className="bi bi-plus-circle-fill text-primary"/>
+                                  <span className="small text-primary fw-semibold">Crear nuevo material en stock</span>
+                                </div>
                               </div>
                             )}
                           </td>
                           <td><input className="form-control form-control-sm border-0 p-0 px-1" value={it.unidad} onChange={e=>setItem(idx,'unidad',e.target.value)}/></td>
                           <td><input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.cantidad} min="0" step="any" onChange={e=>setItem(idx,'cantidad',e.target.value)}/></td>
-                          <td><input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.precio_unitario} min="0" step="any" onChange={e=>setItem(idx,'precio_unitario',e.target.value)}/></td>
-                          <td><input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif1} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif1',e.target.value)}/></td>
-                          <td><input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif2} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif2',e.target.value)}/></td>
-                          <td><input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif3} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif3',e.target.value)}/></td>
-                          <td><input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif4} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif4',e.target.value)}/></td>
-                          <td className="text-end fw-semibold align-middle" style={{background:'#f8f9fa'}}>{fmtN(it.precio_final)}</td>
+                          <td>
+                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.precio_unitario} min="0" step="any" onChange={e=>setItem(idx,'precio_unitario',e.target.value)}/>
+                            {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{fmtN(refPrecios[idx].precio_unitario)}</div>}
+                          </td>
+                          <td>
+                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif1} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif1',e.target.value)}/>
+                            {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif1 > 0 ? refPrecios[idx].bonif1 : '—'}</div>}
+                          </td>
+                          <td>
+                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif2} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif2',e.target.value)}/>
+                            {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif2 > 0 ? refPrecios[idx].bonif2 : '—'}</div>}
+                          </td>
+                          <td>
+                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif3} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif3',e.target.value)}/>
+                            {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif3 > 0 ? refPrecios[idx].bonif3 : '—'}</div>}
+                          </td>
+                          <td>
+                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif4} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif4',e.target.value)}/>
+                            {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif4 > 0 ? refPrecios[idx].bonif4 : '—'}</div>}
+                          </td>
+                          <td style={{background:'#f8f9fa'}}>
+                            <div className="text-end fw-semibold">{fmtN(it.precio_final)}</div>
+                            {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}} title={`OC #${refPrecios[idx].numero} — ${fmtF(refPrecios[idx].fecha)}`}>{fmtN(refPrecios[idx].precio_final)}</div>}
+                          </td>
+                          <td className="text-end fw-bold align-middle" style={{background:'#eef2ff'}}>{fmtN((parseFloat(it.cantidad)||0) * (parseFloat(it.precio_final)||0))}</td>
                           <td><input className="form-control form-control-sm border-0 p-0 px-1" value={it.plazo} onChange={e=>setItem(idx,'plazo',e.target.value)}/></td>
                           <td className="text-center align-middle">
                             <button type="button" className="btn btn-xs text-danger py-0 px-1" disabled={formOC.items.length===1} onClick={()=>quitarItem(idx)}>
@@ -891,8 +1078,8 @@ export default function Compras() {
                     </tbody>
                     <tfoot>
                       <tr>
-                        <td colSpan={9} className="text-end fw-bold small">TOTAL {formOC.moneda}</td>
-                        <td className="text-end fw-bold">{fmtN(totalItemsOC)}</td>
+                        <td colSpan={11} className="text-end fw-bold small">TOTAL {formOC.moneda}</td>
+                        <td className="text-end fw-bold" style={{background:'#eef2ff'}}>{fmtN(totalItemsOC)}</td>
                         <td colSpan={2}/>
                       </tr>
                     </tfoot>
@@ -923,7 +1110,7 @@ export default function Compras() {
                 <div className="row g-2 mb-3">
                   <div className="col-auto">
                     <label className="form-label small fw-medium">Fecha de recepción</label>
-                    <input type="date" className="form-control form-control-sm" style={{width:160}} value={fechaRec} onChange={e=>setFechaRec(e.target.value)}/>
+                    <DateInput className="form-control form-control-sm" style={{width:160}} value={fechaRec} onChange={v=>setFechaRec(v)}/>
                   </div>
                   <div className="col">
                     <label className="form-label small fw-medium">N° Remito</label>
@@ -941,19 +1128,109 @@ export default function Compras() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(modalRec.items||[]).filter(it=>it.producto_id).length === 0
-                      ? <tr><td colSpan={5} className="text-center text-muted py-3">Sin ítems con producto asociado</td></tr>
-                      : (modalRec.items||[]).filter(it=>it.producto_id).map(it => {
+                    {(modalRec.items||[]).length === 0
+                      ? <tr><td colSpan={5} className="text-center text-muted py-3">Sin ítems</td></tr>
+                      : (modalRec.items||[]).map(it => {
+                          const sinCod = !it.producto_id
                           const pend = it.cantidad - (it.cant_recibida||0)
                           return (
-                            <tr key={it.id}>
-                              <td>{it.descripcion}</td>
-                              <td className="text-end">{fmtN(it.cantidad)}</td>
-                              <td className="text-end text-success">{fmtN(it.cant_recibida||0)}</td>
-                              <td className={`text-end ${pend>0?'text-warning':''}`}>{fmtN(pend)}</td>
+                            <tr key={it.id} style={sinCod ? {background:'#fff8e1', outline:'1px solid #ffc107'} : {}}>
                               <td>
-                                <input type="number" className="form-control form-control-sm text-end" value={recCants[it.id]??0}
-                                  min="0" max={pend} step="any" disabled={pend<=0}
+                                {it.descripcion}
+                                {it.producto_codigo
+                                  ? <span className="badge bg-dark ms-1" style={{fontFamily:'monospace',fontSize:'0.65rem'}}>{it.producto_codigo}</span>
+                                  : (
+                                    linkRecItem?.itemId === it.id && linkRecItem.mode === 'search'
+                                    ? (
+                                      <div className="mt-1 position-relative">
+                                        <input className="form-control form-control-sm" style={{fontSize:'0.78rem'}}
+                                          placeholder="Buscar producto del catálogo..."
+                                          value={linkRecItem.query} autoFocus
+                                          onChange={e => buscarLinkRecProd(e.target.value)}
+                                          onBlur={() => setTimeout(() => setLinkRecItem(null), 200)} />
+                                        {linkRecItem.sugs.length > 0 && (
+                                          <div className="border rounded shadow bg-white position-absolute"
+                                            style={{zIndex:9999,left:0,right:0,top:'100%',maxHeight:180,overflowY:'auto'}}>
+                                            {linkRecItem.sugs.map(p => (
+                                              <div key={p.id} className="px-2 py-1 d-flex gap-2 align-items-start"
+                                                style={{cursor:'pointer',fontSize:'0.78rem'}}
+                                                onMouseDown={() => confirmarLinkRecProd(p)}>
+                                                <span className="badge bg-dark flex-shrink-0 mt-1" style={{fontFamily:'monospace',fontSize:'0.65rem'}}>{p.codigo}</span>
+                                                <span>{p.descripcion}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                        <button type="button" className="btn btn-link btn-sm p-0 mt-1 text-primary" style={{fontSize:'0.7rem'}}
+                                          onMouseDown={() => iniciarCrearRec(it.id)}>
+                                          ¿No existe? Crear con código nuevo
+                                        </button>
+                                      </div>
+                                    )
+                                    : linkRecItem?.itemId === it.id && linkRecItem.mode === 'create'
+                                    ? (
+                                      <div className="mt-1 border rounded p-2" style={{background:'#f0f4ff',fontSize:'0.78rem'}}>
+                                        <div className="fw-semibold text-primary mb-1" style={{fontSize:'0.73rem'}}>
+                                          <i className="bi bi-tag me-1"/>Crear con código nuevo
+                                        </div>
+                                        <div className="d-flex gap-1 align-items-center mb-1 flex-wrap">
+                                          <select className="form-select form-select-sm" style={{maxWidth:260,fontSize:'0.75rem'}}
+                                            value={linkRecItem.crearPrefijo}
+                                            onChange={e => onCrearPrefijoCambioRec(e.target.value)}>
+                                            <option value="">— Familia / Tipo —</option>
+                                            {Object.entries(
+                                              PREFIJOS.reduce((acc, pf) => { const f=pf.p[0]; (acc[f]=acc[f]||[]).push(pf); return acc }, {})
+                                            ).map(([fam, items]) => (
+                                              <optgroup key={fam} label={`${fam} — ${FAM_NOMBRES[fam]||fam}`}>
+                                                {items.map(pf => <option key={pf.p} value={pf.p}>{pf.p} — {pf.d}</option>)}
+                                              </optgroup>
+                                            ))}
+                                          </select>
+                                          <input className="form-control form-control-sm" readOnly
+                                            style={{maxWidth:115,fontFamily:'monospace',fontSize:'0.78rem'}}
+                                            value={linkRecItem.crearCodigo} placeholder="Código..." />
+                                          {linkRecItem.crearLoadingCod && <span className="spinner-border spinner-border-sm text-primary"/>}
+                                        </div>
+                                        <div className="d-flex gap-1 flex-wrap">
+                                          <button type="button" className="btn btn-primary btn-sm py-0" style={{fontSize:'0.73rem'}}
+                                            disabled={!linkRecItem.crearCodigo || linkRecItem.crearLoadingCod}
+                                            onClick={() => confirmarCrearRecProd(it.descripcion)}>
+                                            <i className="bi bi-plus-lg me-1"/>Crear y asignar
+                                          </button>
+                                          <button type="button" className="btn btn-outline-secondary btn-sm py-0" style={{fontSize:'0.73rem'}}
+                                            onClick={() => iniciarLinkRec(it.id)}>
+                                            Buscar existente
+                                          </button>
+                                          <button type="button" className="btn btn-outline-danger btn-sm py-0" style={{fontSize:'0.73rem'}}
+                                            onClick={() => setLinkRecItem(null)}>
+                                            Cancelar
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )
+                                    : (
+                                      <div className="mt-1 d-flex align-items-center gap-1 flex-wrap">
+                                        <span className="badge bg-warning text-dark" style={{fontSize:'0.65rem'}}>Sin código</span>
+                                        <button type="button" className="btn btn-outline-warning btn-sm py-0 px-1" style={{fontSize:'0.65rem'}}
+                                          onClick={() => iniciarLinkRec(it.id)}>
+                                          Asignar existente
+                                        </button>
+                                        <button type="button" className="btn btn-outline-primary btn-sm py-0 px-1" style={{fontSize:'0.65rem'}}
+                                          onClick={() => iniciarCrearRec(it.id)}>
+                                          Crear nuevo
+                                        </button>
+                                      </div>
+                                    )
+                                  )
+                                }
+                              </td>
+                              <td className="text-end align-middle">{fmtN(it.cantidad)}</td>
+                              <td className="text-end align-middle text-success">{fmtN(it.cant_recibida||0)}</td>
+                              <td className={`text-end align-middle ${pend>0&&!sinCod?'text-warning':''}`}>{fmtN(pend)}</td>
+                              <td>
+                                <input type="number" className="form-control form-control-sm text-end"
+                                  value={recCants[it.id]??0} min="0" max={pend} step="any"
+                                  disabled={pend<=0 || sinCod}
                                   style={{marginLeft:'auto'}}
                                   onChange={e=>setRecCants(p=>({...p,[it.id]:parseFloat(e.target.value)||0}))}/>
                               </td>
@@ -1042,9 +1319,9 @@ export default function Compras() {
       )}
 
       {/* ══ MODAL: NUEVO MATERIAL ═══════════════════════════════════════ */}
-      {modalNuevoMat && codConfig && (
+      {modalNuevoMat && (
         <div className="modal show d-block" style={{background:'rgba(0,0,0,.6)', zIndex:1100}}>
-          <div className="modal-dialog modal-xl modal-dialog-scrollable">
+          <div className="modal-dialog modal-lg modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header py-2 bg-dark text-white">
                 <h5 className="modal-title small fw-bold">
@@ -1070,7 +1347,40 @@ export default function Compras() {
 
               <div className="modal-body">
                 {pasoNuevoMat === 'codigo' && (
-                  <Asistente config={codConfig} onUsar={usarCodigoNuevoMat} />
+                  <div className="p-2">
+                    <p className="fw-medium small mb-3 text-primary">
+                      <i className="bi bi-hash me-1"/>Seleccioná familia y tipo de material
+                    </p>
+                    <div className="row g-3 align-items-end">
+                      <div className="col-md-7">
+                        <label className="form-label small fw-medium">Familia / Tipo</label>
+                        <select className="form-select" value={prefNuevoMat} onChange={e => onPrefNuevoMatCambio(e.target.value)}>
+                          <option value="">— Seleccionar —</option>
+                          {Object.entries(PREFIJOS.reduce((acc, pf) => { const f=pf.p[0]; (acc[f]=acc[f]||[]).push(pf); return acc }, {}))
+                            .map(([fam, its]) => (
+                            <optgroup key={fam} label={`${fam} — ${FAM_NOMBRES[fam]||fam}`}>
+                              {its.map(pf => <option key={pf.p} value={pf.p}>{pf.p} — {pf.d}</option>)}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small fw-medium">Código generado</label>
+                        <div className="input-group">
+                          <input className="form-control" readOnly
+                            style={{fontFamily:'monospace', letterSpacing:2}}
+                            value={codNuevoMat} placeholder="—"/>
+                          {loadCodNuevoMat && <span className="input-group-text"><span className="spinner-border spinner-border-sm"/></span>}
+                        </div>
+                      </div>
+                      <div className="col-md-2">
+                        <button className="btn btn-primary w-100" disabled={!codNuevoMat || loadCodNuevoMat}
+                          onClick={() => setPasoNuevoMat('datos')}>
+                          Siguiente <i className="bi bi-arrow-right ms-1"/>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 )}
 
                 {pasoNuevoMat === 'datos' && (
@@ -1230,6 +1540,7 @@ export default function Compras() {
           </div>
         </div>
       )}
+
     </>
   )
 }

@@ -91,6 +91,146 @@ router.get('/dashboard', verificarToken, (req, res) => {
   res.json({ kpiC, kpiV, kpiVTotal, porMesC, porMesV, vencimientos, conAnticipo, topProv })
 })
 
+router.get('/dashboard-diario', verificarToken, (req, res) => {
+  const hoy = new Date().toISOString().slice(0, 10)
+
+  // Último saldo por banco + E-CHEQs sin confirmar de ese banco
+  const saldosBancarios = db.prepare(`
+    SELECT s1.entidad, s1.monto, s1.moneda, s1.created_at, u.nombre as usuario_nombre,
+      COALESCE((
+        SELECT SUM(pfc.importe)
+        FROM pagos_factura_compra pfc
+        WHERE pfc.forma_pago = 'e-cheq' AND pfc.estado = 'pendiente' AND pfc.entidad = s1.entidad
+      ), 0) as echeq_pendiente
+    FROM saldo_bancario s1
+    LEFT JOIN usuarios u ON u.id = s1.created_by
+    WHERE s1.id = (SELECT MAX(id) FROM saldo_bancario s2 WHERE s2.entidad = s1.entidad)
+    ORDER BY s1.entidad
+  `).all()
+
+  // Solo servicios con monto cargado
+  const serviciosPendientes = db.prepare(`
+    SELECT sc.id as cuota_id, s.id as servicio_id, s.descripcion, s.periodicidad, s.usuario,
+      sc.vencimiento, sc.monto, sc.estado,
+      CASE
+        WHEN sc.vencimiento < ? THEN 'vencida'
+        WHEN sc.vencimiento = ? THEN 'hoy'
+        WHEN sc.vencimiento <= date(?, '+7 days') THEN 'semana'
+        ELSE 'mes'
+      END as alerta
+    FROM servicios s
+    JOIN servicios_cuotas sc ON sc.servicio_id = s.id
+    WHERE s.activo = 1 AND sc.estado = 'pendiente' AND sc.vencimiento > ''
+      AND sc.vencimiento <= date(?, '+30 days')
+      AND sc.monto IS NOT NULL AND sc.monto > 0
+    ORDER BY sc.vencimiento ASC
+  `).all(hoy, hoy, hoy, hoy)
+
+  const comprasPendientes = db.prepare(`
+    SELECT COUNT(*) as count,
+      COALESCE(SUM(MAX(0, (f.importe * COALESCE(f.tasa_cambio, 1)) - COALESCE(pag.total_pagado, 0))), 0) as total_pesos
+    FROM facturas_compra f
+    LEFT JOIN (
+      SELECT factura_id, SUM(CASE WHEN estado='confirmado' THEN importe ELSE 0 END) AS total_pagado
+      FROM pagos_factura_compra GROUP BY factura_id
+    ) pag ON pag.factura_id = f.id
+    WHERE f.pago_confirmado = 0
+  `).get()
+
+  const ventasPendientes = db.prepare(`
+    SELECT COUNT(*) as count,
+      COALESCE(SUM(MAX(0, (f.importe * COALESCE(f.tasa_cambio, 1)) - COALESCE(pag.total_pagado, 0))), 0) as total_pesos
+    FROM facturas_venta f
+    LEFT JOIN (
+      SELECT factura_id, SUM(CASE WHEN estado='confirmado' THEN importe ELSE 0 END) AS total_pagado
+      FROM pagos_factura_venta GROUP BY factura_id
+    ) pag ON pag.factura_id = f.id
+    WHERE f.pago_confirmado = 0 AND f.tipo_factura NOT LIKE 'NC%'
+  `).get()
+
+  const facturasPorPagar = db.prepare(`
+    SELECT f.id, f.numero, f.proveedor_nombre as nombre, f.fecha, f.fecha_vencimiento,
+      f.importe, f.moneda, f.tasa_cambio,
+      COALESCE(pag.total_pagado, 0) as total_pagado,
+      MAX(0, (f.importe * COALESCE(f.tasa_cambio, 1)) - COALESCE(pag.total_pagado, 0)) as saldo_pesos
+    FROM facturas_compra f
+    LEFT JOIN (
+      SELECT factura_id, SUM(CASE WHEN estado='confirmado' THEN importe ELSE 0 END) AS total_pagado
+      FROM pagos_factura_compra GROUP BY factura_id
+    ) pag ON pag.factura_id = f.id
+    WHERE f.pago_confirmado = 0
+    ORDER BY CASE WHEN f.fecha_vencimiento IS NULL OR f.fecha_vencimiento = '' THEN '9999' ELSE f.fecha_vencimiento END ASC
+    LIMIT 30
+  `).all()
+
+  const facturasPorCobrar = db.prepare(`
+    SELECT f.id, f.numero, f.cliente_nombre as nombre, f.fecha, f.fecha_vencimiento,
+      f.importe, f.moneda, f.tasa_cambio,
+      COALESCE(pag.total_pagado, 0) as total_pagado,
+      MAX(0, (f.importe * COALESCE(f.tasa_cambio, 1)) - COALESCE(pag.total_pagado, 0)) as saldo_pesos
+    FROM facturas_venta f
+    LEFT JOIN (
+      SELECT factura_id, SUM(CASE WHEN estado='confirmado' THEN importe ELSE 0 END) AS total_pagado
+      FROM pagos_factura_venta GROUP BY factura_id
+    ) pag ON pag.factura_id = f.id
+    WHERE f.pago_confirmado = 0 AND f.tipo_factura NOT LIKE 'NC%'
+    ORDER BY CASE WHEN f.fecha_vencimiento IS NULL OR f.fecha_vencimiento = '' THEN '9999' ELSE f.fecha_vencimiento END ASC
+    LIMIT 30
+  `).all()
+
+  const vencimientosProximos = db.prepare(`
+    SELECT 'compra' as tipo, id, numero, proveedor_nombre as nombre, importe, moneda, tasa_cambio, fecha_vencimiento
+    FROM facturas_compra WHERE pago_confirmado=0 AND fecha_vencimiento >= ? AND fecha_vencimiento <= date(?, '+7 days')
+    UNION ALL
+    SELECT 'venta', id, numero, cliente_nombre, importe, moneda, tasa_cambio, fecha_vencimiento
+    FROM facturas_venta WHERE pago_confirmado=0 AND fecha_vencimiento >= ? AND fecha_vencimiento <= date(?, '+7 days')
+      AND tipo_factura NOT LIKE 'NC%'
+    ORDER BY fecha_vencimiento ASC LIMIT 10
+  `).all(hoy, hoy, hoy, hoy)
+
+  // E-CHEQs emitidos pendientes de confirmación por Finanzas
+  const echeqsEmitidos = db.prepare(`
+    SELECT pfc.id, pfc.factura_id, pfc.fecha, pfc.fecha_acreditacion, pfc.entidad, pfc.importe, pfc.moneda,
+      fc.proveedor_nombre, fc.numero as factura_numero
+    FROM pagos_factura_compra pfc
+    JOIN facturas_compra fc ON fc.id = pfc.factura_id
+    WHERE pfc.forma_pago = 'e-cheq' AND pfc.estado = 'pendiente'
+    ORDER BY
+      CASE WHEN pfc.fecha_acreditacion = '' OR pfc.fecha_acreditacion IS NULL THEN 1 ELSE 0 END,
+      pfc.fecha_acreditacion ASC
+  `).all()
+
+  // Último tipo de cambio BNA registrado
+  const tipoCambioBNA = db.prepare(`
+    SELECT tc.valor, tc.fecha, tc.moneda, tc.fuente, tc.created_at, u.nombre as usuario_nombre
+    FROM tipo_cambio tc LEFT JOIN usuarios u ON u.id = tc.created_by
+    WHERE tc.moneda = 'DÓLAR'
+    ORDER BY tc.created_at DESC, tc.id DESC LIMIT 1
+  `).get() || null
+
+  // IVA acumulado: mes actual + 2 anteriores
+  const ivaData = [0, 1, 2].map(i => {
+    const d = new Date()
+    d.setDate(1)
+    d.setMonth(d.getMonth() - i)
+    const mes = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
+    const label = d.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })
+    const ic = db.prepare(`
+      SELECT
+        COALESCE(SUM(iva_21 + iva_10_5 + iva_27), 0) as iva_base,
+        COALESCE(SUM(perc_iva), 0) as percepciones
+      FROM facturas_compra WHERE strftime('%Y-%m', fecha) = ?
+    `).get(mes)
+    const iv = db.prepare(`
+      SELECT COALESCE(SUM(iva_21), 0) as total
+      FROM facturas_venta WHERE strftime('%Y-%m', fecha) = ?
+    `).get(mes)
+    return { mes, label, iva_compras: ic.iva_base, perc_iva_compras: ic.percepciones, iva_ventas: iv.total }
+  })
+
+  res.json({ saldosBancarios, serviciosPendientes, comprasPendientes, ventasPendientes, facturasPorPagar, facturasPorCobrar, vencimientosProximos, echeqsEmitidos, ivaData, tipoCambioBNA })
+})
+
 // ── Cuentas ────────────────────────────────────────────────────────────────────
 
 router.get('/cuentas', verificarToken, (req, res) => {
@@ -241,34 +381,43 @@ router.get('/exportar', verificarToken, (req, res) => {
 
 // ── Facturas de Compra ────────────────────────────────────────────────────────
 
+function recalcPagoFC(facturaId) {
+  const total = db.prepare(`
+    SELECT COALESCE(SUM(CASE WHEN estado='confirmado' THEN importe ELSE 0 END),0) AS total
+    FROM pagos_factura_compra WHERE factura_id=?`).get(facturaId).total;
+  const f = db.prepare('SELECT importe,tasa_cambio FROM facturas_compra WHERE id=?').get(facturaId);
+  if (!f) return;
+  const saldo = Math.max(0, (f.importe * (f.tasa_cambio || 1)) - total);
+  const pagado = saldo <= 0.01 ? 1 : 0;
+  db.prepare("UPDATE facturas_compra SET pago_confirmado=?,updated_at=datetime('now','localtime') WHERE id=?").run(pagado, facturaId);
+}
+
 router.get('/facturas-compra', verificarToken, (req, res) => {
   const { buscar, desde, hasta, moneda, pago } = req.query;
-  const conds = [], params = [];
-  if (desde)  { conds.push('fecha >= ?');  params.push(desde); }
-  if (hasta)  { conds.push('fecha <= ?');  params.push(hasta); }
-  if (moneda) { conds.push('moneda = ?');  params.push(moneda); }
-  if (pago === '1') { conds.push('pago_confirmado = 1'); }
-  if (pago === '0') { conds.push('pago_confirmado = 0'); }
-  if (buscar) {
-    const b = buscar.trim().toLowerCase();
-    conds.push("(LOWER(numero) LIKE ? OR LOWER(proveedor_nombre) LIKE ? OR LOWER(ref_doc) LIKE ?)");
-    params.push(`%${b}%`, `%${b}%`, `%${b}%`);
-  }
-  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
 
-  const rows = db.prepare(`
+  let result = db.prepare(`
     SELECT 'manual' AS fuente, f.id, f.tipo_factura, f.numero, f.fecha,
       f.proveedor_nombre, f.proveedor_id, f.cuit,
       f.oc_id, COALESCE(f.oc_numero,'') AS ref_doc,
       f.neto_gravado, f.no_grav_exento,
       f.iva_21, f.iva_10_5, f.iva_27, f.otros_imp, f.perc_iva, f.perc_iibb,
       f.importe, f.moneda, f.tasa_cambio, f.fecha_vencimiento, f.pago_confirmado,
-      f.anticipo, f.fecha_anticipo, f.observaciones, f.updated_at
+      f.anticipo, f.fecha_anticipo, f.observaciones, f.updated_at,
+      COALESCE(pag.total_pagado, 0) AS total_pagado,
+      COALESCE(pag.count_pagos,  0) AS count_pagos
     FROM facturas_compra f
+    LEFT JOIN (
+      SELECT factura_id,
+        SUM(CASE WHEN estado='confirmado' THEN importe ELSE 0 END) AS total_pagado,
+        COUNT(*) AS count_pagos
+      FROM pagos_factura_compra GROUP BY factura_id
+    ) pag ON pag.factura_id = f.id
+    ORDER BY f.fecha DESC, f.id DESC
   `).all();
-
-  // Filtrar en JS para evitar sub-select complejo con WHERE en UNION
-  let result = rows;
+  result = result.map(r => ({
+    ...r,
+    saldo_pendiente: r.pago_confirmado ? 0 : Math.max(0, (r.importe * (r.tasa_cambio || 1)) - (r.total_pagado || 0))
+  }));
   if (desde)  result = result.filter(r => r.fecha >= desde);
   if (hasta)  result = result.filter(r => r.fecha <= hasta);
   if (moneda) result = result.filter(r => r.moneda === moneda);
@@ -349,12 +498,81 @@ router.patch('/facturas-compra/pago', verificarToken, (req, res) => {
   res.json({ ok: true });
 });
 
+router.patch('/facturas-compra/reabrir', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const { fuente, id } = req.body;
+  if (fuente === 'oc') {
+    db.prepare('UPDATE ordenes_compra SET pago_confirmado=0 WHERE id=?').run(id);
+  } else {
+    db.prepare("UPDATE facturas_compra SET pago_confirmado=0, updated_at=datetime('now','localtime') WHERE id=?").run(id);
+  }
+  res.json({ ok: true });
+});
+
 router.patch('/facturas-compra/:id/anticipo', verificarToken, (req, res) => {
   if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
   const { anticipo, fecha_anticipo } = req.body;
   db.prepare("UPDATE facturas_compra SET anticipo=?, fecha_anticipo=?, pago_confirmado=0, updated_at=datetime('now','localtime') WHERE id=?")
     .run(parseFloat(anticipo)||0, fecha_anticipo||'', req.params.id);
   res.json(db.prepare('SELECT id,pago_confirmado,anticipo,fecha_anticipo FROM facturas_compra WHERE id=?').get(req.params.id));
+});
+
+// ── Pagos de facturas de compra ───────────────────────────────────────────────
+
+router.get('/facturas-compra/:id/pagos', verificarToken, (req, res) => {
+  res.json(db.prepare('SELECT * FROM pagos_factura_compra WHERE factura_id=? ORDER BY fecha,id').all(req.params.id));
+});
+
+router.post('/facturas-compra/:id/pagos', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const f = db.prepare('SELECT id FROM facturas_compra WHERE id=?').get(req.params.id);
+  if (!f) return res.status(404).json({ error: 'Factura no encontrada' });
+  const { tipo, forma_pago, entidad, importe, moneda, fecha, fecha_acreditacion, observaciones } = req.body;
+  if (!parseFloat(importe) || parseFloat(importe) <= 0) return res.status(400).json({ error: 'Importe requerido' });
+  if (!fecha) return res.status(400).json({ error: 'Fecha requerida' });
+  const estadoFinal = (forma_pago === 'cheque_diferido' || forma_pago === 'e-cheq') ? 'pendiente' : 'confirmado';
+  const r = db.prepare(`
+    INSERT INTO pagos_factura_compra
+      (factura_id,tipo,forma_pago,entidad,importe,moneda,fecha,fecha_acreditacion,estado,observaciones,created_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(req.params.id, tipo||'parcial', forma_pago||'transferencia', entidad||'',
+         parseFloat(importe), moneda||'PESO', fecha, fecha_acreditacion||'',
+         estadoFinal, observaciones||'', req.usuario.id);
+  recalcPagoFC(req.params.id);
+  res.status(201).json(db.prepare('SELECT * FROM pagos_factura_compra WHERE id=?').get(r.lastInsertRowid));
+});
+
+router.patch('/facturas-compra/:id/pagos/:pid', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const p = db.prepare('SELECT * FROM pagos_factura_compra WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id);
+  if (!p) return res.status(404).json({ error: 'Pago no encontrado' });
+  const { tipo, forma_pago, entidad, importe, moneda, fecha, fecha_acreditacion, estado, observaciones } = req.body;
+  db.prepare(`UPDATE pagos_factura_compra SET
+    tipo=?,forma_pago=?,entidad=?,importe=?,moneda=?,fecha=?,fecha_acreditacion=?,estado=?,observaciones=? WHERE id=?`)
+    .run(tipo??p.tipo, forma_pago??p.forma_pago, entidad??p.entidad,
+         parseFloat(importe??p.importe), moneda??p.moneda, fecha??p.fecha,
+         fecha_acreditacion??p.fecha_acreditacion, estado??p.estado,
+         observaciones??p.observaciones, req.params.pid);
+  recalcPagoFC(req.params.id);
+  res.json(db.prepare('SELECT * FROM pagos_factura_compra WHERE id=?').get(req.params.pid));
+});
+
+router.patch('/facturas-compra/:id/pagos/:pid/confirmar', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const p = db.prepare('SELECT id FROM pagos_factura_compra WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id);
+  if (!p) return res.status(404).json({ error: 'Pago no encontrado' });
+  db.prepare("UPDATE pagos_factura_compra SET estado='confirmado' WHERE id=?").run(req.params.pid);
+  recalcPagoFC(req.params.id);
+  res.json(db.prepare('SELECT * FROM pagos_factura_compra WHERE id=?').get(req.params.pid));
+});
+
+router.delete('/facturas-compra/:id/pagos/:pid', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!db.prepare('SELECT id FROM pagos_factura_compra WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id))
+    return res.status(404).json({ error: 'Pago no encontrado' });
+  db.prepare('DELETE FROM pagos_factura_compra WHERE id=?').run(req.params.pid);
+  recalcPagoFC(req.params.id);
+  res.json({ ok: true });
 });
 
 // ── Facturas de Venta ─────────────────────────────────────────────────────────
@@ -463,6 +681,12 @@ router.patch('/facturas-venta/:id/pago', verificarToken, (req, res) => {
   res.json({ ok: true });
 });
 
+router.patch('/facturas-venta/:id/reabrir', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  db.prepare("UPDATE facturas_venta SET pago_confirmado=0, fecha_pago='', updated_at=datetime('now','localtime') WHERE id=?").run(req.params.id);
+  res.json({ ok: true });
+});
+
 // ── Pagos de Facturas de Venta ────────────────────────────────────────────────
 
 function recalcPagoFV(factura_id) {
@@ -485,7 +709,7 @@ router.post('/facturas-venta/:id/pagos', verificarToken, (req, res) => {
   const { tipo, forma_pago, entidad, importe, moneda, fecha, fecha_acreditacion, estado, observaciones } = req.body;
   if (!parseFloat(importe) || parseFloat(importe) <= 0) return res.status(400).json({ error: 'Importe debe ser mayor a 0' });
   if (!fecha) return res.status(400).json({ error: 'Fecha requerida' });
-  const estadoFinal = (forma_pago === 'cheque_diferido' && estado !== 'confirmado') ? 'pendiente' : (estado || 'confirmado');
+  const estadoFinal = ((forma_pago === 'cheque_diferido' || forma_pago === 'e-cheq') && estado !== 'confirmado') ? 'pendiente' : (estado || 'confirmado');
   const r = db.prepare(`
     INSERT INTO pagos_factura_venta
       (factura_id,tipo,forma_pago,entidad,importe,moneda,fecha,fecha_acreditacion,estado,observaciones,created_by)
@@ -512,12 +736,304 @@ router.patch('/facturas-venta/:id/pagos/:pid', verificarToken, (req, res) => {
   res.json(db.prepare('SELECT * FROM pagos_factura_venta WHERE id=?').get(req.params.pid));
 });
 
+router.patch('/facturas-venta/:id/pagos/:pid/confirmar', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const p = db.prepare('SELECT id FROM pagos_factura_venta WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id);
+  if (!p) return res.status(404).json({ error: 'Pago no encontrado' });
+  db.prepare("UPDATE pagos_factura_venta SET estado='confirmado' WHERE id=?").run(req.params.pid);
+  recalcPagoFV(req.params.id);
+  res.json(db.prepare('SELECT * FROM pagos_factura_venta WHERE id=?').get(req.params.pid));
+});
+
 router.delete('/facturas-venta/:id/pagos/:pid', verificarToken, (req, res) => {
   if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
   if (!db.prepare('SELECT id FROM pagos_factura_venta WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id))
     return res.status(404).json({ error: 'Pago no encontrado' });
   db.prepare('DELETE FROM pagos_factura_venta WHERE id=?').run(req.params.pid);
   recalcPagoFV(req.params.id);
+  res.json({ ok: true });
+});
+
+// ── Saldo bancario ────────────────────────────────────────────────────────────
+
+router.get('/saldo-bancario', verificarToken, (req, res) => {
+  const { limit = 100 } = req.query;
+  const rows = db.prepare(`
+    SELECT sb.*, u.nombre AS usuario_nombre
+    FROM saldo_bancario sb
+    LEFT JOIN usuarios u ON u.id = sb.created_by
+    ORDER BY sb.created_at DESC, sb.id DESC
+    LIMIT ?`).all(parseInt(limit));
+  res.json(rows);
+});
+
+router.post('/saldo-bancario', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const { entidad, monto, moneda } = req.body;
+  if (!entidad?.trim()) return res.status(400).json({ error: 'Entidad requerida' });
+  if (monto == null || isNaN(parseFloat(monto))) return res.status(400).json({ error: 'Monto requerido' });
+  const r = db.prepare(`INSERT INTO saldo_bancario (entidad, monto, moneda, created_by) VALUES (?,?,?,?)`)
+    .run(entidad.trim(), parseFloat(monto), moneda || 'PESO', req.usuario.id);
+  const row = db.prepare(`
+    SELECT sb.*, u.nombre AS usuario_nombre
+    FROM saldo_bancario sb LEFT JOIN usuarios u ON u.id = sb.created_by
+    WHERE sb.id=?`).get(r.lastInsertRowid);
+  res.status(201).json(row);
+});
+
+router.delete('/saldo-bancario/:id', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  db.prepare('DELETE FROM saldo_bancario WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ── Tipo de cambio BNA ────────────────────────────────────────────────────────
+
+router.get('/tipo-cambio', verificarToken, (req, res) => {
+  const rows = db.prepare(`
+    SELECT tc.*, u.nombre AS usuario_nombre
+    FROM tipo_cambio tc
+    LEFT JOIN usuarios u ON u.id = tc.created_by
+    ORDER BY tc.created_at DESC, tc.id DESC
+    LIMIT 100
+  `).all()
+  res.json(rows)
+})
+
+router.post('/tipo-cambio', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const { moneda = 'DÓLAR', valor, fuente = 'BNA', fecha = '' } = req.body
+  if (valor == null || isNaN(parseFloat(valor)) || parseFloat(valor) <= 0)
+    return res.status(400).json({ error: 'Valor requerido' })
+  const r = db.prepare(`INSERT INTO tipo_cambio (moneda, valor, fuente, fecha, created_by) VALUES (?,?,?,?,?)`)
+    .run(moneda, parseFloat(valor), fuente, fecha, req.usuario.id)
+  const row = db.prepare(`
+    SELECT tc.*, u.nombre AS usuario_nombre FROM tipo_cambio tc
+    LEFT JOIN usuarios u ON u.id = tc.created_by WHERE tc.id=?
+  `).get(r.lastInsertRowid)
+  res.status(201).json(row)
+})
+
+router.delete('/tipo-cambio/:id', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' })
+  db.prepare('DELETE FROM tipo_cambio WHERE id=?').run(req.params.id)
+  res.json({ ok: true })
+})
+
+// ── Servicios recurrentes ─────────────────────────────────────────────────────
+
+function siguienteVencimiento(vencimiento, periodicidad) {
+  if (!vencimiento) return '';
+  const d = new Date(vencimiento + 'T00:00:00');
+  switch (periodicidad) {
+    case 'mensual':     d.setMonth(d.getMonth() + 1);   break;
+    case 'bimestral':   d.setMonth(d.getMonth() + 2);   break;
+    case 'trimestral':  d.setMonth(d.getMonth() + 3);   break;
+    case 'semestral':   d.setMonth(d.getMonth() + 6);   break;
+    case 'anual':       d.setFullYear(d.getFullYear() + 1); break;
+    default:            d.setMonth(d.getMonth() + 1);
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+router.get('/servicios', verificarToken, (req, res) => {
+  const { soloActivos = '1' } = req.query;
+  const filtro = soloActivos === '1' ? 'WHERE s.activo=1' : '';
+  const rows = db.prepare(`
+    SELECT s.*,
+      c.id        as cuota_id,
+      c.monto     as cuota_monto,
+      c.vencimiento as cuota_vencimiento,
+      c.fecha_pagada as cuota_fecha_pagada,
+      c.estado    as cuota_estado
+    FROM servicios s
+    LEFT JOIN servicios_cuotas c ON c.id = (
+      SELECT id FROM servicios_cuotas
+      WHERE servicio_id = s.id
+      ORDER BY CASE estado WHEN 'pendiente' THEN 0 ELSE 1 END, id DESC
+      LIMIT 1
+    )
+    ${filtro}
+    ORDER BY s.descripcion
+  `).all();
+  res.json(rows);
+});
+
+router.post('/servicios', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const { descripcion, usuario, info_pago, periodicidad, vencimiento_inicial } = req.body;
+  if (!descripcion?.trim()) return res.status(400).json({ error: 'Descripción requerida' });
+  const r = db.prepare(`INSERT INTO servicios (descripcion,usuario,info_pago,periodicidad) VALUES (?,?,?,?)`)
+    .run(descripcion.trim(), usuario||'', info_pago||'', periodicidad||'mensual');
+  const servId = r.lastInsertRowid;
+  db.prepare(`INSERT INTO servicios_cuotas (servicio_id, monto, vencimiento, estado) VALUES (?,?,?,'pendiente')`)
+    .run(servId, null, vencimiento_inicial||'');
+  const serv = db.prepare('SELECT * FROM servicios WHERE id=?').get(servId);
+  res.status(201).json(serv);
+});
+
+router.put('/servicios/:id', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const { descripcion, usuario, info_pago, periodicidad, activo } = req.body;
+  db.prepare(`UPDATE servicios SET descripcion=?,usuario=?,info_pago=?,periodicidad=?,activo=? WHERE id=?`)
+    .run(descripcion||'', usuario||'', info_pago||'', periodicidad||'mensual', activo??1, req.params.id);
+  res.json(db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id));
+});
+
+router.delete('/servicios/:id', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  db.prepare('UPDATE servicios SET activo=0 WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+router.put('/servicios-cuotas/:id', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const c = db.prepare('SELECT * FROM servicios_cuotas WHERE id=?').get(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Cuota no encontrada' });
+  const { monto, vencimiento } = req.body;
+  db.prepare('UPDATE servicios_cuotas SET monto=?,vencimiento=? WHERE id=?')
+    .run(monto != null ? parseFloat(monto) : null, vencimiento??c.vencimiento, req.params.id);
+  res.json(db.prepare('SELECT * FROM servicios_cuotas WHERE id=?').get(req.params.id));
+});
+
+router.post('/servicios-cuotas/:id/pagar', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const c = db.prepare('SELECT * FROM servicios_cuotas WHERE id=?').get(req.params.id);
+  if (!c) return res.status(404).json({ error: 'Cuota no encontrada' });
+  const { fecha_pagada } = req.body;
+  const fecha = fecha_pagada || new Date().toISOString().slice(0, 10);
+  db.prepare(`UPDATE servicios_cuotas SET estado='pagado', fecha_pagada=? WHERE id=?`).run(fecha, req.params.id);
+  const serv = db.prepare('SELECT * FROM servicios WHERE id=?').get(c.servicio_id);
+  const sigVenc = siguienteVencimiento(c.vencimiento, serv?.periodicidad || 'mensual');
+  const nueva = db.prepare(`INSERT INTO servicios_cuotas (servicio_id, monto, vencimiento, estado) VALUES (?,?,?,'pendiente')`)
+    .run(c.servicio_id, null, sigVenc);
+  res.json({
+    cuota_pagada: db.prepare('SELECT * FROM servicios_cuotas WHERE id=?').get(req.params.id),
+    nueva_cuota:  db.prepare('SELECT * FROM servicios_cuotas WHERE id=?').get(nueva.lastInsertRowid),
+  });
+});
+
+// ── Control: facturas vs OC (valores netos sin impuestos, agrupado por OC) ────
+router.get('/control-oc', verificarToken, (req, res) => {
+  // Agrupa por OC: compara la suma de netos de TODAS sus facturas contra el
+  // total neto de la OC (precio_final × cantidad, convertido a pesos si aplica).
+  // Tolerancia: diferencia > $1 para evitar redondeos de centavos.
+  const filas = db.prepare(`
+    SELECT
+      oc.id              AS oc_id,
+      oc.numero          AS oc_numero,
+      oc.proveedor_nombre,
+      oc.moneda          AS oc_moneda,
+      oc.tasa_cambio     AS oc_tc,
+      oc_sub.neto_orig   AS oc_neto_orig,
+      CASE
+        WHEN oc.moneda IN ('PESOS','PESO')
+        THEN oc_sub.neto_orig
+        ELSE oc_sub.neto_orig
+             * CASE WHEN oc.tasa_cambio > 0 THEN oc.tasa_cambio ELSE 1 END
+      END                AS oc_neto_pesos,
+      fc_sub.facturas_neto   AS facturas_neto_total,
+      fc_sub.cant_facturas,
+      fc_sub.facturas_lista,
+      fc_sub.fecha_ultima
+    FROM ordenes_compra oc
+    JOIN (
+      SELECT oc_id, COALESCE(SUM(precio_final * cantidad), 0) AS neto_orig
+      FROM oc_items
+      GROUP BY oc_id
+    ) oc_sub ON oc_sub.oc_id = oc.id
+    JOIN (
+      SELECT
+        oc_id,
+        COALESCE(SUM(neto_gravado), 0)                         AS facturas_neto,
+        COUNT(*)                                                AS cant_facturas,
+        GROUP_CONCAT(tipo_factura || ' ' || numero, ' / ')     AS facturas_lista,
+        MAX(fecha)                                              AS fecha_ultima
+      FROM facturas_compra
+      WHERE oc_id IS NOT NULL AND neto_gravado > 0
+      GROUP BY oc_id
+    ) fc_sub ON fc_sub.oc_id = oc.id
+    WHERE ABS(fc_sub.facturas_neto -
+      CASE
+        WHEN oc.moneda IN ('PESOS','PESO') THEN oc_sub.neto_orig
+        ELSE oc_sub.neto_orig * CASE WHEN oc.tasa_cambio > 0 THEN oc.tasa_cambio ELSE 1 END
+      END
+    ) > 1
+    ORDER BY oc.numero DESC
+  `).all();
+  res.json(filas);
+});
+
+// ── Control OC Clientes ──────────────────────────────────────────────────────
+
+router.get('/oc-clientes', verificarToken, (req, res) => {
+  const { buscar } = req.query;
+  let sql = `
+    SELECT f.*, c.nombre AS cli_nombre_cat
+    FROM fin_oc_clientes f
+    LEFT JOIN clientes c ON c.id = f.cliente_id
+    WHERE f.activo=1`;
+  const params = [];
+  if (buscar) {
+    sql += ' AND (f.cliente LIKE ? OR f.numero_oc LIKE ? OR c.nombre LIKE ?)';
+    params.push(`%${buscar}%`, `%${buscar}%`, `%${buscar}%`);
+  }
+  sql += ' ORDER BY f.id DESC';
+  res.json(db.prepare(sql).all(...params));
+});
+
+router.post('/oc-clientes', verificarToken, (req, res) => {
+  const f = req.body;
+  const clienteNombre = f.cliente_id
+    ? (db.prepare('SELECT nombre FROM clientes WHERE id=?').get(f.cliente_id)?.nombre || f.cliente || '')
+    : f.cliente || '';
+  const r = db.prepare(`
+    INSERT INTO fin_oc_clientes
+      (cliente_id,cliente,numero_oc,monto_oc,fecha_oc,fecha_recepcion_oc,
+       anticipo_pct,monto_anticipo_usd,fecha_fact_anticipo,fecha_pago_anticipo,
+       numero_poliza,fecha_pedido_poliza,fecha_poliza,vigencia_poliza,fecha_entrega_doc,
+       observaciones,final_pct,monto_final_usd,fecha_fact_final,
+       cierre_tipo,fecha_cierre_admin,comentarios)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+    f.cliente_id||null, clienteNombre,
+    f.numero_oc||'', f.monto_oc||null, f.fecha_oc||'', f.fecha_recepcion_oc||'',
+    f.anticipo_pct||null, f.monto_anticipo_usd||null, f.fecha_fact_anticipo||'', f.fecha_pago_anticipo||'',
+    f.numero_poliza||'', f.fecha_pedido_poliza||'', f.fecha_poliza||'', f.vigencia_poliza||'', f.fecha_entrega_doc||'',
+    f.observaciones||'', f.final_pct||null, f.monto_final_usd||null, f.fecha_fact_final||'',
+    f.cierre_tipo||'', f.fecha_cierre_admin||'', f.comentarios||''
+  );
+  res.status(201).json(db.prepare('SELECT * FROM fin_oc_clientes WHERE id=?').get(r.lastInsertRowid));
+});
+
+router.put('/oc-clientes/:id', verificarToken, (req, res) => {
+  const f = req.body;
+  const clienteNombre = f.cliente_id
+    ? (db.prepare('SELECT nombre FROM clientes WHERE id=?').get(f.cliente_id)?.nombre || f.cliente || '')
+    : f.cliente || '';
+  db.prepare(`
+    UPDATE fin_oc_clientes SET
+      cliente_id=?,cliente=?,numero_oc=?,monto_oc=?,fecha_oc=?,fecha_recepcion_oc=?,
+      anticipo_pct=?,monto_anticipo_usd=?,fecha_fact_anticipo=?,fecha_pago_anticipo=?,
+      numero_poliza=?,fecha_pedido_poliza=?,fecha_poliza=?,vigencia_poliza=?,fecha_entrega_doc=?,
+      observaciones=?,final_pct=?,monto_final_usd=?,fecha_fact_final=?,
+      cierre_tipo=?,fecha_cierre_admin=?,comentarios=?,
+      updated_at=datetime('now','localtime')
+    WHERE id=? AND activo=1
+  `).run(
+    f.cliente_id||null, clienteNombre,
+    f.numero_oc||'', f.monto_oc||null, f.fecha_oc||'', f.fecha_recepcion_oc||'',
+    f.anticipo_pct||null, f.monto_anticipo_usd||null, f.fecha_fact_anticipo||'', f.fecha_pago_anticipo||'',
+    f.numero_poliza||'', f.fecha_pedido_poliza||'', f.fecha_poliza||'', f.vigencia_poliza||'', f.fecha_entrega_doc||'',
+    f.observaciones||'', f.final_pct||null, f.monto_final_usd||null, f.fecha_fact_final||'',
+    f.cierre_tipo||'', f.fecha_cierre_admin||'', f.comentarios||'',
+    req.params.id
+  );
+  res.json(db.prepare('SELECT * FROM fin_oc_clientes WHERE id=?').get(req.params.id));
+});
+
+router.delete('/oc-clientes/:id', verificarToken, (req, res) => {
+  db.prepare('UPDATE fin_oc_clientes SET activo=0 WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 

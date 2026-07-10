@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
+import EmpleadoSelect from '../../components/EmpleadoSelect'
+import DateInput from '../../components/DateInput'
 
 const TIPOS = [
   { v:'entrada',    l:'Entrada',    c:'success' },
@@ -8,15 +11,22 @@ const TIPOS = [
   { v:'devolucion', l:'Devolución', c:'warning' },
   { v:'ajuste',     l:'Ajuste',     c:'info'    },
 ]
-const fmt  = n => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n ?? 0)
-const hoy  = () => new Date().toISOString().slice(0,10)
-const fmtF = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
+const fmt    = n => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n ?? 0)
+const hoy    = () => new Date().toISOString().slice(0,10)
+const fmtF   = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
+const fmtCod = c => {
+  if (!c) return ''
+  if (c.includes('/')) return c.replace('/', '')
+  if (!/\d$/.test(c))  return c + '0'
+  return c
+}
 
 const FORM_M ={ producto_id:'', tipo:'entrada', cantidad:'', fecha:hoy(), referencia:'', precio_unit:0, proveedor:'', proyecto:'', cliente_interno:'', observaciones:'' }
 const FORM_H = { desde:'', hasta:'', tipo:'', campo:'todos', valor:'' }
 
 export default function Stock() {
   const canWrite = puedeEscribir('stock')
+  const location  = useLocation()
 
   /* ── Estado productos ───────────────────────────────────────────── */
   const [prods, setProds]     = useState([])
@@ -25,7 +35,7 @@ export default function Stock() {
   const [selId, setSelId]     = useState(null)
   const [buscar, setBuscar]   = useState('')
   const [filUbic, setFilUbic] = useState('')
-  const [filAlerta, setFilAlerta] = useState('')   // ''|'ok'|'bajo'|'agotado'
+  const [filAlerta, setFilAlerta] = useState(location.state?.filAlerta || '')   // ''|'ok'|'bajo'|'agotado'
 
   /* ── Estado modales ─────────────────────────────────────────────── */
   const [modalUbic, setModalUbic] = useState(null)  // null | prod
@@ -47,17 +57,28 @@ export default function Stock() {
   const [loadH, setLoadH]     = useState(false)
   const [valoresH, setValoresH] = useState([])  // autocomplete del campo Valor
   const [provsList, setProvsList] = useState([])
+  const [proyActivos, setProyActivos] = useState([])
 
   /* ── Ingresos pendientes ─────────────────────────────────────────── */
-  const [ingPend, setIngPend]         = useState([])
+  const [ingPend,      setIngPend]      = useState([])
+  const [ingPendSinOC, setIngPendSinOC] = useState([])
   const [modalIngPend, setModalIngPend] = useState(false)
-  const [savIng, setSavIng]           = useState(null)   // id del item en proceso
+  const [savIng,       setSavIng]       = useState(null)
+  // confirmar sin-OC: { id, prodBuscar, prodSugs, prodSel }
+  const [confirmSinOC, setConfirmSinOC] = useState(null)
 
   const cargarIngPend = useCallback(() => {
     api.get('/stock/ingresos-pendientes').then(r => setIngPend(r.data)).catch(() => {})
+    api.get('/stock/ingresos-sin-oc-pendientes').then(r => setIngPendSinOC(r.data)).catch(() => {})
   }, [])
 
   useEffect(() => { cargarIngPend() }, [cargarIngPend])
+
+  useEffect(() => {
+    api.get('/proyectos', { params: { estado: 'Activo' } })
+      .then(r => setProyActivos(r.data))
+      .catch(() => {})
+  }, [])
 
   const confirmarIngreso = async id => {
     setSavIng(id)
@@ -73,6 +94,25 @@ export default function Stock() {
     setSavIng(id)
     try {
       await api.delete(`/stock/ingresos-pendientes/${id}`)
+      cargarIngPend()
+    } catch(err) { alert(err.response?.data?.error ?? 'Error') }
+    finally { setSavIng(null) }
+  }
+
+  const confirmarSinOC = async (id, producto_id) => {
+    setSavIng(id)
+    try {
+      await api.post(`/stock/ingresos-sin-oc-pendientes/${id}/confirmar`, { producto_id })
+      setConfirmSinOC(null); cargarIngPend(); cargar()
+    } catch(err) { alert(err.response?.data?.error ?? 'Error') }
+    finally { setSavIng(null) }
+  }
+
+  const rechazarSinOC = async (id, desc) => {
+    if (!confirm(`¿Rechazar ingreso de "${desc}"? El material NO entrará al stock.`)) return
+    setSavIng(id)
+    try {
+      await api.delete(`/stock/ingresos-sin-oc-pendientes/${id}`)
       cargarIngPend()
     } catch(err) { alert(err.response?.data?.error ?? 'Error') }
     finally { setSavIng(null) }
@@ -199,12 +239,12 @@ export default function Stock() {
         <button className="btn btn-sm btn-outline-secondary" onClick={() => { setModalH(true); setPageH(1) }}>
           <i className="bi bi-clock-history me-1"/>Historial
         </button>
-        <button className={`btn btn-sm position-relative ${ingPend.length > 0 ? 'btn-warning' : 'btn-outline-secondary'}`}
+        <button className={`btn btn-sm position-relative ${(ingPend.length + ingPendSinOC.length) > 0 ? 'btn-warning' : 'btn-outline-secondary'}`}
           onClick={() => setModalIngPend(true)}>
           <i className="bi bi-box-arrow-in-down me-1"/>Ingresos pendientes
-          {ingPend.length > 0 && (
+          {(ingPend.length + ingPendSinOC.length) > 0 && (
             <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
-              style={{fontSize:'0.68rem'}}>{ingPend.length}</span>
+              style={{fontSize:'0.68rem'}}>{ingPend.length + ingPendSinOC.length}</span>
           )}
         </button>
         <div className="dropdown">
@@ -270,7 +310,7 @@ export default function Stock() {
                               {p.codigo}
                               {p.codigo_proveedor && <div className="text-muted fw-normal" style={{fontSize:'0.74rem'}}>{p.codigo_proveedor}</div>}
                             </td>
-                            <td><div className="text-truncate" style={{maxWidth:320}} title={p.descripcion}>{p.descripcion}</div></td>
+                            <td><div>{p.descripcion}</div></td>
                             <td className="text-end fw-semibold">{fmt(p.stock_actual)}</td>
                             <td className="text-center">{agot ? '✗' : '✓'}</td>
                             <td>{p.ubicacion || ''}</td>
@@ -307,13 +347,13 @@ export default function Stock() {
                 <div className="border-bottom p-2 bg-light d-flex flex-wrap gap-2 align-items-end">
                   <div>
                     <label className="form-label mb-1" style={{fontSize:'0.75rem'}}>Desde</label>
-                    <input type="date" className="form-control form-control-sm" style={{width:130}}
-                      value={filtH.desde} onChange={e => { setFiltH(p=>({...p,desde:e.target.value})); setPageH(1) }}/>
+                    <DateInput className="form-control form-control-sm" style={{width:130}}
+                      value={filtH.desde} onChange={v => { setFiltH(p=>({...p,desde:v})); setPageH(1) }}/>
                   </div>
                   <div>
                     <label className="form-label mb-1" style={{fontSize:'0.75rem'}}>Hasta</label>
-                    <input type="date" className="form-control form-control-sm" style={{width:130}}
-                      value={filtH.hasta} onChange={e => { setFiltH(p=>({...p,hasta:e.target.value})); setPageH(1) }}/>
+                    <DateInput className="form-control form-control-sm" style={{width:130}}
+                      value={filtH.hasta} onChange={v => { setFiltH(p=>({...p,hasta:v})); setPageH(1) }}/>
                   </div>
                   <div>
                     <label className="form-label mb-1" style={{fontSize:'0.75rem'}}>Tipo</label>
@@ -467,7 +507,7 @@ export default function Stock() {
                   </div>
                   <div className="col-md-3">
                     <label className="form-label small fw-medium">Fecha *</label>
-                    <input type="date" className="form-control" value={formM.fecha} required onChange={e=>setFormM(p=>({...p,fecha:e.target.value}))}/>
+                    <DateInput className="form-control" value={formM.fecha} required onChange={v=>setFormM(p=>({...p,fecha:v}))}/>
                   </div>
                   {/* Búsqueda producto */}
                   <div className="col-12 position-relative">
@@ -492,20 +532,27 @@ export default function Stock() {
                   {/* Campos extras */}
                   <div className="col-md-4">
                     <label className="form-label small fw-medium">Proveedor</label>
-                    <input className="form-control" value={formM.proveedor} placeholder="Nombre del proveedor"
-                      list="stock-provs-list"
-                      onChange={e=>setFormM(p=>({...p,proveedor:e.target.value}))}/>
-                    <datalist id="stock-provs-list">
-                      {provsList.map(p => <option key={p.id} value={p.nombre}/>)}
-                    </datalist>
+                    <select className="form-select" value={formM.proveedor} onChange={e=>setFormM(p=>({...p,proveedor:e.target.value}))}>
+                      <option value="">— Sin proveedor —</option>
+                      {provsList.map(p => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
+                    </select>
                   </div>
                   <div className="col-md-4">
                     <label className="form-label small fw-medium">Proyecto</label>
-                    <input className="form-control" value={formM.proyecto} placeholder="Nombre del proyecto" onChange={e=>setFormM(p=>({...p,proyecto:e.target.value}))}/>
+                    <select className="form-select" value={formM.proyecto} onChange={e=>setFormM(p=>({...p,proyecto:e.target.value}))}>
+                      <option value="">— Sin proyecto —</option>
+                      {proyActivos.map(p=>(
+                        <option key={p.id} value={p.codigo}>{fmtCod(p.codigo)} — {p.nombre}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="col-md-4">
                     <label className="form-label small fw-medium">Cliente interno</label>
-                    <input className="form-control" value={formM.cliente_interno} placeholder="Responsable" onChange={e=>setFormM(p=>({...p,cliente_interno:e.target.value}))}/>
+                    <EmpleadoSelect
+                      value={formM.cliente_interno}
+                      onChange={v => setFormM(p => ({...p, cliente_interno: v}))}
+                      placeholder="— Sin asignar —"
+                    />
                   </div>
                   <div className="col-md-4">
                     <label className="form-label small fw-medium">Precio unitario</label>
@@ -542,59 +589,151 @@ export default function Stock() {
                 <button className="btn-close" onClick={()=>setModalIngPend(false)}/>
               </div>
               <div className="modal-body p-0">
-                {ingPend.length === 0
+                {ingPend.length === 0 && ingPendSinOC.length === 0
                   ? <p className="text-center text-muted py-5">No hay materiales pendientes de ingreso.</p>
-                  : <table className="table table-sm table-hover mb-0" style={{fontSize:'0.83rem'}}>
-                      <thead className="table-dark sticky-top">
-                        <tr>
-                          <th>OC N°</th>
-                          <th>PROVEEDOR</th>
-                          <th>CÓDIGO</th>
-                          <th>DESCRIPCIÓN</th>
-                          <th className="text-end">CANTIDAD</th>
-                          <th>UNIDAD</th>
-                          <th>REMITO</th>
-                          <th>FECHA RECEP.</th>
-                          <th>STOCK ACTUAL</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ingPend.map(row => (
-                          <tr key={row.id}>
-                            <td className="fw-semibold">{row.oc_numero}</td>
-                            <td className="text-truncate" style={{maxWidth:140}} title={row.proveedor_nombre}>{row.proveedor_nombre}</td>
-                            <td><code style={{fontSize:'0.78rem'}}>{row.producto_codigo}</code></td>
-                            <td className="text-truncate" style={{maxWidth:220}} title={row.producto_desc}>{row.producto_desc}</td>
-                            <td className="text-end fw-semibold">{fmt(row.cantidad)}</td>
-                            <td>{row.unidad}</td>
-                            <td>{row.numero_remito || <span className="text-muted">—</span>}</td>
-                            <td>{fmtF(row.fecha_recepcion)}</td>
-                            <td className="text-end">{fmt(row.stock_actual)}</td>
-                            <td className="text-end" style={{whiteSpace:'nowrap'}}>
-                              <button className="btn btn-sm btn-success me-1"
-                                disabled={savIng === row.id}
-                                onClick={() => confirmarIngreso(row.id)}>
-                                {savIng === row.id
-                                  ? <span className="spinner-border spinner-border-sm"/>
-                                  : <><i className="bi bi-check-lg me-1"/>Confirmar</>}
-                              </button>
-                              {canWrite && (
-                                <button className="btn btn-sm btn-outline-danger"
-                                  disabled={savIng === row.id}
-                                  onClick={() => rechazarIngreso(row.id, row.producto_desc)}>
-                                  <i className="bi bi-x-lg"/>
-                                </button>
-                              )}
-                            </td>
+                  : <>
+                    {/* ── Desde OC ── */}
+                    {ingPend.length > 0 && <>
+                      <div className="px-3 py-2 bg-light border-bottom small fw-semibold text-secondary">
+                        <i className="bi bi-cart me-1"/>Desde Órdenes de Compra ({ingPend.length})
+                      </div>
+                      <table className="table table-sm table-hover mb-0" style={{fontSize:'0.83rem'}}>
+                        <thead className="table-dark sticky-top">
+                          <tr>
+                            <th>OC N°</th><th>PROVEEDOR</th><th>CÓDIGO</th><th>DESCRIPCIÓN</th>
+                            <th className="text-end">CANTIDAD</th><th>UNIDAD</th>
+                            <th>REMITO</th><th>FECHA RECEP.</th><th>STOCK ACTUAL</th><th></th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {ingPend.map(row => (
+                            <tr key={row.id}>
+                              <td className="fw-semibold">{row.oc_numero}</td>
+                              <td className="text-truncate" style={{maxWidth:140}} title={row.proveedor_nombre}>{row.proveedor_nombre}</td>
+                              <td><code style={{fontSize:'0.78rem'}}>{row.producto_codigo}</code></td>
+                              <td className="text-truncate" style={{maxWidth:220}} title={row.producto_desc}>{row.producto_desc}</td>
+                              <td className="text-end fw-semibold">{fmt(row.cantidad)}</td>
+                              <td>{row.unidad}</td>
+                              <td>{row.numero_remito || <span className="text-muted">—</span>}</td>
+                              <td>{fmtF(row.fecha_recepcion)}</td>
+                              <td className="text-end">{fmt(row.stock_actual)}</td>
+                              <td className="text-end" style={{whiteSpace:'nowrap'}}>
+                                {canWrite && (
+                                  <button className="btn btn-sm btn-success me-1" disabled={savIng === row.id}
+                                    onClick={() => confirmarIngreso(row.id)}>
+                                    {savIng === row.id ? <span className="spinner-border spinner-border-sm"/> : <><i className="bi bi-check-lg me-1"/>Confirmar</>}
+                                  </button>
+                                )}
+                                {canWrite && (
+                                  <button className="btn btn-sm btn-outline-danger" disabled={savIng === row.id}
+                                    onClick={() => rechazarIngreso(row.id, row.producto_desc)}>
+                                    <i className="bi bi-x-lg"/>
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>}
+
+                    {/* ── Sin OC ── */}
+                    {ingPendSinOC.length > 0 && <>
+                      <div className="px-3 py-2 bg-light border-bottom border-top small fw-semibold text-secondary mt-2">
+                        <i className="bi bi-box-arrow-in-down me-1"/>Sin Orden de Compra ({ingPendSinOC.length})
+                      </div>
+                      <table className="table table-sm table-hover mb-0" style={{fontSize:'0.83rem'}}>
+                        <thead className="table-dark sticky-top">
+                          <tr>
+                            <th>N° Ingreso</th><th>PROVEEDOR</th><th>DESCRIPCIÓN</th>
+                            <th className="text-end">CANTIDAD</th><th>UNIDAD</th>
+                            <th>PRODUCTO CATÁLOGO</th><th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ingPendSinOC.map(row => {
+                            const isConfirming = confirmSinOC?.id === row.id
+                            return (
+                              <tr key={row.id} style={isConfirming ? {background:'#f0f7ff'} : {}}>
+                                <td className="fw-semibold">{row.form49_numero}</td>
+                                <td className="text-truncate" style={{maxWidth:140}} title={row.proveedor_nombre}>{row.proveedor_nombre}</td>
+                                <td>
+                                  <div>{row.descripcion}</div>
+                                  {row.n_parte && <div className="text-muted" style={{fontSize:'0.75rem'}}>P/N: {row.n_parte}</div>}
+                                </td>
+                                <td className="text-end fw-semibold">{fmt(row.cantidad)}</td>
+                                <td>{row.unidad}</td>
+                                <td style={{minWidth:200}}>
+                                  {isConfirming ? (
+                                    <div className="d-flex gap-1 align-items-center">
+                                      <div className="position-relative flex-grow-1">
+                                        <input className="form-control form-control-sm" style={{fontSize:'0.78rem'}}
+                                          placeholder="Buscar producto en catálogo..."
+                                          value={confirmSinOC.prodBuscar}
+                                          onChange={e => {
+                                            const q = e.target.value.toLowerCase()
+                                            setConfirmSinOC(p => ({
+                                              ...p, prodBuscar: e.target.value, prodSel: null,
+                                              prodSugs: q.length > 1
+                                                ? prods.filter(x => x.codigo?.toLowerCase().includes(q) || x.descripcion?.toLowerCase().includes(q)).slice(0,8)
+                                                : []
+                                            }))
+                                          }} />
+                                        {confirmSinOC.prodSugs?.length > 0 && (
+                                          <div className="border rounded shadow bg-white position-absolute"
+                                            style={{zIndex:9999, top:'100%', left:0, right:0, maxHeight:160, overflowY:'auto'}}>
+                                            {confirmSinOC.prodSugs.map(p => (
+                                              <div key={p.id} className="px-2 py-1 border-bottom"
+                                                style={{cursor:'pointer', fontSize:'0.75rem'}}
+                                                onMouseDown={() => setConfirmSinOC(prev => ({
+                                                  ...prev, prodBuscar: `${p.codigo} — ${p.descripcion}`,
+                                                  prodSel: p, prodSugs: []
+                                                }))}>
+                                                <code style={{marginRight:6}}>{p.codigo}</code>{p.descripcion}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <button className="btn btn-sm btn-success" style={{whiteSpace:'nowrap'}}
+                                        disabled={!confirmSinOC.prodSel || savIng === row.id}
+                                        onClick={() => confirmarSinOC(row.id, confirmSinOC.prodSel?.id)}>
+                                        {savIng === row.id ? <span className="spinner-border spinner-border-sm"/> : 'OK'}
+                                      </button>
+                                      <button className="btn btn-sm btn-outline-secondary"
+                                        onClick={() => setConfirmSinOC(null)}>×</button>
+                                    </div>
+                                  ) : (
+                                    row.producto_id
+                                      ? <span className="text-success small"><i className="bi bi-check-circle me-1"/>{row.producto_codigo_actual || row.producto_codigo}</span>
+                                      : <span className="text-muted small fst-italic">— sin vincular —</span>
+                                  )}
+                                </td>
+                                <td className="text-end" style={{whiteSpace:'nowrap'}}>
+                                  {canWrite && !isConfirming && (
+                                    <button className="btn btn-sm btn-success me-1" disabled={savIng === row.id}
+                                      onClick={() => setConfirmSinOC({ id: row.id, prodBuscar: row.producto_codigo || '', prodSugs: [], prodSel: row.producto_id ? { id: row.producto_id } : null })}>
+                                      <i className="bi bi-check-lg me-1"/>Confirmar
+                                    </button>
+                                  )}
+                                  {canWrite && !isConfirming && (
+                                    <button className="btn btn-sm btn-outline-danger" disabled={savIng === row.id}
+                                      onClick={() => rechazarSinOC(row.id, row.descripcion)}>
+                                      <i className="bi bi-x-lg"/>
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </>}
+                  </>
                 }
               </div>
               <div className="modal-footer py-2">
-                <small className="text-muted me-auto">Confirmá cada material para que ingrese al stock.</small>
+                <small className="text-muted me-auto">Confirmá cada material para que ingrese al stock. Los ingresos sin OC requieren vincular un producto del catálogo.</small>
                 <button className="btn btn-secondary btn-sm" onClick={()=>setModalIngPend(false)}>Cerrar</button>
               </div>
             </div>

@@ -127,7 +127,7 @@ export default function StockConsulta() {
                               {p.codigo}
                               {p.codigo_proveedor && <div className="text-muted fw-normal" style={{fontSize:'0.74rem'}}>{p.codigo_proveedor}</div>}
                             </td>
-                            <td><div className="text-truncate" style={{maxWidth:320}} title={p.descripcion}>{p.descripcion}</div></td>
+                            <td><div>{p.descripcion}</div></td>
                             <td className="text-end fw-semibold">{fmt(p.stock_actual)}</td>
                             <td className="text-center">{agot ? '✗' : '✓'}</td>
                             <td>{p.ubicacion || ''}</td>
@@ -254,12 +254,11 @@ export default function StockConsulta() {
                     </div>
                     <div className="col-md-4">
                       <label className="form-label small fw-medium">Proveedor principal</label>
-                      <input className="form-control" value={formP.proveedor} list="provs-list-c"
-                        placeholder="Seleccionar o escribir…"
-                        onChange={e => setFormP(p => ({...p, proveedor: e.target.value}))}/>
-                      <datalist id="provs-list-c">
-                        {provsList.map(p => <option key={p.id} value={p.nombre}/>)}
-                      </datalist>
+                      <select className="form-select" value={formP.proveedor}
+                        onChange={e => setFormP(p => ({...p, proveedor: e.target.value}))}>
+                        <option value="">— Sin proveedor —</option>
+                        {provsList.map(p => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
+                      </select>
                     </div>
                     <div className="col-md-4">
                       <label className="form-label small fw-medium">Código del proveedor</label>
