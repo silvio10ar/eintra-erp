@@ -1,5 +1,14 @@
 import { useState, useEffect } from 'react'
 import api from '../../api/client'
+import { getUser, puedeEscribir } from '../../store/authStore'
+import DateInput from '../../components/DateInput'
+
+function fmtCod(c) {
+  if (!c) return ''
+  if (c.includes('/')) return c.replace('/', '')
+  if (!/\d$/.test(c))  return c + '0'
+  return c
+}
 
 function fmtH(h) {
   if (!h && h !== 0) return '—'
@@ -33,13 +42,16 @@ const GRUPOS = [
 const COLOR_GRUPO = Object.fromEntries(GRUPOS.map(g => [g.grupo, g.color]))
 
 export default function Partes() {
+  const user         = getUser()
+  const canManageAll = user?.rol === 'admin' || puedeEscribir('rrhh') || puedeEscribir('partes')
+
   const [tab, setTab] = useState('cargar')
 
-  const [categorias,     setCategorias]     = useState([])
-  const [empleados,      setEmpleados]      = useState([])
-  const [proyectosLista, setProyectosLista] = useState([])
-
-  const [parteEmp,    setParteEmp]    = useState('')
+  const [categorias,       setCategorias]       = useState([])
+  const [empleados,        setEmpleados]        = useState([])
+  const [proyectosLista,   setProyectosLista]   = useState([])
+  const [actividadesLista, setActividadesLista] = useState([])
+  const [parteEmp,    setParteEmp]    = useState(canManageAll ? '' : (user?.rrhh_empleado_id ? String(user.rrhh_empleado_id) : ''))
   const [parteDate,   setParteDate]   = useState(new Date().toISOString().split('T')[0])
   const [parteFilas,  setParteFilas]  = useState([])
   const [savingParte, setSavingParte] = useState(false)
@@ -54,15 +66,17 @@ export default function Partes() {
   const [proyExpanded, setProyExpanded] = useState({})
 
   useEffect(() => {
-    Promise.all([
+    Promise.allSettled([
       api.get('/rrhh/categorias'),
       api.get('/rrhh/empleados'),
-      api.get('/rrhh/proyectos'),
-    ]).then(([c, e, p]) => {
-      setCategorias(c.data)
-      setEmpleados(e.data.filter(x => x.activo))
-      setProyectosLista(p.data.filter(x => x.activo))
-    }).catch(() => {})
+      api.get('/proyectos?estado=Activo'),
+      api.get('/rrhh/actividades'),
+    ]).then(([c, e, p, a]) => {
+      if (c.status === 'fulfilled') setCategorias(c.value.data)
+      if (e.status === 'fulfilled') setEmpleados(e.value.data.filter(x => x.activo))
+      if (p.status === 'fulfilled') setProyectosLista(p.value.data)
+      if (a.status === 'fulfilled') setActividadesLista(a.value.data.filter(x => x.activo))
+    })
   }, [])
 
   useEffect(() => {
@@ -94,7 +108,7 @@ export default function Partes() {
     _key: Date.now() + Math.random(),
     cat_id: cat?.id || '',
     ini: '', fin: '', horas: '',
-    proyecto_id: '', descripcion: '',
+    asignacion: '', descripcion: '',
   }])
 
   const updFila = (key, field, val) => setParteFilas(fs => fs.map(f => {
@@ -130,24 +144,35 @@ export default function Partes() {
   async function guardarParte() {
     if (!parteEmp)  { alert('Seleccioná un empleado'); return }
     if (!parteDate) { alert('Seleccioná una fecha');   return }
+    const hoy = new Date().toISOString().slice(0, 10)
+    if (parteDate > hoy) { alert('La fecha no puede ser posterior a hoy'); return }
     const validas = parteFilas.filter(f => f.cat_id && f.ini && f.fin && parseFloat(f.horas) > 0)
     if (validas.length === 0) {
       alert('Completá al menos una fila con código, INI y FIN')
       return
     }
+    if (validas.some(f => !f.asignacion)) {
+      alert('Completá el proyecto o actividad en todas las filas antes de guardar')
+      return
+    }
     setSavingParte(true)
     try {
-      const registros = validas.map(f => ({
-        fecha:        parteDate,
-        empleado_id:  Number(parteEmp),
-        categoria_id: f.cat_id || null,
-        proyecto_id:  f.proyecto_id || null,
-        hora_inicio:  f.ini,
-        hora_fin:     f.fin,
-        horas:        parseFloat(f.horas),
-        modulo:       '',
-        descripcion:  f.descripcion || '',
-      }))
+      const registros = validas.map(f => {
+        const esActividad = f.asignacion.startsWith('a:')
+        const asigId = Number(f.asignacion.slice(2))
+        return {
+          fecha:        parteDate,
+          empleado_id:  Number(parteEmp),
+          categoria_id: f.cat_id || null,
+          proyecto_id:  esActividad ? null : asigId,
+          actividad_id: esActividad ? asigId : null,
+          hora_inicio:  f.ini,
+          hora_fin:     f.fin,
+          horas:        parseFloat(f.horas),
+          modulo:       '',
+          descripcion:  f.descripcion || '',
+        }
+      })
       const r = await api.post('/rrhh/registros/batch', { registros })
       alert(`${r.data.insertados} registros guardados correctamente`)
       setParteFilas([])
@@ -167,23 +192,28 @@ export default function Partes() {
             <div className="d-flex gap-3 align-items-end flex-wrap">
               <div style={{ minWidth: 240 }}>
                 <label className="form-label small mb-1 fw-semibold">Empleado</label>
-                <select className="form-select form-select-sm" value={parteEmp}
-                  onChange={e => setParteEmp(e.target.value)}>
-                  <option value="">— seleccionar —</option>
-                  <optgroup label="E-INTRA">
-                    {empleados.filter(x => x.tipo === 'interno').map(x =>
-                      <option key={x.id} value={x.id}>{x.nombre}</option>)}
-                  </optgroup>
-                  <optgroup label="Contratistas">
-                    {empleados.filter(x => x.tipo === 'contratista').map(x =>
-                      <option key={x.id} value={x.id}>{x.nombre}</option>)}
-                  </optgroup>
-                </select>
+                {canManageAll ? (
+                  <select className="form-select form-select-sm" value={parteEmp}
+                    onChange={e => setParteEmp(e.target.value)}>
+                    <option value="">— seleccionar —</option>
+                    <optgroup label="E-INTRA">
+                      {empleados.filter(x => x.tipo === 'interno').map(x =>
+                        <option key={x.id} value={x.id}>{x.nombre}</option>)}
+                    </optgroup>
+                    <optgroup label="Contratistas">
+                      {empleados.filter(x => x.tipo === 'contratista').map(x =>
+                        <option key={x.id} value={x.id}>{x.nombre}</option>)}
+                    </optgroup>
+                  </select>
+                ) : (
+                  <input className="form-control form-control-sm" readOnly
+                    value={empleados.find(x => String(x.id) === String(parteEmp))?.nombre || user?.nombre || '—'} />
+                )}
               </div>
               <div>
                 <label className="form-label small mb-1 fw-semibold">Fecha</label>
-                <input type="date" className="form-control form-control-sm" style={{ width: 150 }}
-                  value={parteDate} onChange={e => setParteDate(e.target.value)} />
+                <DateInput className="form-control form-control-sm" style={{ width: 150 }}
+                  value={parteDate} onChange={v => setParteDate(v)} />
               </div>
             </div>
           </div>
@@ -297,11 +327,21 @@ export default function Partes() {
                       </td>
                       <td>
                         <select className="form-select form-select-sm" style={{ fontSize: '0.78rem' }}
-                          value={f.proyecto_id}
-                          onChange={e => updFila(f._key, 'proyecto_id', e.target.value)}>
+                          value={f.asignacion}
+                          onChange={e => updFila(f._key, 'asignacion', e.target.value)}>
                           <option value="">—</option>
-                          {proyectosLista.map(p =>
-                            <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                          {proyectosLista.length > 0 && (
+                            <optgroup label="Proyectos">
+                              {proyectosLista.map(p =>
+                                <option key={p.id} value={`p:${p.id}`}>{fmtCod(p.codigo)} — {p.nombre}</option>)}
+                            </optgroup>
+                          )}
+                          {actividadesLista.length > 0 && (
+                            <optgroup label="Actividades">
+                              {actividadesLista.map(a =>
+                                <option key={a.id} value={`a:${a.id}`}>{a.nombre}</option>)}
+                            </optgroup>
+                          )}
                         </select>
                       </td>
                       <td>

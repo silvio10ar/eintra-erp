@@ -25,6 +25,15 @@ function inicializar() {
       created_at    TEXT DEFAULT (datetime('now','localtime'))
     );
 
+    CREATE TABLE IF NOT EXISTS login_log (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+      fecha      TEXT DEFAULT (datetime('now','localtime')),
+      ip         TEXT DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_login_log_usuario ON login_log(usuario_id);
+    CREATE INDEX IF NOT EXISTS idx_login_log_fecha   ON login_log(fecha);
+
     -- ── Stock ────────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS productos (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -313,6 +322,9 @@ function inicializar() {
   try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN fecha_entrega_est TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN numero_remito TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN fecha_recepcion TEXT DEFAULT ''`) } catch(e) {}
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN modo_plazo TEXT DEFAULT 'OC'`) } catch(e) {}
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN dias_plazo INTEGER`) } catch(e) {}
+  try { db.exec(`ALTER TABLE oc_items ADD COLUMN dias_plazo INTEGER`) } catch(e) {}
 
   // ── Form 17 — Seguimiento de Compras (idempotente) ───────────────────────────
   try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN estado_doc TEXT DEFAULT ''`) } catch(e) {}
@@ -1194,6 +1206,7 @@ function inicializar() {
   if (!colsFV.includes('dif_cambio'))       db.prepare('ALTER TABLE facturas_venta ADD COLUMN dif_cambio REAL DEFAULT 0').run();
   if (!colsFV.includes('total_cobrado'))    db.prepare('ALTER TABLE facturas_venta ADD COLUMN total_cobrado REAL DEFAULT 0').run();
   if (!colsFV.includes('fecha_pago'))       db.prepare("ALTER TABLE facturas_venta ADD COLUMN fecha_pago TEXT DEFAULT ''").run();
+  if (!colsFV.includes('proyecto_id'))      db.prepare('ALTER TABLE facturas_venta ADD COLUMN proyecto_id INTEGER REFERENCES proyectos(id)').run();
 
   // ── Pagos de facturas de compra ───────────────────────────────────────────────
   db.exec(`
@@ -1233,6 +1246,14 @@ function inicializar() {
     );
     CREATE INDEX IF NOT EXISTS idx_pagos_fv ON pagos_factura_venta(factura_id);
   `);
+
+  // Retenciones que el cliente aplica al pagar (no somos agentes de retención al facturar)
+  const colsPagosFV = db.prepare('PRAGMA table_info(pagos_factura_venta)').all().map(c => c.name);
+  if (!colsPagosFV.includes('ret_iibb'))        db.prepare('ALTER TABLE pagos_factura_venta ADD COLUMN ret_iibb REAL DEFAULT 0').run();
+  if (!colsPagosFV.includes('ret_iva'))         db.prepare('ALTER TABLE pagos_factura_venta ADD COLUMN ret_iva REAL DEFAULT 0').run();
+  if (!colsPagosFV.includes('ret_gcia'))        db.prepare('ALTER TABLE pagos_factura_venta ADD COLUMN ret_gcia REAL DEFAULT 0').run();
+  if (!colsPagosFV.includes('ret_contratista')) db.prepare('ALTER TABLE pagos_factura_venta ADD COLUMN ret_contratista REAL DEFAULT 0').run();
+  if (!colsPagosFV.includes('ret_ss'))          db.prepare('ALTER TABLE pagos_factura_venta ADD COLUMN ret_ss REAL DEFAULT 0').run();
 
   // Migrar anticipos existentes a pagos_factura_venta (idempotente)
   try {
@@ -1329,6 +1350,7 @@ function inicializar() {
   `);
 
   try { db.exec(`ALTER TABLE fin_oc_clientes ADD COLUMN cliente_id INTEGER REFERENCES clientes(id)`) } catch(e) {}
+  try { db.exec(`ALTER TABLE fin_oc_clientes ADD COLUMN proyecto_id INTEGER REFERENCES proyectos(id)`) } catch(e) {}
 
   // ── Directivas del programa ───────────────────────────────────────────────────
   db.exec(`

@@ -13,8 +13,8 @@ import Administracion from './modules/administracion/Administracion'
 import RRHH from './modules/rrhh/RRHH'
 import Partes from './modules/rrhh/Partes'
 import Codificacion from './modules/codificacion/Codificacion'
+import FuturaCodificacion from './modules/codificacion/FuturaCodificacion'
 import Materiales from './modules/compras/Materiales'
-import StockConsulta from './modules/compras/StockConsulta'
 import ConfiguracionSistema from './modules/administracion/ConfiguracionSistema'
 import Proyectos from './modules/proyectos/Proyectos'
 import Mensajes from './modules/mensajes/Mensajes'
@@ -23,6 +23,8 @@ import Ventas from './modules/ventas/Ventas'
 import ImprimirPresupuesto from './modules/ventas/ImprimirPresupuesto'
 import OfertaTecnica from './modules/ventas/OfertaTecnica'
 import ImprimirOfertaTecnica from './modules/ventas/ImprimirOfertaTecnica'
+import Finanzas from './modules/finanzas/Finanzas'
+import Calidad from './modules/calidad/Calidad'
 
 export default function App() {
   return (
@@ -47,13 +49,14 @@ export default function App() {
             <Route path="/crm"         element={<CRM />} />
             <Route path="/proyectos"   element={<Proyectos />} />
             <Route path="/produccion"  element={<EnConstruccion modulo="Producción" icono="tools" />} />
-            <Route path="/finanzas"    element={<EnConstruccion modulo="Finanzas" icono="cash-stack" />} />
+            <Route path="/finanzas"    element={<Finanzas />} />
+            <Route path="/calidad"     element={<Calidad />} />
             <Route path="/mantenimiento" element={<Mantenimiento />} />
             <Route path="/rrhh"         element={<RRHH />} />
             <Route path="/partes"       element={<Partes />} />
             <Route path="/codificacion" element={<Codificacion />} />
+            <Route path="/codificacion/futura" element={<FuturaCodificacion />} />
             <Route path="/materiales"  element={<Materiales />} />
-            <Route path="/compras/stock" element={<StockConsulta />} />
             <Route path="/mensajes"       element={<Mensajes />} />
             <Route path="/administracion" element={<Administracion />} />
             <Route path="/configuracion"  element={<ConfiguracionSistema />} />

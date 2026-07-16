@@ -59,7 +59,7 @@ router.get('/dashboard', verificarToken, (req, res) => {
       0 as saldo_anticipo
     FROM facturas_venta fv
     LEFT JOIN (
-      SELECT factura_id, SUM(CASE WHEN estado='confirmado' THEN importe ELSE 0 END) AS total_pagado
+      SELECT factura_id, SUM(CASE WHEN estado='confirmado' THEN importe+COALESCE(ret_iibb,0)+COALESCE(ret_iva,0)+COALESCE(ret_gcia,0)+COALESCE(ret_contratista,0)+COALESCE(ret_ss,0) ELSE 0 END) AS total_pagado
       FROM pagos_factura_venta GROUP BY factura_id
     ) pag ON pag.factura_id = fv.id
     WHERE fv.tipo_factura NOT LIKE 'NC%'`).get()
@@ -142,7 +142,7 @@ router.get('/dashboard-diario', verificarToken, (req, res) => {
       COALESCE(SUM(MAX(0, (f.importe * COALESCE(f.tasa_cambio, 1)) - COALESCE(pag.total_pagado, 0))), 0) as total_pesos
     FROM facturas_venta f
     LEFT JOIN (
-      SELECT factura_id, SUM(CASE WHEN estado='confirmado' THEN importe ELSE 0 END) AS total_pagado
+      SELECT factura_id, SUM(CASE WHEN estado='confirmado' THEN importe+COALESCE(ret_iibb,0)+COALESCE(ret_iva,0)+COALESCE(ret_gcia,0)+COALESCE(ret_contratista,0)+COALESCE(ret_ss,0) ELSE 0 END) AS total_pagado
       FROM pagos_factura_venta GROUP BY factura_id
     ) pag ON pag.factura_id = f.id
     WHERE f.pago_confirmado = 0 AND f.tipo_factura NOT LIKE 'NC%'
@@ -170,7 +170,7 @@ router.get('/dashboard-diario', verificarToken, (req, res) => {
       MAX(0, (f.importe * COALESCE(f.tasa_cambio, 1)) - COALESCE(pag.total_pagado, 0)) as saldo_pesos
     FROM facturas_venta f
     LEFT JOIN (
-      SELECT factura_id, SUM(CASE WHEN estado='confirmado' THEN importe ELSE 0 END) AS total_pagado
+      SELECT factura_id, SUM(CASE WHEN estado='confirmado' THEN importe+COALESCE(ret_iibb,0)+COALESCE(ret_iva,0)+COALESCE(ret_gcia,0)+COALESCE(ret_contratista,0)+COALESCE(ret_ss,0) ELSE 0 END) AS total_pagado
       FROM pagos_factura_venta GROUP BY factura_id
     ) pag ON pag.factura_id = f.id
     WHERE f.pago_confirmado = 0 AND f.tipo_factura NOT LIKE 'NC%'
@@ -578,16 +578,19 @@ router.delete('/facturas-compra/:id/pagos/:pid', verificarToken, (req, res) => {
 // ── Facturas de Venta ─────────────────────────────────────────────────────────
 
 router.get('/facturas-venta', verificarToken, (req, res) => {
-  const { buscar, desde, hasta, moneda, pago } = req.query;
+  const { buscar, desde, hasta, moneda, pago, proyecto_id } = req.query;
   let rows = db.prepare(`
-    SELECT fv.*, p.numero AS ppto_numero,
+    SELECT fv.*, p.numero AS ppto_numero, pr.codigo AS proy_codigo, pr.nombre AS proy_nombre,
+      c.cuit AS cliente_cuit,
       COALESCE(pag.total_pagado, 0)  AS total_pagado,
       COALESCE(pag.count_pagos,  0)  AS count_pagos
     FROM facturas_venta fv
     LEFT JOIN presupuestos p ON p.id = fv.presupuesto_id
+    LEFT JOIN proyectos pr ON pr.id = fv.proyecto_id
+    LEFT JOIN clientes c ON c.id = fv.cliente_id
     LEFT JOIN (
       SELECT factura_id,
-        SUM(CASE WHEN estado='confirmado' THEN importe ELSE 0 END) AS total_pagado,
+        SUM(CASE WHEN estado='confirmado' THEN importe+COALESCE(ret_iibb,0)+COALESCE(ret_iva,0)+COALESCE(ret_gcia,0)+COALESCE(ret_contratista,0)+COALESCE(ret_ss,0) ELSE 0 END) AS total_pagado,
         COUNT(*) AS count_pagos
       FROM pagos_factura_venta GROUP BY factura_id
     ) pag ON pag.factura_id = fv.id
@@ -596,6 +599,7 @@ router.get('/facturas-venta', verificarToken, (req, res) => {
     ...r,
     saldo_pendiente: r.pago_confirmado ? 0 : Math.max(0, (r.importe * (r.tasa_cambio || 1)) - (r.total_pagado || 0))
   }));
+  if (proyecto_id) rows = rows.filter(r => String(r.proyecto_id) === String(proyecto_id));
   if (desde)  rows = rows.filter(r => r.fecha >= desde);
   if (hasta)  rows = rows.filter(r => r.fecha <= hasta);
   if (moneda) rows = rows.filter(r => r.moneda === moneda);
@@ -618,18 +622,18 @@ router.get('/facturas-venta', verificarToken, (req, res) => {
 router.post('/facturas-venta', verificarToken, (req, res) => {
   if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
   const { tipo_factura, numero, fecha, cliente_id, cliente_nombre, presupuesto_id, presupuesto_ref,
-          concepto, oc, neto_gravado, iva_21,
+          concepto, oc, proyecto_id, neto_gravado, iva_21,
           ret_iibb, ret_iva, ret_gcia, ret_contratista, ret_ss, dif_cambio, total_cobrado,
           importe, moneda, tasa_cambio, fecha_vencimiento, fecha_pago, observaciones } = req.body;
   if (!numero?.trim()) return res.status(400).json({ error: 'Número requerido' });
   const r = db.prepare(`INSERT INTO facturas_venta
     (tipo_factura,numero,fecha,cliente_id,cliente_nombre,presupuesto_id,presupuesto_ref,
-     concepto,oc,neto_gravado,iva_21,ret_iibb,ret_iva,ret_gcia,ret_contratista,ret_ss,dif_cambio,total_cobrado,
+     concepto,oc,proyecto_id,neto_gravado,iva_21,ret_iibb,ret_iva,ret_gcia,ret_contratista,ret_ss,dif_cambio,total_cobrado,
      importe,moneda,tasa_cambio,fecha_vencimiento,fecha_pago,observaciones,created_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(tipo_factura||'A', numero.trim(), fecha||'', cliente_id||null, cliente_nombre||'',
          presupuesto_id||null, presupuesto_ref||'',
-         concepto||'', oc||'',
+         concepto||'', oc||'', proyecto_id||null,
          parseFloat(neto_gravado)||0, parseFloat(iva_21)||0,
          parseFloat(ret_iibb)||0, parseFloat(ret_iva)||0, parseFloat(ret_gcia)||0,
          parseFloat(ret_contratista)||0, parseFloat(ret_ss)||0,
@@ -644,18 +648,18 @@ router.put('/facturas-venta/:id', verificarToken, (req, res) => {
   const f = db.prepare('SELECT * FROM facturas_venta WHERE id=?').get(req.params.id);
   if (!f) return res.status(404).json({ error: 'No encontrada' });
   const { tipo_factura, numero, fecha, cliente_id, cliente_nombre, presupuesto_id, presupuesto_ref,
-          concepto, oc, neto_gravado, iva_21,
+          concepto, oc, proyecto_id, neto_gravado, iva_21,
           ret_iibb, ret_iva, ret_gcia, ret_contratista, ret_ss, dif_cambio, total_cobrado,
           importe, moneda, tasa_cambio, fecha_vencimiento, fecha_pago, observaciones } = req.body;
   db.prepare(`UPDATE facturas_venta SET
     tipo_factura=?,numero=?,fecha=?,cliente_id=?,cliente_nombre=?,presupuesto_id=?,presupuesto_ref=?,
-    concepto=?,oc=?,neto_gravado=?,iva_21=?,ret_iibb=?,ret_iva=?,ret_gcia=?,ret_contratista=?,ret_ss=?,dif_cambio=?,total_cobrado=?,
+    concepto=?,oc=?,proyecto_id=?,neto_gravado=?,iva_21=?,ret_iibb=?,ret_iva=?,ret_gcia=?,ret_contratista=?,ret_ss=?,dif_cambio=?,total_cobrado=?,
     importe=?,moneda=?,tasa_cambio=?,fecha_vencimiento=?,fecha_pago=?,observaciones=?,updated_at=datetime('now','localtime')
     WHERE id=?`)
     .run(tipo_factura??f.tipo_factura??'A', numero??f.numero, fecha??f.fecha,
          cliente_id||null, cliente_nombre??f.cliente_nombre,
          presupuesto_id||null, presupuesto_ref??f.presupuesto_ref,
-         concepto??f.concepto??'', oc??f.oc??'',
+         concepto??f.concepto??'', oc??f.oc??'', proyecto_id!==undefined ? (proyecto_id||null) : f.proyecto_id,
          parseFloat(neto_gravado??f.neto_gravado)||0, parseFloat(iva_21??f.iva_21)||0,
          parseFloat(ret_iibb??f.ret_iibb)||0, parseFloat(ret_iva??f.ret_iva)||0,
          parseFloat(ret_gcia??f.ret_gcia)||0, parseFloat(ret_contratista??f.ret_contratista)||0,
@@ -693,7 +697,7 @@ function recalcPagoFV(factura_id) {
   const fv = db.prepare('SELECT importe, tasa_cambio FROM facturas_venta WHERE id=?').get(factura_id);
   if (!fv) return;
   const pagado = db.prepare(
-    "SELECT COALESCE(SUM(importe),0) as s FROM pagos_factura_venta WHERE factura_id=? AND estado='confirmado'"
+    "SELECT COALESCE(SUM(importe+COALESCE(ret_iibb,0)+COALESCE(ret_iva,0)+COALESCE(ret_gcia,0)+COALESCE(ret_contratista,0)+COALESCE(ret_ss,0)),0) as s FROM pagos_factura_venta WHERE factura_id=? AND estado='confirmado'"
   ).get(factura_id).s;
   const saldo = (fv.importe * (fv.tasa_cambio || 1)) - pagado;
   db.prepare("UPDATE facturas_venta SET pago_confirmado=?, updated_at=datetime('now','localtime') WHERE id=?")
@@ -706,17 +710,21 @@ router.get('/facturas-venta/:id/pagos', verificarToken, (req, res) => {
 
 router.post('/facturas-venta/:id/pagos', verificarToken, (req, res) => {
   if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const { tipo, forma_pago, entidad, importe, moneda, fecha, fecha_acreditacion, estado, observaciones } = req.body;
+  const { tipo, forma_pago, entidad, importe, moneda, fecha, fecha_acreditacion, estado, observaciones,
+          ret_iibb, ret_iva, ret_gcia, ret_contratista, ret_ss } = req.body;
   if (!parseFloat(importe) || parseFloat(importe) <= 0) return res.status(400).json({ error: 'Importe debe ser mayor a 0' });
   if (!fecha) return res.status(400).json({ error: 'Fecha requerida' });
   const estadoFinal = ((forma_pago === 'cheque_diferido' || forma_pago === 'e-cheq') && estado !== 'confirmado') ? 'pendiente' : (estado || 'confirmado');
   const r = db.prepare(`
     INSERT INTO pagos_factura_venta
-      (factura_id,tipo,forma_pago,entidad,importe,moneda,fecha,fecha_acreditacion,estado,observaciones,created_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      (factura_id,tipo,forma_pago,entidad,importe,moneda,fecha,fecha_acreditacion,estado,observaciones,
+       ret_iibb,ret_iva,ret_gcia,ret_contratista,ret_ss,created_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(req.params.id, tipo||'parcial', forma_pago||'transferencia', entidad||'',
          parseFloat(importe), moneda||'PESO', fecha, fecha_acreditacion||'',
-         estadoFinal, observaciones||'', req.usuario.id);
+         estadoFinal, observaciones||'',
+         parseFloat(ret_iibb)||0, parseFloat(ret_iva)||0, parseFloat(ret_gcia)||0,
+         parseFloat(ret_contratista)||0, parseFloat(ret_ss)||0, req.usuario.id);
   recalcPagoFV(req.params.id);
   res.status(201).json(db.prepare('SELECT * FROM pagos_factura_venta WHERE id=?').get(r.lastInsertRowid));
 });
@@ -725,13 +733,18 @@ router.patch('/facturas-venta/:id/pagos/:pid', verificarToken, (req, res) => {
   if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
   const p = db.prepare('SELECT * FROM pagos_factura_venta WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id);
   if (!p) return res.status(404).json({ error: 'Pago no encontrado' });
-  const { tipo, forma_pago, entidad, importe, moneda, fecha, fecha_acreditacion, estado, observaciones } = req.body;
+  const { tipo, forma_pago, entidad, importe, moneda, fecha, fecha_acreditacion, estado, observaciones,
+          ret_iibb, ret_iva, ret_gcia, ret_contratista, ret_ss } = req.body;
   db.prepare(`UPDATE pagos_factura_venta SET
-    tipo=?,forma_pago=?,entidad=?,importe=?,moneda=?,fecha=?,fecha_acreditacion=?,estado=?,observaciones=? WHERE id=?`)
+    tipo=?,forma_pago=?,entidad=?,importe=?,moneda=?,fecha=?,fecha_acreditacion=?,estado=?,observaciones=?,
+    ret_iibb=?,ret_iva=?,ret_gcia=?,ret_contratista=?,ret_ss=? WHERE id=?`)
     .run(tipo??p.tipo, forma_pago??p.forma_pago, entidad??p.entidad,
          parseFloat(importe??p.importe), moneda??p.moneda, fecha??p.fecha,
          fecha_acreditacion??p.fecha_acreditacion, estado??p.estado,
-         observaciones??p.observaciones, req.params.pid);
+         observaciones??p.observaciones,
+         parseFloat(ret_iibb??p.ret_iibb)||0, parseFloat(ret_iva??p.ret_iva)||0,
+         parseFloat(ret_gcia??p.ret_gcia)||0, parseFloat(ret_contratista??p.ret_contratista)||0,
+         parseFloat(ret_ss??p.ret_ss)||0, req.params.pid);
   recalcPagoFV(req.params.id);
   res.json(db.prepare('SELECT * FROM pagos_factura_venta WHERE id=?').get(req.params.pid));
 });
@@ -966,14 +979,20 @@ router.get('/control-oc', verificarToken, (req, res) => {
 
 // ── Control OC Clientes ──────────────────────────────────────────────────────
 
-router.get('/oc-clientes', verificarToken, (req, res) => {
-  const { buscar } = req.query;
-  let sql = `
-    SELECT f.*, c.nombre AS cli_nombre_cat
+const OC_CLIENTE_SELECT = `
+    SELECT f.*, c.nombre AS cli_nombre_cat, c.cuit AS cli_cuit_cat, p.codigo AS proy_codigo, p.nombre AS proy_nombre
     FROM fin_oc_clientes f
     LEFT JOIN clientes c ON c.id = f.cliente_id
-    WHERE f.activo=1`;
+    LEFT JOIN proyectos p ON p.id = f.proyecto_id`;
+
+router.get('/oc-clientes', verificarToken, (req, res) => {
+  const { buscar, proyecto_id } = req.query;
+  let sql = `${OC_CLIENTE_SELECT} WHERE f.activo=1`;
   const params = [];
+  if (proyecto_id) {
+    sql += ' AND f.proyecto_id=?';
+    params.push(proyecto_id);
+  }
   if (buscar) {
     sql += ' AND (f.cliente LIKE ? OR f.numero_oc LIKE ? OR c.nombre LIKE ?)';
     params.push(`%${buscar}%`, `%${buscar}%`, `%${buscar}%`);
@@ -984,36 +1003,30 @@ router.get('/oc-clientes', verificarToken, (req, res) => {
 
 router.post('/oc-clientes', verificarToken, (req, res) => {
   const f = req.body;
-  const clienteNombre = f.cliente_id
-    ? (db.prepare('SELECT nombre FROM clientes WHERE id=?').get(f.cliente_id)?.nombre || f.cliente || '')
-    : f.cliente || '';
   const r = db.prepare(`
     INSERT INTO fin_oc_clientes
-      (cliente_id,cliente,numero_oc,monto_oc,fecha_oc,fecha_recepcion_oc,
+      (cliente_id,cliente,proyecto_id,numero_oc,monto_oc,fecha_oc,fecha_recepcion_oc,
        anticipo_pct,monto_anticipo_usd,fecha_fact_anticipo,fecha_pago_anticipo,
        numero_poliza,fecha_pedido_poliza,fecha_poliza,vigencia_poliza,fecha_entrega_doc,
        observaciones,final_pct,monto_final_usd,fecha_fact_final,
        cierre_tipo,fecha_cierre_admin,comentarios)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
-    f.cliente_id||null, clienteNombre,
+    f.cliente_id||null, f.cliente||'', f.proyecto_id||null,
     f.numero_oc||'', f.monto_oc||null, f.fecha_oc||'', f.fecha_recepcion_oc||'',
     f.anticipo_pct||null, f.monto_anticipo_usd||null, f.fecha_fact_anticipo||'', f.fecha_pago_anticipo||'',
     f.numero_poliza||'', f.fecha_pedido_poliza||'', f.fecha_poliza||'', f.vigencia_poliza||'', f.fecha_entrega_doc||'',
     f.observaciones||'', f.final_pct||null, f.monto_final_usd||null, f.fecha_fact_final||'',
     f.cierre_tipo||'', f.fecha_cierre_admin||'', f.comentarios||''
   );
-  res.status(201).json(db.prepare('SELECT * FROM fin_oc_clientes WHERE id=?').get(r.lastInsertRowid));
+  res.status(201).json(db.prepare(`${OC_CLIENTE_SELECT} WHERE f.id=?`).get(r.lastInsertRowid));
 });
 
 router.put('/oc-clientes/:id', verificarToken, (req, res) => {
   const f = req.body;
-  const clienteNombre = f.cliente_id
-    ? (db.prepare('SELECT nombre FROM clientes WHERE id=?').get(f.cliente_id)?.nombre || f.cliente || '')
-    : f.cliente || '';
   db.prepare(`
     UPDATE fin_oc_clientes SET
-      cliente_id=?,cliente=?,numero_oc=?,monto_oc=?,fecha_oc=?,fecha_recepcion_oc=?,
+      cliente_id=?,cliente=?,proyecto_id=?,numero_oc=?,monto_oc=?,fecha_oc=?,fecha_recepcion_oc=?,
       anticipo_pct=?,monto_anticipo_usd=?,fecha_fact_anticipo=?,fecha_pago_anticipo=?,
       numero_poliza=?,fecha_pedido_poliza=?,fecha_poliza=?,vigencia_poliza=?,fecha_entrega_doc=?,
       observaciones=?,final_pct=?,monto_final_usd=?,fecha_fact_final=?,
@@ -1021,7 +1034,7 @@ router.put('/oc-clientes/:id', verificarToken, (req, res) => {
       updated_at=datetime('now','localtime')
     WHERE id=? AND activo=1
   `).run(
-    f.cliente_id||null, clienteNombre,
+    f.cliente_id||null, f.cliente||'', f.proyecto_id||null,
     f.numero_oc||'', f.monto_oc||null, f.fecha_oc||'', f.fecha_recepcion_oc||'',
     f.anticipo_pct||null, f.monto_anticipo_usd||null, f.fecha_fact_anticipo||'', f.fecha_pago_anticipo||'',
     f.numero_poliza||'', f.fecha_pedido_poliza||'', f.fecha_poliza||'', f.vigencia_poliza||'', f.fecha_entrega_doc||'',
@@ -1029,7 +1042,7 @@ router.put('/oc-clientes/:id', verificarToken, (req, res) => {
     f.cierre_tipo||'', f.fecha_cierre_admin||'', f.comentarios||'',
     req.params.id
   );
-  res.json(db.prepare('SELECT * FROM fin_oc_clientes WHERE id=?').get(req.params.id));
+  res.json(db.prepare(`${OC_CLIENTE_SELECT} WHERE f.id=?`).get(req.params.id));
 });
 
 router.delete('/oc-clientes/:id', verificarToken, (req, res) => {

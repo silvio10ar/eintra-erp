@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../../api/client'
+import DateInput from '../../components/DateInput'
 
 const fmtN = n => n ? new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 }).format(n) : '—'
 const fmtF = s => s ? s.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -632,9 +633,9 @@ export default function CRM() {
                   <div className="row g-2 mb-2">
                     <div className="col-4">
                       <label className="form-label mb-1">Fecha</label>
-                      <input type="date" className="form-control form-control-sm"
+                      <DateInput className="form-control form-control-sm"
                         value={form.fecha}
-                        onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))} />
+                        onChange={v => setForm(f => ({ ...f, fecha: v }))} />
                     </div>
                     <div className="col-4">
                       <label className="form-label mb-1">Estado</label>
@@ -705,9 +706,9 @@ export default function CRM() {
                     </div>
                     <div className="col-4">
                       <label className="form-label mb-1">Últ. actualización</label>
-                      <input type="date" className="form-control form-control-sm"
+                      <DateInput className="form-control form-control-sm"
                         value={form.actualizado}
-                        onChange={e => setForm(f => ({ ...f, actualizado: e.target.value }))} />
+                        onChange={v => setForm(f => ({ ...f, actualizado: v }))} />
                     </div>
                   </div>
                 </div>

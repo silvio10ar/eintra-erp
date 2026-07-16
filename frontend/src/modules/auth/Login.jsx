@@ -2,10 +2,14 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
 import { setAuth, isAuthenticated } from '../../store/authStore'
+import logo from '../../assets/logo.avif'
+
+const LAST_USER_KEY = 'erp_last_username'
 
 export default function Login() {
   const navigate  = useNavigate()
-  const [form, setForm]     = useState({ username: '', password: '' })
+  const lastUser  = localStorage.getItem(LAST_USER_KEY) || ''
+  const [form, setForm]     = useState({ username: lastUser, password: '' })
   const [error, setError]   = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -22,6 +26,7 @@ export default function Login() {
     setLoading(true)
     try {
       const { data } = await api.post('/auth/login', form)
+      localStorage.setItem(LAST_USER_KEY, form.username)
       setAuth(data.token, data.usuario)
       navigate('/dashboard', { replace: true })
     } catch (err) {
@@ -36,14 +41,8 @@ export default function Login() {
       <div className="login-card card shadow-lg p-4">
         {/* Logo / título */}
         <div className="text-center mb-4">
-          <div
-            className="mx-auto mb-3 d-flex align-items-center justify-content-center rounded-3"
-            style={{ width: 64, height: 64, background: '#1a2332' }}
-          >
-            <i className="bi bi-building text-white" style={{ fontSize: '1.8rem' }} />
-          </div>
-          <h4 className="fw-bold mb-0">E-INTRA ERP</h4>
-          <p className="text-muted small mb-0">Sistema de gestión empresarial</p>
+          <img src={logo} alt="E-INTRA" className="mb-2" style={{ height: 72 }} />
+          <h4 className="fw-bold mb-0" style={{ color: '#1a3a5c', letterSpacing: '-0.3px', fontSize: '1.1rem' }}>Sistema ERP</h4>
         </div>
 
         {error && (
@@ -68,7 +67,8 @@ export default function Login() {
                 value={form.username}
                 onChange={handleChange}
                 required
-                autoFocus
+                autoFocus={!lastUser}
+                autoComplete="username"
               />
             </div>
           </div>
@@ -87,6 +87,8 @@ export default function Login() {
                 value={form.password}
                 onChange={handleChange}
                 required
+                autoFocus={!!lastUser}
+                autoComplete="new-password"
               />
             </div>
           </div>

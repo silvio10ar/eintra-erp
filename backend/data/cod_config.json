@@ -124,8 +124,13 @@
           "pos_hasta": 5
         },
         {
-          "pregunta_id": "valvulas_libre_6_10",
+          "pregunta_id": "valvulas_custom_1781637589398",
           "pos_desde": 6,
+          "pos_hasta": 6
+        },
+        {
+          "pregunta_id": "valvulas_custom_1781637631781",
+          "pos_desde": 7,
           "pos_hasta": 10
         }
       ]
@@ -178,8 +183,13 @@
           "pos_hasta": 5
         },
         {
-          "pregunta_id": "pvc_libre_6_10",
+          "pregunta_id": "pvc_custom_1781608415422",
           "pos_desde": 6,
+          "pos_hasta": 6
+        },
+        {
+          "pregunta_id": "pvc_custom_1781608487126",
+          "pos_desde": 7,
           "pos_hasta": 10
         }
       ]
@@ -261,7 +271,46 @@
         {
           "pregunta_id": "mat_electrico_p4_5",
           "pos_desde": 4,
-          "pos_hasta": 5
+          "pos_hasta": 5,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "no_en": [
+              "I0"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "mat_electrico_custom_1781727165904",
+          "pos_desde": 4,
+          "pos_hasta": 4,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "IO"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "mat_electrico_custom_1781727269162",
+          "pos_desde": 4,
+          "pos_hasta": 4,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "I0"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "mat_electrico_custom_1781727380797",
+          "pos_desde": 5,
+          "pos_hasta": 6,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "I0"
+            ]
+          }
         },
         {
           "pregunta_id": "mat_electrico_p6_7_pulsadores",
@@ -284,11 +333,6 @@
               "50"
             ]
           }
-        },
-        {
-          "pregunta_id": "mat_electrico_p6_6_indicador_led",
-          "pos_desde": 6,
-          "pos_hasta": 6
         },
         {
           "pregunta_id": "mat_electrico_p6_6_medidor_ph_y_conductivida",
@@ -382,6 +426,28 @@
           }
         },
         {
+          "pregunta_id": "mat_electrico_p6_6_gabinete_material",
+          "pos_desde": 6,
+          "pos_hasta": 6,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "A0"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "mat_electrico_p7_7_gabinete_tapa",
+          "pos_desde": 7,
+          "pos_hasta": 7,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "A0"
+            ]
+          }
+        },
+        {
           "pregunta_id": "mat_electrico_p7_7_conector_metal",
           "pos_desde": 7,
           "pos_hasta": 7,
@@ -414,6 +480,29 @@
             "pregunta_id": "mat_electrico_p2_3",
             "en": [
               "60"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "mat_electrico_custom_1781284948520",
+          "pos_desde": 7,
+          "pos_hasta": 9,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "no_en": [
+              "I0",
+              "A0"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "mat_electrico_custom_1781727493255",
+          "pos_desde": 7,
+          "pos_hasta": 9,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "I0"
             ]
           }
         },
@@ -592,6 +681,29 @@
             "en": [
               "J0",
               "H0"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "mat_electrico_custom_1781285006663",
+          "pos_desde": 10,
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "no_en": [
+              "I0",
+              "A0"
+            ]
+          }
+        },
+        {
+          "pregunta_id": "mat_electrico_custom_1781727538000",
+          "pos_desde": 10,
+          "pos_hasta": 10,
+          "si": {
+            "pregunta_id": "mat_electrico_p2_3",
+            "en": [
+              "I0"
             ]
           }
         }
@@ -997,6 +1109,24 @@
           "pregunta_id": "accesorios_mecanicos_p10_10",
           "pos_desde": 10,
           "pos_hasta": 10
+        },
+        {
+          "pregunta_id": "accesorios_mecanicos_fitting_tipo",
+          "pos_desde": 3,
+          "pos_hasta": 4,
+          "si": {
+            "pregunta_id": "accesorios_mecanicos_p2_2",
+            "valor": "E"
+          }
+        },
+        {
+          "pregunta_id": "accesorios_mecanicos_fitting_material",
+          "pos_desde": 5,
+          "pos_hasta": 5,
+          "si": {
+            "pregunta_id": "accesorios_mecanicos_p2_2",
+            "valor": "E"
+          }
         }
       ]
     },
@@ -1040,6 +1170,54 @@
         {
           "pregunta_id": "materiales_poco_usuales_libre_6_10",
           "pos_desde": 6,
+          "pos_hasta": 10
+        }
+      ]
+    },
+    {
+      "codigo_pos1": "N",
+      "descripcion": "HERRAMIENTAS",
+      "flujo": [
+        {
+          "pregunta_id": "herramientas_p2_2",
+          "pos_desde": 2,
+          "pos_hasta": 2
+        },
+        {
+          "pregunta_id": "herramientas_p3_10_libre",
+          "pos_desde": 3,
+          "pos_hasta": 10
+        }
+      ]
+    },
+    {
+      "codigo_pos1": "O",
+      "descripcion": "CONSUMIBLES",
+      "flujo": [
+        {
+          "pregunta_id": "consumibles_p2_2",
+          "pos_desde": 2,
+          "pos_hasta": 2
+        },
+        {
+          "pregunta_id": "consumibles_p3_10_libre",
+          "pos_desde": 3,
+          "pos_hasta": 10
+        }
+      ]
+    },
+    {
+      "codigo_pos1": "P",
+      "descripcion": "SEGURIDAD",
+      "flujo": [
+        {
+          "pregunta_id": "seguridad_p2_2",
+          "pos_desde": 2,
+          "pos_hasta": 2
+        },
+        {
+          "pregunta_id": "seguridad_p3_10_libre",
+          "pos_desde": 3,
           "pos_hasta": 10
         }
       ]
@@ -1379,11 +1557,11 @@
         },
         {
           "codigo": "13",
-          "descripcion": ""
+          "descripcion": "PUNTERA"
         },
         {
           "codigo": "14",
-          "descripcion": ""
+          "descripcion": "MEDIO NIPLE"
         },
         {
           "codigo": "20",
@@ -2277,6 +2455,38 @@
         {
           "codigo": "F",
           "descripcion": ""
+        },
+        {
+          "codigo": "G",
+          "descripcion": "TOPE PARA BROCA"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "ANCLAJE DE IMPACTO"
+        },
+        {
+          "codigo": "J",
+          "descripcion": "BROCA ANCLAJE"
+        },
+        {
+          "codigo": "L",
+          "descripcion": "TENSOR"
+        },
+        {
+          "codigo": "M",
+          "descripcion": "GUARDACABOS"
+        },
+        {
+          "codigo": "P",
+          "descripcion": "PERNO ANCLAJE"
+        },
+        {
+          "codigo": "R",
+          "descripcion": "MORSETO"
+        },
+        {
+          "codigo": "T",
+          "descripcion": "TIRAFONDO"
         }
       ]
     },
@@ -2323,6 +2533,14 @@
         {
           "codigo": "D",
           "descripcion": "GALVANIZADO"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "BRONCE"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "BRONCE FOSFOROSO"
         }
       ]
     },
@@ -2437,6 +2655,190 @@
         {
           "codigo": "Z",
           "descripcion": "TACO DE GOMA REDONDO"
+        },
+        {
+          "codigo": "00",
+          "descripcion": "HEXAGONAL ESTANDAR"
+        },
+        {
+          "codigo": "01",
+          "descripcion": "PHILIPS PUNTA 01"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "REDUCIDA"
+        },
+        {
+          "codigo": "05",
+          "descripcion": "FLAT HEAD"
+        },
+        {
+          "codigo": "06",
+          "descripcion": "UNIVERSAL"
+        },
+        {
+          "codigo": "08",
+          "descripcion": "OVAL"
+        },
+        {
+          "codigo": "09",
+          "descripcion": "ESPECIAL"
+        },
+        {
+          "codigo": "A0",
+          "descripcion": "ALLEN HEX REDUCIDO"
+        },
+        {
+          "codigo": "A5",
+          "descripcion": "ALLEN CABEZA BAJA"
+        },
+        {
+          "codigo": "A9",
+          "descripcion": "ALLEN CILINDRICO INOX"
+        },
+        {
+          "codigo": "AM",
+          "descripcion": "ALLEN METRICO"
+        },
+        {
+          "codigo": "B0",
+          "descripcion": "AUTOPERFORANTE TIPO B"
+        },
+        {
+          "codigo": "CM",
+          "descripcion": "AUTOFRENANTE METRICO"
+        },
+        {
+          "codigo": "L0",
+          "descripcion": "PLANA GRANDE"
+        },
+        {
+          "codigo": "M0",
+          "descripcion": "METRICO HEXAGONAL"
+        },
+        {
+          "codigo": "M1",
+          "descripcion": "METRICO TIPO 1 (M1)"
+        },
+        {
+          "codigo": "M2",
+          "descripcion": "METRICO TIPO 2 (M2)"
+        },
+        {
+          "codigo": "M6",
+          "descripcion": "METRICO M6"
+        },
+        {
+          "codigo": "MC",
+          "descripcion": "METRICO AUTOFRENANTE"
+        },
+        {
+          "codigo": "MG",
+          "descripcion": "METRICO GROWER"
+        },
+        {
+          "codigo": "MP",
+          "descripcion": "METRICO PLANA"
+        },
+        {
+          "codigo": "MQ",
+          "descripcion": "METRICO CON ARANDELA"
+        },
+        {
+          "codigo": "N0",
+          "descripcion": "PHILLIPS / RANURA CRUZADA"
+        },
+        {
+          "codigo": "N2",
+          "descripcion": "PHILLIPS OVAL"
+        },
+        {
+          "codigo": "O4",
+          "descripcion": "CABEZA OVAL 4mm"
+        },
+        {
+          "codigo": "OM",
+          "descripcion": "OVAL METRICO"
+        },
+        {
+          "codigo": "P0",
+          "descripcion": "PULGADA HEXAGONAL"
+        },
+        {
+          "codigo": "P1",
+          "descripcion": "PULGADA TIPO 1"
+        },
+        {
+          "codigo": "P2",
+          "descripcion": "PULGADA TIPO 2"
+        },
+        {
+          "codigo": "P3",
+          "descripcion": "PULGADA TIPO 3"
+        },
+        {
+          "codigo": "P5",
+          "descripcion": "PULGADA TIPO 5"
+        },
+        {
+          "codigo": "P9",
+          "descripcion": "PULGADA TIPO 9"
+        },
+        {
+          "codigo": "PA",
+          "descripcion": "PULGADA AUTOFRENANTE INOX"
+        },
+        {
+          "codigo": "PC",
+          "descripcion": "PULGADA AUTOFRENANTE"
+        },
+        {
+          "codigo": "PG",
+          "descripcion": "PULGADA GROWER"
+        },
+        {
+          "codigo": "PL",
+          "descripcion": "PULGADA PLANA"
+        },
+        {
+          "codigo": "PM",
+          "descripcion": "PULGADA MACIZO"
+        },
+        {
+          "codigo": "PQ",
+          "descripcion": "PULGADA CON ARANDELA"
+        },
+        {
+          "codigo": "SM",
+          "descripcion": "SOCKET METRICO"
+        },
+        {
+          "codigo": "TB",
+          "descripcion": "TIRAFONDO PUNTA BROCA"
+        },
+        {
+          "codigo": "TW",
+          "descripcion": "WAFER PUNTA MECHA"
+        },
+        {
+          "codigo": "U0",
+          "descripcion": "CABEZA OVAL INOX"
+        },
+        {
+          "codigo": "W0",
+          "descripcion": "WAFER AGUJA"
+        },
+        {
+          "codigo": "WB",
+          "descripcion": "WAFER AUTOPERFORANTE"
+        },
+        {
+          "codigo": "X0",
+          "descripcion": "ALLEN FRESADO (FLAT)"
+        },
+        {
+          "codigo": "Ñ3",
+          "descripcion": "PHILLIPS RANURADO"
         }
       ]
     },
@@ -2742,7 +3144,8 @@
     "pvc_libre_6_10": {
       "label": "Medida / código libre (5 carácteres)",
       "tipo": "libre",
-      "longitud": 5
+      "longitud": 4,
+      "relleno": "izquierda"
     },
     "polipropileno_p2_3": {
       "label": "ACCESORIOS",
@@ -3449,7 +3852,7 @@
         },
         {
           "codigo": "I0",
-          "descripcion": ""
+          "descripcion": "CABLE"
         },
         {
           "codigo": "J0",
@@ -3815,7 +4218,7 @@
         },
         {
           "codigo": "Z0",
-          "descripcion": "ROCKER"
+          "descripcion": "ROKER"
         },
         {
           "codigo": "Z1",
@@ -4157,13 +4560,65 @@
         }
       ]
     },
-    "mat_electrico_p8_8_gabinete": {
-      "label": "ALTO (gabinete)",
+    "mat_electrico_p6_6_gabinete_material": {
+      "label": "MATERIAL (gabinete)",
       "tipo": "opcion",
       "opciones": [
         {
+          "codigo": "0",
+          "descripcion": "METALICO"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "PLASTICO"
+        },
+        {
           "codigo": "2",
-          "descripcion": "200"
+          "descripcion": "INOXIDABLE"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "PRFV"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ANTIEXPLOSIVO"
+        }
+      ]
+    },
+    "mat_electrico_p7_7_gabinete_tapa": {
+      "label": "TAPA (gabinete)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": "CIEGA"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "TRANSPARENTE"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "CALADA"
+        }
+      ]
+    },
+    "mat_electrico_p8_8_gabinete": {
+      "label": "ALTO mm (gabinete)",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": "250"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "350"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "450"
         },
         {
           "codigo": "3",
@@ -4182,12 +4637,32 @@
           "descripcion": "600"
         },
         {
+          "codigo": "7",
+          "descripcion": "550"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "650"
+        },
+        {
           "codigo": "9",
           "descripcion": "900"
         },
         {
           "codigo": "A",
           "descripcion": "1200"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "750"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "1050"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "1000"
         }
       ]
     },
@@ -4258,9 +4733,21 @@
       ]
     },
     "mat_electrico_p9_9_gabinete": {
-      "label": "ANCHO (gabinete)",
+      "label": "ANCHO mm (gabinete)",
       "tipo": "opcion",
       "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": "250"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "350"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "450"
+        },
         {
           "codigo": "3",
           "descripcion": "300"
@@ -4278,12 +4765,32 @@
           "descripcion": "600"
         },
         {
+          "codigo": "7",
+          "descripcion": "550"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "650"
+        },
+        {
           "codigo": "9",
           "descripcion": "900"
         },
         {
           "codigo": "A",
           "descripcion": "1200"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "750"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "1050"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "1000"
         }
       ]
     },
@@ -4370,7 +4877,7 @@
       ]
     },
     "mat_electrico_p10_10_gabinete": {
-      "label": "PROFUNDIDAD (gabinete)",
+      "label": "PROFUNDIDAD mm (gabinete)",
       "tipo": "opcion",
       "opciones": [
         {
@@ -4392,6 +4899,22 @@
         {
           "codigo": "E",
           "descripcion": "450"
+        },
+        {
+          "codigo": "0",
+          "descripcion": "100"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "150"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "225"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "300"
         }
       ]
     },
@@ -4660,6 +5183,14 @@
         {
           "codigo": "A",
           "descripcion": "AUTOACOPLAMIENTO"
+        },
+        {
+          "codigo": "T",
+          "descripcion": "TRITURADORA"
+        },
+        {
+          "codigo": "e",
+          "descripcion": "CODIGO LEGACY"
         }
       ]
     },
@@ -4698,6 +5229,34 @@
         {
           "codigo": "M",
           "descripcion": "MEC"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "BK"
+        },
+        {
+          "codigo": "I",
+          "descripcion": "ITUR"
+        },
+        {
+          "codigo": "S",
+          "descripcion": "SAER"
+        },
+        {
+          "codigo": "T",
+          "descripcion": "LEO / TRITURADORA"
+        },
+        {
+          "codigo": "X",
+          "descripcion": "MARCA ESPECIAL"
+        },
+        {
+          "codigo": "N",
+          "descripcion": "NEMO / NBK"
+        },
+        {
+          "codigo": "e",
+          "descripcion": "CODIGO LEGACY"
         }
       ]
     },
@@ -4724,6 +5283,14 @@
         {
           "codigo": "0",
           "descripcion": "N/A"
+        },
+        {
+          "codigo": "K",
+          "descripcion": "KSB CONEXION"
+        },
+        {
+          "codigo": "g",
+          "descripcion": "CODIGO LEGACY"
         }
       ]
     },
@@ -4912,6 +5479,18 @@
         {
           "codigo": "A",
           "descripcion": "ACEITE SOPLADORES"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "ACTUADOR"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "TAMIZ / FILTRO"
+        },
+        {
+          "codigo": "o",
+          "descripcion": "CODIGO LEGACY"
         }
       ]
     },
@@ -5022,6 +5601,18 @@
         {
           "codigo": "Z",
           "descripcion": ""
+        },
+        {
+          "codigo": "0",
+          "descripcion": "BARRA / PERFIL"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "MOTOR WEG / ESPECIAL"
+        },
+        {
+          "codigo": "m",
+          "descripcion": "CODIGO LEGACY"
         }
       ]
     },
@@ -5100,6 +5691,58 @@
         {
           "codigo": "23",
           "descripcion": "2,3kW"
+        },
+        {
+          "codigo": "00",
+          "descripcion": "BARRA"
+        },
+        {
+          "codigo": "03",
+          "descripcion": "ESPECIAL 03"
+        },
+        {
+          "codigo": "04",
+          "descripcion": "ESPECIAL 04"
+        },
+        {
+          "codigo": "0C",
+          "descripcion": "MOTORREDUCTOR C"
+        },
+        {
+          "codigo": "0S",
+          "descripcion": "SOPLADOR"
+        },
+        {
+          "codigo": "0T",
+          "descripcion": "COMPRESOR T"
+        },
+        {
+          "codigo": "4P",
+          "descripcion": "4 POLOS"
+        },
+        {
+          "codigo": "63",
+          "descripcion": "CUERPO 63"
+        },
+        {
+          "codigo": "8D",
+          "descripcion": "MOTORREDUCTOR 8D"
+        },
+        {
+          "codigo": "ST",
+          "descripcion": "MOTOR ST"
+        },
+        {
+          "codigo": "T7",
+          "descripcion": "ACTUADOR AT75"
+        },
+        {
+          "codigo": "T8",
+          "descripcion": "ACTUADOR AT88"
+        },
+        {
+          "codigo": "ys",
+          "descripcion": "CODIGO LEGACY"
         }
       ]
     },
@@ -5146,6 +5789,26 @@
         {
           "codigo": "R",
           "descripcion": "R (REPICKY)"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "ESPECIAL"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "BRIDA B"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "CUERPO C"
+        },
+        {
+          "codigo": "N",
+          "descripcion": "NEUTRO"
+        },
+        {
+          "codigo": "c",
+          "descripcion": "CODIGO LEGACY"
         }
       ]
     },
@@ -5249,6 +5912,10 @@
         {
           "codigo": "EDI",
           "descripcion": "E"
+        },
+        {
+          "codigo": "S",
+          "descripcion": "SSI AERATION"
         }
       ]
     },
@@ -6382,6 +7049,38 @@
         {
           "codigo": "8",
           "descripcion": "Paleta Barredor"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "RETENES / SELLOS"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "GOMAS BARREDORAS / PLACAS"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "RUEDAS DENTADAS"
+        },
+        {
+          "codigo": "D",
+          "descripcion": "CADENAS"
+        },
+        {
+          "codigo": "E",
+          "descripcion": "FITTING METALICO ROSCADO"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "RUEDA ACANALADA"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "CHAVETA"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "RESORTE / MUELLE"
         }
       ]
     },
@@ -6400,6 +7099,14 @@
         {
           "codigo": "D",
           "descripcion": "Dinatec"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "GENERICO INOX"
+        },
+        {
+          "codigo": "F",
+          "descripcion": "FABRICANTE ESPECIAL"
         }
       ]
     },
@@ -6834,6 +7541,18 @@
         {
           "codigo": "9",
           "descripcion": "90°"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "NO APLICA (var. 1)"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "NO APLICA (var. 2)"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "45° RADIO CORTO"
         }
       ]
     },
@@ -6992,6 +7711,415 @@
       "label": "Medida / código libre (5 carácteres)",
       "tipo": "libre",
       "longitud": 5
+    },
+    "mat_electrico_custom_1781284948520": {
+      "label": "CORRIENTE NOMINAL",
+      "tipo": "libre",
+      "longitud": 3,
+      "relleno": "izquierda"
+    },
+    "mat_electrico_custom_1781285006663": {
+      "label": "LINEA DE PRODUCTO",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": "SIRIUS 3RT"
+        }
+      ]
+    },
+    "pvc_custom_1781608415422": {
+      "label": "CEPEX 1°DIG/OTROS",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": "CEPEX PRIMER DIGITO"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "CEPEX PRIMER DIGITO"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "CEPEX PRIMER DIGITO"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "CEPEX PRIMER DIGITO"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "CEPEX PRIMER DIGITO"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "CEPEX PRIMER DIGITO"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "CEPEX PRIMER DIGITO"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "CEPEX PRIMER DIGITO"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "CEPEX PRIMER DIGITO"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "CEPEX PRIMER DIGITO"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "EFFAST"
+        }
+      ]
+    },
+    "pvc_custom_1781608487126": {
+      "label": "CEPEX 2a5/OTRAS MEDIDA",
+      "tipo": "libre",
+      "longitud": 4,
+      "relleno": "izquierda"
+    },
+    "valvulas_custom_1781637589398": {
+      "label": "MARCA / CEPEX 1°DIGITO",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": "CEPEX 1° DIGITO"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "CEPEX 1° DIGITO"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "CEPEX 1° DIGITO"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "CEPEX 1° DIGITO"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "CEPEX 1° DIGITO"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "CEPEX 1° DIGITO"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "CEPEX 1° DIGITO"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "CEPEX 1° DIGITO"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "CEPEX 1° DIGITO"
+        },
+        {
+          "codigo": "1",
+          "descripcion": "CEPEX 1° DIGITO"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "EFFAST"
+        }
+      ]
+    },
+    "valvulas_custom_1781637631781": {
+      "label": "MEDIDA",
+      "tipo": "libre",
+      "longitud": 4,
+      "relleno": "izquierda"
+    },
+    "mat_electrico_custom_1781727165904": {
+      "label": "TIPO DE CABLE",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "UNIFILAR"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "TIPO TALLER"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "SUBTERRANEO"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "MALLADO"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "UPT"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "TELEFONICO"
+        }
+      ]
+    },
+    "mat_electrico_custom_1781727269162": {
+      "label": "TIPO DE CABLE",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "UNIFILAR"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "TIPO TALLER"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "SUBTERRANEO"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "MALLADO"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "UTP"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "TELEFONICO"
+        }
+      ]
+    },
+    "mat_electrico_custom_1781727380797": {
+      "label": "polos",
+      "tipo": "libre",
+      "longitud": 2
+    },
+    "mat_electrico_custom_1781727493255": {
+      "label": "DIAMETRO",
+      "tipo": "libre",
+      "longitud": 3
+    },
+    "mat_electrico_custom_1781727538000": {
+      "label": "MARCA DE CABLE",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "0",
+          "descripcion": "PRIMERA MARCA"
+        }
+      ]
+    },
+    "herramientas_p2_2": {
+      "label": "TIPO",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "LLAVES Y DESTORNILLADORES"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "BROCAS / FRESAS / TARRAJAS"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "DISCOS Y ACCESORIOS ROTARY"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "MARTILLOS / MAZOS"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "PUNZONES"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "ESCALERAS / PLATAFORMAS"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "CINTAS MÉTRICAS / MEDICIÓN"
+        },
+        {
+          "codigo": "8",
+          "descripcion": "EQUIPAMIENTO PINTURA / SOPLETE"
+        },
+        {
+          "codigo": "9",
+          "descripcion": "CUCHILLAS / CORTANTES"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "CLAMPS / TENSORES / CINCHAS"
+        },
+        {
+          "codigo": "B",
+          "descripcion": "MANDRIL / MALACATE"
+        },
+        {
+          "codigo": "C",
+          "descripcion": "VARIOS"
+        }
+      ]
+    },
+    "herramientas_p3_10_libre": {
+      "label": "Referencia / Modelo",
+      "tipo": "libre",
+      "opciones": []
+    },
+    "consumibles_p2_2": {
+      "label": "TIPO",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "LIMPIEZA"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "PINTURA Y RECUBRIMIENTO"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "SOLDADURA Y ELECTRODOS"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "ABRASIVOS"
+        },
+        {
+          "codigo": "5",
+          "descripcion": "SELLADORES / ADHESIVOS / JUNTA"
+        },
+        {
+          "codigo": "6",
+          "descripcion": "EMBALAJE Y FIJACIÓN"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "VARIOS"
+        }
+      ]
+    },
+    "consumibles_p3_10_libre": {
+      "label": "Referencia / Modelo",
+      "tipo": "libre",
+      "opciones": []
+    },
+    "seguridad_p2_2": {
+      "label": "TIPO",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "1",
+          "descripcion": "ROPA DE TRABAJO"
+        },
+        {
+          "codigo": "2",
+          "descripcion": "PROTECCIÓN RESPIRATORIA"
+        },
+        {
+          "codigo": "3",
+          "descripcion": "PROTECCIÓN VISUAL"
+        },
+        {
+          "codigo": "4",
+          "descripcion": "PROTECCIÓN CORPORAL / POLAINAS"
+        }
+      ]
+    },
+    "seguridad_p3_10_libre": {
+      "label": "Referencia / Modelo",
+      "tipo": "libre",
+      "opciones": []
+    },
+    "accesorios_mecanicos_fitting_tipo": {
+      "label": "TIPO FITTING",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "CO",
+          "descripcion": "Codo"
+        },
+        {
+          "codigo": "TE",
+          "descripcion": "Tee"
+        },
+        {
+          "codigo": "NI",
+          "descripcion": "Niple"
+        },
+        {
+          "codigo": "EU",
+          "descripcion": "Entrerosca"
+        },
+        {
+          "codigo": "TA",
+          "descripcion": "Tapón"
+        },
+        {
+          "codigo": "BR",
+          "descripcion": "Brida"
+        },
+        {
+          "codigo": "BU",
+          "descripcion": "Buje de Reducción"
+        },
+        {
+          "codigo": "UP",
+          "descripcion": "Cupla"
+        },
+        {
+          "codigo": "KT",
+          "descripcion": "Acoplamiento / Kit"
+        }
+      ]
+    },
+    "accesorios_mecanicos_fitting_material": {
+      "label": "MATERIAL",
+      "tipo": "opcion",
+      "opciones": [
+        {
+          "codigo": "B",
+          "descripcion": "Bronce"
+        },
+        {
+          "codigo": "G",
+          "descripcion": "Galvanizado"
+        },
+        {
+          "codigo": "I",
+          "descripcion": "Acero Inoxidable"
+        },
+        {
+          "codigo": "H",
+          "descripcion": "Hierro"
+        },
+        {
+          "codigo": "A",
+          "descripcion": "Aluminio"
+        },
+        {
+          "codigo": "N",
+          "descripcion": "Nylon"
+        },
+        {
+          "codigo": "X",
+          "descripcion": "Otro"
+        }
+      ]
     }
   }
 }

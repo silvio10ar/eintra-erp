@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
 import { getUser, getPermisos } from '../../store/authStore'
+import logo from '../../assets/logo.avif'
 
 /* ── Helpers ────────────────────────────────────────────────────── */
 const fmt = n =>
@@ -31,12 +33,25 @@ function puedeVer(rol, seccion, tipo) {
 }
 
 /* ── KPI Card ───────────────────────────────────────────────────── */
-function KpiCard({ valor, label, icon, colorClass, bgClass, sub }) {
+const KPI_BORDER = {
+  'text-info':    '#0dcaf0',
+  'text-warning': '#ffc107',
+  'text-primary': '#0d6efd',
+  'text-success': '#198754',
+  'text-danger':  '#dc3545',
+}
+
+function KpiCard({ valor, label, icon, colorClass, bgClass, sub, onClick }) {
   return (
     <div className="col-6 col-sm-4 col-lg-3">
-      <div className="card kpi-card h-100">
+      <div
+        className="card kpi-card h-100"
+        style={{ borderTop: `3px solid ${KPI_BORDER[colorClass] || '#dee2e6'}`, cursor: onClick ? 'pointer' : 'default' }}
+        onClick={onClick}
+        title={onClick ? 'Ver detalle' : undefined}
+      >
         <div className="card-body d-flex align-items-center gap-3 py-3">
-          <div className={`kpi-icon ${bgClass}`}>
+          <div className={`kpi-icon ${bgClass}`} style={{ width: 52, height: 52, fontSize: '1.5rem' }}>
             <i className={`bi bi-${icon} ${colorClass}`} />
           </div>
           <div>
@@ -44,6 +59,7 @@ function KpiCard({ valor, label, icon, colorClass, bgClass, sub }) {
             <div className="kpi-label">{label}</div>
             {sub && <div className="text-muted" style={{ fontSize: '0.72rem' }}>{sub}</div>}
           </div>
+          {onClick && <i className="bi bi-arrow-right-short ms-auto text-muted" style={{ fontSize: '1.1rem', opacity: 0.5 }} />}
         </div>
       </div>
     </div>
@@ -72,16 +88,20 @@ export default function Dashboard() {
   const [data, setData]               = useState(null)
   const [loading, setLoading]         = useState(true)
   const [syncing, setSyncing]         = useState(false)
+  const [errSync, setErrSync]         = useState('')
   const [error, setError]             = useState('')
   const [miAyer, setMiAyer]           = useState(undefined)
   const [resumenAyer, setResumenAyer] = useState(null)
   const [tabFichadas, setTabFichadas] = useState('hoy')
+  const [noLeidosMsgs, setNoLeidosMsgs] = useState(0)
+  const navigate = useNavigate()
   const user     = getUser()
   const rol      = user?.rol ?? 'solo_lectura'
   const permisos = getPermisos()
 
   const tieneAcceso = modulo =>
     rol === 'admin' || !!(permisos[modulo]?.leer || permisos[modulo]?.escribir)
+  const puedeSincronizar = rol === 'admin' || !!permisos.rrhh?.escribir
 
   const verKpi = s => tieneAcceso(s)
   const verAlerta = s => {
@@ -99,12 +119,17 @@ export default function Dashboard() {
     cargar()
     api.get('/rrhh/mi-ayer').then(r => setMiAyer(r.data)).catch(() => setMiAyer(null))
     api.get('/rrhh/resumen-ayer').then(r => setResumenAyer(r.data)).catch(() => {})
+    api.get('/mensajes/no-leidos').then(r => setNoLeidosMsgs(r.data?.count || 0)).catch(() => {})
   }, [])
 
   const handleActualizar = async () => {
-    setSyncing(true)
-    try { await api.post('/rrhh/dispositivos/sync-todos') } catch (_) {}
-    await cargar()
+    setSyncing(true); setErrSync('')
+    try {
+      await api.post('/rrhh/dispositivos/sync-todos')
+      await cargar()
+    } catch (err) {
+      setErrSync(err.response?.data?.error ?? 'Error al sincronizar')
+    }
     setSyncing(false)
   }
 
@@ -123,6 +148,10 @@ export default function Dashboard() {
 
   const { stock, compras, ventas, proyectos, produccion, finanzas, alertas, fichadas_hoy = [], sin_fichar_hoy = [] } = data
 
+  const esEmpleado  = !tieneAcceso('rrhh')
+  const nombreCorto = (user?.nombre || '').split(' ')[0]
+  const hoyLabel    = new Date().toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+
   const visAlertas = [verAlerta('ots_urgentes'), verAlerta('stock_bajo'), verAlerta('oc_pendientes')]
   const hayAlertas = visAlertas.some(Boolean)
   const numAlertas = visAlertas.filter(Boolean).length
@@ -138,7 +167,7 @@ export default function Dashboard() {
     const d         = new Date(miAyer.fecha + 'T12:00:00')
     const dLabel    = d.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
     const sinFichada = !miAyer.entrada
-    const sinParte   = !miAyer.tiene_parte
+    const sinParte   = (miAyer.requiere_parte ?? true) && !miAyer.tiene_parte
     const diff       = miAyer.horas_fichada != null && miAyer.tiene_parte
       ? Math.abs(miAyer.horas_parte - miAyer.horas_fichada) : null
     const color = sinParte
@@ -177,93 +206,207 @@ export default function Dashboard() {
 
   return (
     <>
+      {/* ── Banner empresa ───────────────────────────── */}
+      <div className="d-flex align-items-center gap-3 mb-4 px-4 py-3 rounded-3"
+        style={{ background: 'linear-gradient(135deg, #0f3b7a 0%, #1a5cb0 60%, #2175c8 100%)', boxShadow: '0 4px 18px rgba(15,59,122,0.18)' }}>
+        <div style={{ background: 'rgba(255,255,255,0.96)', borderRadius: 8, padding: '4px 10px', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+          <img src={logo} alt="E-INTRA" style={{ height: 38 }} />
+        </div>
+        <div className="ms-auto text-end d-none d-sm-block">
+          <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.85)', textTransform: 'capitalize' }}>{hoyLabel}</div>
+          <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>Sistema ERP</div>
+        </div>
+      </div>
+
       {/* ── Encabezado ───────────────────────────────── */}
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
           <h5 className="mb-0 fw-bold">Dashboard</h5>
           <small className="text-muted">Resumen operativo en tiempo real</small>
         </div>
-        <button
-          className="btn btn-sm btn-outline-secondary"
-          onClick={handleActualizar}
-          disabled={syncing}
-        >
-          {syncing
-            ? <><span className="spinner-border spinner-border-sm me-1" />Sincronizando…</>
-            : <><i className="bi bi-arrow-clockwise me-1" />Actualizar</>
-          }
-        </button>
+        {puedeSincronizar && (
+          <div className="text-end">
+            <button
+              className="btn btn-sm btn-outline-secondary"
+              onClick={handleActualizar}
+              disabled={syncing}
+            >
+              {syncing
+                ? <><span className="spinner-border spinner-border-sm me-1" />Sincronizando…</>
+                : <><i className="bi bi-arrow-clockwise me-1" />Actualizar</>
+              }
+            </button>
+            {errSync && <div className="text-danger small mt-1">{errSync}</div>}
+          </div>
+        )}
       </div>
 
       {/* ── Mi ayer ──────────────────────────────────── */}
-      {ayerWidget}
+      {tieneAcceso('rrhh') && ayerWidget}
 
-      {/* ── KPIs ─────────────────────────────────────── */}
-      <div className="row g-3 mb-4">
-        {verKpi('stock') && (
-          <KpiCard
-            valor={fmt(stock.total)}
-            label="Productos"
-            icon="box-seam"
-            colorClass="text-info"
-            bgClass="bg-info bg-opacity-10"
-            sub={stock.alertas > 0 ? `⚠ ${stock.alertas} con stock bajo` : 'Sin alertas'}
-          />
-        )}
-        {verKpi('compras') && (
-          <KpiCard
-            valor={fmt(compras.abiertas)}
-            label="OC abiertas"
-            icon="cart3"
-            colorClass="text-warning"
-            bgClass="bg-warning bg-opacity-10"
-            sub={`${compras.mes} este mes`}
-          />
-        )}
-        {verKpi('ventas') && (
-          <KpiCard
-            valor={fmt(ventas.borrador + ventas.aprobado)}
-            label="Presupuestos"
-            icon="briefcase"
-            colorClass="text-primary"
-            bgClass="bg-primary bg-opacity-10"
-            sub={`${ventas.aprobado} aprobados · ${ventas.mes} este mes`}
-          />
-        )}
-        {verKpi('proyectos') && (
-          <KpiCard
-            valor={fmt(proyectos.activos)}
-            label="Proyectos activos"
-            icon="kanban"
-            colorClass="text-success"
-            bgClass="bg-success bg-opacity-10"
-            sub={proyectos.en_espera > 0 ? `${proyectos.en_espera} en espera` : 'Sin espera'}
-          />
-        )}
-        {verKpi('produccion') && (
-          <KpiCard
-            valor={fmt(produccion.abiertas)}
-            label="OT abiertas"
-            icon="tools"
-            colorClass="text-danger"
-            bgClass="bg-danger bg-opacity-10"
-            sub={produccion.urgentes > 0 ? `🔴 ${produccion.urgentes} urgentes` : `${produccion.vencidas} vencidas`}
-          />
-        )}
-        {verKpi('finanzas') && (
-          <KpiCard
-            valor={fmtMoney(finanzas.saldo_total)}
-            label="Saldo ARS"
-            icon="cash-stack"
-            colorClass="text-success"
-            bgClass="bg-success bg-opacity-10"
-            sub={`Ing: ${fmtMoney(finanzas.ingresos_mes)} · Egr: ${fmtMoney(finanzas.egresos_mes)}`}
-          />
-        )}
-      </div>
+      {/* ── Dashboard empleado ───────────────────────── */}
+      {esEmpleado ? (
+        <>
+          {/* Saludo */}
+          <div className="card border-0 shadow-sm mb-4" style={{ borderLeft: '4px solid #0d6efd', background: 'linear-gradient(135deg,#f0f5ff,#fff)' }}>
+            <div className="card-body d-flex align-items-center justify-content-between py-3 px-4">
+              <div>
+                <h5 className="fw-bold mb-1 text-capitalize">Hola, {nombreCorto.toLowerCase()}</h5>
+                <span className="text-muted small text-capitalize">{hoyLabel}</span>
+              </div>
+              <div className="rounded-circle bg-primary bg-opacity-10 d-flex align-items-center justify-content-center flex-shrink-0"
+                style={{ width: 48, height: 48 }}>
+                <i className="bi bi-person-circle text-primary" style={{ fontSize: '1.5rem' }} />
+              </div>
+            </div>
+          </div>
+
+          {/* Accesos rápidos */}
+          <p className="fw-semibold text-muted text-uppercase mb-3" style={{ fontSize: '0.75rem', letterSpacing: '0.8px' }}>
+            <i className="bi bi-grid me-1" />Accesos rápidos
+          </p>
+          <div className="row g-3 mb-4">
+            {/* Mi Parte */}
+            <div className="col-6 col-md-4">
+              <div className="card border-0 shadow-sm h-100"
+                style={{ cursor: 'pointer' }}
+                onClick={() => navigate('/partes')}
+                onMouseEnter={e => e.currentTarget.classList.add('shadow')}
+                onMouseLeave={e => e.currentTarget.classList.remove('shadow')}>
+                <div className="card-body text-center py-4 px-3">
+                  <div className="rounded-circle bg-primary bg-opacity-10 d-inline-flex align-items-center justify-content-center mb-3"
+                    style={{ width: 56, height: 56 }}>
+                    <i className="bi bi-clipboard2-check text-primary" style={{ fontSize: '1.5rem' }} />
+                  </div>
+                  <div className="fw-semibold mb-1">Mi Parte</div>
+                  <div className="text-muted" style={{ fontSize: '0.82rem' }}>Cargar horas del día</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Proyectos */}
+            {tieneAcceso('proyectos') && (
+              <div className="col-6 col-md-4">
+                <div className="card border-0 shadow-sm h-100"
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => navigate('/proyectos')}
+                  onMouseEnter={e => e.currentTarget.classList.add('shadow')}
+                  onMouseLeave={e => e.currentTarget.classList.remove('shadow')}>
+                  <div className="card-body text-center py-4 px-3">
+                    <div className="rounded-circle bg-success bg-opacity-10 d-inline-flex align-items-center justify-content-center mb-3"
+                      style={{ width: 56, height: 56 }}>
+                      <i className="bi bi-kanban text-success" style={{ fontSize: '1.5rem' }} />
+                    </div>
+                    <div className="fw-semibold mb-1">Proyectos</div>
+                    <div className="text-muted" style={{ fontSize: '0.82rem' }}>{proyectos.activos} activos</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Mensajes */}
+            <div className="col-6 col-md-4">
+              <div className="card border-0 shadow-sm h-100"
+                style={{ cursor: 'pointer' }}
+                onClick={() => navigate('/mensajes')}
+                onMouseEnter={e => e.currentTarget.classList.add('shadow')}
+                onMouseLeave={e => e.currentTarget.classList.remove('shadow')}>
+                <div className="card-body text-center py-4 px-3">
+                  <div className="position-relative d-inline-block mb-3">
+                    <div className="rounded-circle bg-warning bg-opacity-10 d-flex align-items-center justify-content-center"
+                      style={{ width: 56, height: 56 }}>
+                      <i className="bi bi-envelope text-warning" style={{ fontSize: '1.5rem' }} />
+                    </div>
+                    {noLeidosMsgs > 0 && (
+                      <span className="badge bg-danger rounded-pill position-absolute"
+                        style={{ top: -4, right: -6, fontSize: '0.65rem', minWidth: 20 }}>
+                        {noLeidosMsgs}
+                      </span>
+                    )}
+                  </div>
+                  <div className="fw-semibold mb-1">Mensajes</div>
+                  <div className="text-muted" style={{ fontSize: '0.82rem' }}>
+                    {noLeidosMsgs > 0 ? `${noLeidosMsgs} sin leer` : 'Sin mensajes nuevos'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        /* ── KPIs (admin / managers) ─────────────────── */
+        <div className="row g-3 mb-4">
+          {verKpi('stock') && (
+            <KpiCard
+              valor={fmt(stock.total)}
+              label="Productos"
+              icon="box-seam"
+              colorClass="text-info"
+              bgClass="bg-info bg-opacity-10"
+              sub={stock.alertas > 0 ? `⚠ ${stock.alertas} con stock bajo` : 'Sin alertas'}
+              onClick={() => navigate('/stock', { state: stock.alertas > 0 ? { filAlerta: 'bajo' } : {} })}
+            />
+          )}
+          {verKpi('compras') && (
+            <KpiCard
+              valor={fmt(compras.abiertas)}
+              label="OC abiertas"
+              icon="cart3"
+              colorClass="text-warning"
+              bgClass="bg-warning bg-opacity-10"
+              sub={`${compras.mes} este mes`}
+              onClick={() => navigate('/compras', { state: { filtroEstado: 'Emitida' } })}
+            />
+          )}
+          {verKpi('ventas') && (
+            <KpiCard
+              valor={fmt(ventas.borrador + ventas.aprobado)}
+              label="Presupuestos"
+              icon="briefcase"
+              colorClass="text-primary"
+              bgClass="bg-primary bg-opacity-10"
+              sub={`${ventas.aprobado} aprobados · ${ventas.mes} este mes`}
+              onClick={() => navigate('/ventas')}
+            />
+          )}
+          {verKpi('proyectos') && (
+            <KpiCard
+              valor={fmt(proyectos.activos)}
+              label="Proyectos activos"
+              icon="kanban"
+              colorClass="text-success"
+              bgClass="bg-success bg-opacity-10"
+              sub={proyectos.en_espera > 0 ? `${proyectos.en_espera} en espera` : 'Sin espera'}
+              onClick={() => navigate('/proyectos', { state: { filtEst: 'Activo' } })}
+            />
+          )}
+          {verKpi('produccion') && (
+            <KpiCard
+              valor={fmt(produccion.abiertas)}
+              label="OT abiertas"
+              icon="tools"
+              colorClass="text-danger"
+              bgClass="bg-danger bg-opacity-10"
+              sub={produccion.urgentes > 0 ? `🔴 ${produccion.urgentes} urgentes` : `${produccion.vencidas} vencidas`}
+              onClick={() => navigate('/produccion')}
+            />
+          )}
+          {verKpi('finanzas') && (
+            <KpiCard
+              valor={fmtMoney(finanzas.saldo_total)}
+              label="Saldo ARS"
+              icon="cash-stack"
+              colorClass="text-success"
+              bgClass="bg-success bg-opacity-10"
+              sub={`Ing: ${fmtMoney(finanzas.ingresos_mes)} · Egr: ${fmtMoney(finanzas.egresos_mes)}`}
+              onClick={() => navigate('/finanzas')}
+            />
+          )}
+        </div>
+      )}
 
       {/* ── Fichadas hoy / ayer ──────────────────────── */}
-      {(tieneAcceso('rrhh') || resumenAyer) && (
+      {tieneAcceso('rrhh') && (
         <div className="row g-3 mb-4">
           <div className="col-12">
             <div className="card border-0 shadow-sm">
@@ -296,9 +439,9 @@ export default function Dashboard() {
                         <i className="bi bi-calendar2-day me-1" />Ayer
                         {resumenAyer && (
                           <span className="ms-1">
-                            ({resumenAyer.empleados.filter(e => !e.tiene_parte).length > 0
+                            ({resumenAyer.empleados.filter(e => (e.requiere_parte ?? true) && !e.tiene_parte).length > 0
                               ? <span className="text-danger fw-bold">
-                                  {resumenAyer.empleados.filter(e => !e.tiene_parte).length} sin parte
+                                  {resumenAyer.empleados.filter(e => (e.requiere_parte ?? true) && !e.tiene_parte).length} sin parte
                                 </span>
                               : <span className="text-success">OK</span>})
                           </span>
@@ -384,9 +527,9 @@ export default function Dashboard() {
                         <span className="badge bg-success">
                           {resumenAyer.empleados.filter(e => e.tiene_parte).length} con parte
                         </span>
-                        {resumenAyer.empleados.filter(e => !e.tiene_parte).length > 0 && (
+                        {resumenAyer.empleados.filter(e => (e.requiere_parte ?? true) && !e.tiene_parte).length > 0 && (
                           <span className="badge bg-danger">
-                            {resumenAyer.empleados.filter(e => !e.tiene_parte).length} sin parte
+                            {resumenAyer.empleados.filter(e => (e.requiere_parte ?? true) && !e.tiene_parte).length} sin parte
                           </span>
                         )}
                       </div>
@@ -562,11 +705,11 @@ export default function Dashboard() {
                               </div>
                             </div>
                             <div className="text-end">
-                              <span className={`badge ${oc.estado === 'Parcial' ? 'bg-warning text-dark' : 'bg-secondary'}`}>
-                                {oc.estado}
+                              <span className={`badge ${oc.vencida ? 'bg-danger' : oc.estado === 'Parcial' ? 'bg-warning text-dark' : 'bg-secondary'}`}>
+                                {oc.vencida ? 'Vencida' : oc.estado}
                               </span>
-                              <div className="text-muted mt-1" style={{ fontSize: '0.72rem' }}>
-                                {fmtFecha(oc.fecha)}
+                              <div className={`mt-1 ${oc.vencida ? 'text-danger fw-semibold' : 'text-muted'}`} style={{ fontSize: '0.72rem' }}>
+                                {oc.fecha_entrega_est ? `Entrega: ${fmtFecha(oc.fecha_entrega_est)}` : fmtFecha(oc.fecha)}
                               </div>
                             </div>
                           </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
+import DateInput from '../../components/DateInput'
 
 const CRITERIOS_SEL  = ['Calidad final', 'Precio', 'Experiencia laboral', 'Experiencia en mercado']
 const CRITERIOS_EVAL = ['Cumplimiento de plazos', 'Capacidad de respuesta', 'Flexibilidad ante cambios', 'Calidad final']
@@ -96,8 +97,8 @@ function FormEvaluacion({ proveedor, onClose, onGuardado, evalEdit }) {
               </div>
               <div className="col-md-3">
                 <label className="form-label small fw-medium">Fecha</label>
-                <input type="date" className="form-control form-control-sm" value={form.fecha}
-                  onChange={e => setForm(p => ({ ...p, fecha: e.target.value }))}/>
+                <DateInput className="form-control form-control-sm" value={form.fecha}
+                  onChange={v => setForm(p => ({ ...p, fecha: v }))}/>
               </div>
               <div className="col-12">
                 <label className="form-label small fw-medium">Observaciones</label>

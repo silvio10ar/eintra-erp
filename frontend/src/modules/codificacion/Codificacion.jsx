@@ -99,13 +99,16 @@ function Configuracion({ config, onSave }) {
     return { pregunta_id: pos23Step.pregunta_id, en: [val] }
   }
 
-  function delPasoFromFlujo(pregId) {
+  function delPasoFromFlujo(paso) {
+    const siKey = JSON.stringify(paso.si ?? null)
     mutate(c => {
       const t = c.tipos.find(t => t.id === tipoId)
-      t.flujo = t.flujo.filter(p => p.pregunta_id !== pregId)
+      t.flujo = t.flujo.filter(p =>
+        !(p.pregunta_id === paso.pregunta_id && JSON.stringify(p.si ?? null) === siKey)
+      )
     })
-    setRespuestas(prev => { const n = { ...prev }; delete n[pregId]; return n })
-    if (editandoId === pregId) setEditandoId(null)
+    setRespuestas(prev => { const n = { ...prev }; delete n[paso.pregunta_id]; return n })
+    if (editandoId === paso.pregunta_id) setEditandoId(null)
   }
 
   function confirmarNuevoPaso() {
@@ -450,7 +453,7 @@ function Configuracion({ config, onSave }) {
                       </button>
                       <button className="btn btn-sm btn-link py-0 text-danger" style={{ fontSize: '0.72rem' }}
                         title="Eliminar paso del flujo"
-                        onClick={() => delPasoFromFlujo(p.pregunta_id)}>
+                        onClick={() => delPasoFromFlujo(p)}>
                         <i className="bi bi-trash" />
                       </button>
                     </div>
@@ -480,7 +483,7 @@ function Configuracion({ config, onSave }) {
                   </button>
                   <button className={`btn btn-sm py-0 px-1 ${enEdicion ? 'btn-outline-dark' : 'btn-outline-light'}`}
                     style={{ fontSize: '0.72rem' }} title="Eliminar paso"
-                    onClick={() => delPasoFromFlujo(p.pregunta_id)}>
+                    onClick={() => delPasoFromFlujo(p)}>
                     <i className="bi bi-trash" />
                   </button>
                 </div>
@@ -708,10 +711,16 @@ function Configuracion({ config, onSave }) {
 export default function Codificacion() {
   const esAdmin = getUser()?.rol === 'admin'
 
-  const [tab,     setTab]     = useState('asistente')
-  const [config,  setConfig]  = useState(null)
-  const [error,   setError]   = useState(null)
-  const [pedidos, setPedidos] = useState([])
+  const [tab,       setTab]       = useState('asistente')
+  const [config,    setConfig]    = useState(null)
+  const [error,     setError]     = useState(null)
+  const [pedidos,   setPedidos]   = useState([])
+  const [pendOC,    setPendOC]    = useState([])
+  const [loadPend,  setLoadPend]  = useState(false)
+  const [productos, setProductos] = useState([])
+  const [codifItem, setCodifItem] = useState(null)  // item being assigned
+  const [codifBusc, setCodifBusc] = useState('')
+  const [savCodif,  setSavCodif]  = useState(false)
 
   const cargarConfig = useCallback(() => {
     api.get('/codificacion/config')
@@ -724,13 +733,39 @@ export default function Codificacion() {
     api.get('/codificacion/pedidos').then(r => setPedidos(r.data)).catch(() => {})
   }, [esAdmin])
 
+  const cargarPendOC = useCallback(() => {
+    if (!esAdmin) return
+    setLoadPend(true)
+    api.get('/compras/oc/items-sin-codificar').then(r => setPendOC(r.data)).catch(() => {}).finally(() => setLoadPend(false))
+  }, [esAdmin])
+
   useEffect(() => { cargarConfig(); cargarPedidos() }, [cargarConfig, cargarPedidos])
+  useEffect(() => { if (esAdmin) api.get('/stock/productos').then(r => setProductos(r.data)).catch(() => {}) }, [esAdmin])
+  useEffect(() => { if (tab === 'pendientes') cargarPendOC() }, [tab, cargarPendOC])
 
   const resolverPedido = id => {
     api.delete(`/codificacion/pedidos/${id}`)
       .then(() => setPedidos(prev => prev.filter(p => p.id !== id)))
       .catch(() => {})
   }
+
+  const asignarProducto = async (prod) => {
+    if (!codifItem) return
+    setSavCodif(true)
+    try {
+      await api.patch(`/compras/oc/items/${codifItem.id}/codificar`, { producto_id: prod.id })
+      setPendOC(prev => prev.filter(i => i.id !== codifItem.id))
+      setCodifItem(null); setCodifBusc('')
+    } catch(e) { alert(e.response?.data?.error || 'Error al asignar') }
+    finally { setSavCodif(false) }
+  }
+
+  const sugsProductos = codifBusc.length >= 2
+    ? productos.filter(p => {
+        const hay = (p.codigo + ' ' + p.descripcion).toLowerCase()
+        return codifBusc.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w))
+      }).slice(0, 15)
+    : []
 
   if (error) return <div className="alert alert-danger m-3">{error}</div>
   if (!config) return <div className="text-center py-5"><span className="spinner-border" /></div>
@@ -749,6 +784,16 @@ export default function Codificacion() {
         </li>
         {esAdmin && (
           <li className="nav-item">
+            <button className={`nav-link py-1 ${tab === 'pendientes' ? 'active' : ''}`} onClick={() => setTab('pendientes')}>
+              <i className="bi bi-box-seam me-1" />Pendientes OC
+              {pendOC.length > 0 && (
+                <span className="badge bg-warning text-dark ms-1" style={{ fontSize: '0.65rem' }}>{pendOC.length}</span>
+              )}
+            </button>
+          </li>
+        )}
+        {esAdmin && (
+          <li className="nav-item">
             <button className={`nav-link py-1 ${tab === 'config' ? 'active' : ''}`} onClick={() => setTab('config')}>
               <i className="bi bi-gear me-1" />Configuración
               {pedidos.length > 0 && (
@@ -760,6 +805,101 @@ export default function Codificacion() {
       </ul>
 
       {tab === 'asistente' && <Asistente config={config} />}
+
+      {tab === 'pendientes' && esAdmin && (
+        <div>
+          <div className="d-flex align-items-center gap-2 mb-3">
+            <h6 className="mb-0 fw-bold">Materiales sin codificar — pendientes de asignación</h6>
+            <button className="btn btn-sm btn-outline-secondary py-0 px-2" onClick={cargarPendOC} disabled={loadPend}>
+              <i className="bi bi-arrow-clockwise"/>
+            </button>
+          </div>
+
+          {loadPend
+            ? <div className="text-center py-5"><span className="spinner-border text-secondary"/></div>
+            : pendOC.length === 0
+              ? <div className="alert alert-success py-2"><i className="bi bi-check-circle me-2"/>Sin pendientes.</div>
+              : (
+                <div className="table-responsive">
+                  <table className="table table-sm table-hover align-middle" style={{fontSize:'0.83rem'}}>
+                    <thead className="table-dark">
+                      <tr>
+                        <th>DESCRIPCIÓN</th>
+                        <th style={{width:80}}>UNID.</th>
+                        <th style={{width:70}} className="text-end">CANT.</th>
+                        <th style={{width:100}}>OC N°</th>
+                        <th style={{width:95}}>FECHA</th>
+                        <th>PROVEEDOR</th>
+                        <th style={{width:110}}/>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pendOC.map(item => (
+                        <tr key={item.id} style={codifItem?.id === item.id ? {background:'#fffbf0'} : {}}>
+                          <td className="fw-semibold">{item.descripcion}</td>
+                          <td className="text-muted">{item.unidad}</td>
+                          <td className="text-end">{item.cantidad}</td>
+                          <td><span className="badge bg-secondary" style={{fontFamily:'monospace'}}>{item.oc_numero}</span></td>
+                          <td className="text-muted">{item.oc_fecha?.slice(0,10).split('-').reverse().join('/')}</td>
+                          <td className="text-truncate" style={{maxWidth:160}}>{item.proveedor_nombre}</td>
+                          <td>
+                            <button className="btn btn-sm btn-outline-primary py-0 px-2" style={{fontSize:'0.75rem'}}
+                              onClick={() => { setCodifItem(item); setCodifBusc('') }}>
+                              <i className="bi bi-link-45deg me-1"/>Asignar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+          }
+
+          {/* Panel de asignación inline */}
+          {codifItem && (
+            <div className="card border-primary mt-3">
+              <div className="card-header py-2 bg-primary text-white d-flex justify-content-between align-items-center">
+                <span className="small fw-bold">
+                  <i className="bi bi-link-45deg me-1"/>Asignar producto a: <em>{codifItem.descripcion}</em>
+                </span>
+                <button className="btn-close btn-close-white" style={{fontSize:'0.7rem'}} onClick={() => { setCodifItem(null); setCodifBusc('') }}/>
+              </div>
+              <div className="card-body py-2">
+                <input className="form-control form-control-sm mb-2" placeholder="Buscar por código o descripción…"
+                  value={codifBusc} autoFocus
+                  onChange={e => setCodifBusc(e.target.value)}/>
+                {codifBusc.length >= 2 && (
+                  <div className="border rounded" style={{maxHeight:220, overflowY:'auto'}}>
+                    {sugsProductos.length === 0
+                      ? <div className="px-3 py-2 text-muted small fst-italic">Sin coincidencias</div>
+                      : sugsProductos.map(p => (
+                          <div key={p.id} className="d-flex align-items-center gap-2 px-2 py-2 border-bottom"
+                            style={{cursor:'pointer'}}
+                            onMouseEnter={e=>e.currentTarget.classList.add('bg-light')}
+                            onMouseLeave={e=>e.currentTarget.classList.remove('bg-light')}
+                            onClick={() => asignarProducto(p)}>
+                            <span className="badge bg-dark flex-shrink-0"
+                              style={{fontFamily:'monospace', fontSize:'0.7rem', minWidth:72}}>
+                              {p.codigo}
+                            </span>
+                            <span className="flex-grow-1 text-truncate" style={{fontSize:'0.82rem'}}>{p.descripcion}</span>
+                            <span className="text-muted flex-shrink-0" style={{fontSize:'0.72rem'}}>{p.unidad}</span>
+                            {savCodif && <span className="spinner-border spinner-border-sm text-primary ms-2"/>}
+                          </div>
+                        ))
+                    }
+                  </div>
+                )}
+                <div className="text-muted mt-1" style={{fontSize:'0.73rem'}}>
+                  Escribí al menos 2 caracteres para buscar. Al seleccionar, el ítem quedará vinculado al producto.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === 'config' && esAdmin && (
         <>
           {/* Panel de pedidos pendientes */}

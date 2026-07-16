@@ -15,7 +15,8 @@ const fmtUSD = n => {
 }
 
 const FORM_VACIO = {
-  cliente_id: null, cliente: '',
+  cliente_id: null, cliente: '', cli_nombre_cat: '', cli_cuit_cat: '',
+  proyecto_id: null, proyecto: '',
   numero_oc: '', monto_oc: '', fecha_oc: '', fecha_recepcion_oc: '',
   anticipo_pct: '', monto_anticipo_usd: '', fecha_fact_anticipo: '', fecha_pago_anticipo: '',
   numero_poliza: '', fecha_pedido_poliza: '', fecha_poliza: '', vigencia_poliza: '', fecha_entrega_doc: '',
@@ -73,6 +74,54 @@ function ClienteSelector({ value, onChange }) {
   )
 }
 
+function ProyectoSelector({ value, onChange }) {
+  const [query,   setQuery]   = useState(value || '')
+  const [opciones, setOpc]    = useState([])
+  const [abierto, setAbierto] = useState(false)
+
+  useEffect(() => { setQuery(value || '') }, [value])
+
+  const buscar = async q => {
+    setQuery(q)
+    if (q.length < 1) { setOpc([]); setAbierto(false); return }
+    try {
+      const r = await api.get('/proyectos', { params: { buscar: q } })
+      setOpc(r.data.slice(0, 10))
+      setAbierto(true)
+    } catch { setOpc([]) }
+  }
+
+  const seleccionar = p => {
+    setQuery(`${p.codigo} — ${p.nombre}`)
+    setAbierto(false)
+    onChange(p)
+  }
+
+  return (
+    <div className="position-relative">
+      <input className="form-control form-control-sm" value={query}
+        placeholder="Buscar por código o nombre de proyecto..."
+        onChange={e => buscar(e.target.value)}
+        onBlur={() => setTimeout(() => setAbierto(false), 180)}
+        autoComplete="off" />
+      {abierto && opciones.length > 0 && (
+        <div className="border rounded bg-white shadow-sm position-absolute w-100" style={{ zIndex: 1080, top: '100%', maxHeight: 220, overflowY: 'auto' }}>
+          {opciones.map(p => (
+            <div key={p.id} className="px-2 py-1 border-bottom" style={{ cursor: 'pointer', fontSize: '0.83rem' }}
+              onMouseDown={() => seleccionar(p)}>
+              <span className="badge bg-secondary me-1" style={{ fontSize: '0.7rem', fontFamily: 'monospace' }}>{p.codigo}</span>
+              <span className="fw-semibold">{p.nombre}</span>
+              {p.cliente_nombre && (
+                <span className="text-muted ms-2" style={{ fontSize: '0.75rem' }}>{p.cliente_nombre}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function estadoFila(r) {
   if (r.fecha_cierre_admin) return 'cerrada'
   if (r.fecha_fact_final)   return 'final_facturado'
@@ -105,6 +154,8 @@ export default function FinanzasOCClientes({ canWrite }) {
   const [modal,   setModal]   = useState(null)  // null | 'new' | objeto
   const [form,    setForm]    = useState(FORM_VACIO)
   const [saving,  setSaving]  = useState(false)
+  const [facturasProyecto,   setFacturasProyecto]   = useState([])
+  const [facturasLoading,    setFacturasLoading]    = useState(false)
 
   const cargar = useCallback(async () => {
     setLoading(true)
@@ -119,10 +170,42 @@ export default function FinanzasOCClientes({ canWrite }) {
   useEffect(() => { cargar() }, [cargar])
 
   const abrirNuevo = () => { setForm(FORM_VACIO); setModal('new') }
-  const abrirEditar = r => { setForm({ ...FORM_VACIO, ...r, cliente_id: r.cliente_id || null }); setModal(r) }
+  const abrirEditar = r => {
+    setForm({
+      ...FORM_VACIO, ...r,
+      cliente_id: r.cliente_id || null,
+      proyecto_id: r.proyecto_id || null,
+      proyecto: r.proyecto_id ? `${r.proy_codigo} — ${r.proy_nombre}` : '',
+    })
+    setModal(r)
+  }
+
+  useEffect(() => {
+    if (!modal || !form.proyecto_id) { setFacturasProyecto([]); return }
+    setFacturasLoading(true)
+    api.get('/finanzas/facturas-venta', { params: { proyecto_id: form.proyecto_id } })
+      .then(r => setFacturasProyecto(r.data.filter(f => !(f.tipo_factura || '').startsWith('NC'))))
+      .catch(() => setFacturasProyecto([]))
+      .finally(() => setFacturasLoading(false))
+  }, [modal, form.proyecto_id])
+
+  const usarComoAnticipo = f => {
+    setForm(p => ({
+      ...p,
+      fecha_fact_anticipo: f.fecha,
+      monto_anticipo_usd: f.moneda === 'DÓLAR' ? f.importe : p.monto_anticipo_usd,
+    }))
+  }
+  const usarComoFinal = f => {
+    setForm(p => ({
+      ...p,
+      fecha_fact_final: f.fecha,
+      monto_final_usd: f.moneda === 'DÓLAR' ? f.importe : p.monto_final_usd,
+    }))
+  }
 
   const guardar = async () => {
-    if ((!form.cliente_id && !form.cliente.trim()) || !form.numero_oc.trim()) return alert('Cliente y N° OC son requeridos')
+    if (!form.cliente.trim() || !form.numero_oc.trim()) return alert('Cliente y N° OC son requeridos')
     setSaving(true)
     try {
       if (modal === 'new') {
@@ -193,6 +276,9 @@ export default function FinanzasOCClientes({ canWrite }) {
             <thead className="table-dark sticky-top" style={{ fontSize: '0.72rem' }}>
               <tr>
                 <th style={{ minWidth: 130 }}>CLIENTE</th>
+                <th style={{ minWidth: 160 }}>RAZÓN SOCIAL</th>
+                <th style={{ minWidth: 110 }}>CUIT</th>
+                <th style={{ minWidth: 130 }}>PROYECTO</th>
                 <th style={{ minWidth: 120 }}>N° OC</th>
                 <th style={{ minWidth: 110 }} className="text-end">MONTO OC</th>
                 <th style={{ minWidth: 90 }}>F. OC</th>
@@ -224,6 +310,17 @@ export default function FinanzasOCClientes({ canWrite }) {
                 return (
                   <tr key={r.id} style={{ background: ROW_BG[est] }}>
                     <td className="fw-semibold">{r.cliente || '—'}</td>
+                    <td>
+                      {r.cli_nombre_cat
+                        ? <span>{r.cli_nombre_cat}</span>
+                        : <span className="text-danger fst-italic" title="Sin vincular a un cliente real">Sin vincular</span>}
+                    </td>
+                    <td className="font-monospace small">{r.cli_cuit_cat || '—'}</td>
+                    <td>
+                      {r.proy_codigo
+                        ? <span className="badge bg-secondary" style={{ fontSize: '0.7rem', fontFamily: 'monospace' }} title={r.proy_nombre}>{r.proy_codigo}</span>
+                        : <span className="text-muted">—</span>}
+                    </td>
                     <td className="fw-semibold text-primary">{r.numero_oc || '—'}</td>
                     <td className="text-end">{fmtUSD(r.monto_oc)}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>{fmtF(r.fecha_oc)}</td>
@@ -283,10 +380,25 @@ export default function FinanzasOCClientes({ canWrite }) {
                 <p className="small fw-semibold text-muted mb-2" style={{ letterSpacing: '0.05em' }}>DATOS DE LA OC</p>
                 <div className="row g-2 mb-3">
                   <div className="col-md-4">
-                    <label className="form-label small fw-semibold">Cliente *</label>
+                    <label className="form-label small fw-semibold">Cliente (referencia) *</label>
+                    <input className="form-control form-control-sm" value={form.cliente}
+                      onChange={e => sf('cliente', e.target.value)} placeholder="Ej: ECOLAB TRANSPORTADORA" />
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label small fw-semibold">
+                      Cliente real (razón social)
+                      {!form.cliente_id && <span className="text-danger ms-1" title="Sin vincular a un cliente real todavía">●</span>}
+                    </label>
                     <ClienteSelector
-                      value={form.cliente}
-                      onChange={c => setForm(p => ({ ...p, cliente_id: c.id, cliente: c.nombre }))}
+                      value={form.cli_nombre_cat || ''}
+                      onChange={c => setForm(p => ({ ...p, cliente_id: c.id, cli_nombre_cat: c.nombre, cli_cuit_cat: c.cuit }))}
+                    />
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label small fw-semibold">Proyecto</label>
+                    <ProyectoSelector
+                      value={form.proyecto}
+                      onChange={p => setForm(f => ({ ...f, proyecto_id: p.id, proyecto: `${p.codigo} — ${p.nombre}` }))}
                     />
                   </div>
                   <div className="col-md-3">
@@ -295,7 +407,7 @@ export default function FinanzasOCClientes({ canWrite }) {
                       onChange={e => sf('numero_oc', e.target.value)} placeholder="Ej: 4100010934" />
                   </div>
                   <div className="col-md-2">
-                    <label className="form-label small fw-semibold">Monto OC (USD + IVA)</label>
+                    <label className="form-label small fw-semibold">Monto OC (USD, neto sin IVA)</label>
                     <input type="number" className="form-control form-control-sm" value={form.monto_oc}
                       onChange={e => sf('monto_oc', e.target.value)} min="0" step="0.01" placeholder="0.00" />
                   </div>
@@ -310,6 +422,42 @@ export default function FinanzasOCClientes({ canWrite }) {
                       onChange={v => sf('fecha_recepcion_oc', v)} />
                   </div>
                 </div>
+
+                {form.proyecto_id && (
+                  <div className="mb-3 p-2 rounded" style={{ background: '#f8f9fa', border: '1px solid #dee2e6' }}>
+                    <p className="small fw-semibold text-muted mb-2" style={{ letterSpacing: '0.05em' }}>
+                      FACTURAS DEL PROYECTO VINCULADO — hacé clic para autocompletar fecha/monto
+                    </p>
+                    {facturasLoading ? (
+                      <div className="text-center py-2"><span className="spinner-border spinner-border-sm" /></div>
+                    ) : facturasProyecto.length === 0 ? (
+                      <p className="text-muted small mb-0 fst-italic">
+                        No hay facturas de venta cargadas todavía para este proyecto.
+                      </p>
+                    ) : (
+                      <div className="d-flex flex-column gap-1">
+                        {facturasProyecto.map(f => (
+                          <div key={f.id} className="d-flex align-items-center gap-2 px-2 py-1 bg-white border rounded" style={{ fontSize: '0.78rem' }}>
+                            <span className="text-muted" style={{ minWidth: 80 }}>{fmtF(f.fecha)}</span>
+                            <span className="fw-semibold text-primary" style={{ minWidth: 80 }}>{f.numero}</span>
+                            <span className="text-truncate flex-grow-1" title={f.concepto}>{f.concepto || '—'}</span>
+                            <span className="fw-semibold">{fmtUSD(f.importe)}{f.moneda !== 'DÓLAR' ? ` (${f.moneda})` : ''}</span>
+                            <button type="button" className="btn btn-outline-primary btn-sm py-0 px-2" style={{ fontSize: '0.7rem' }}
+                              onClick={() => usarComoAnticipo(f)}>Usar como Anticipo</button>
+                            <button type="button" className="btn btn-outline-success btn-sm py-0 px-2" style={{ fontSize: '0.7rem' }}
+                              onClick={() => usarComoFinal(f)}>Usar como Final</button>
+                          </div>
+                        ))}
+                        {facturasProyecto.some(f => f.moneda !== 'DÓLAR') && (
+                          <p className="text-muted mb-0 mt-1" style={{ fontSize: '0.7rem' }}>
+                            <i className="bi bi-info-circle me-1" />
+                            Las facturas que no están en dólares solo completan la fecha — el monto en USD hay que cargarlo a mano.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <hr className="my-2" />
                 <p className="small fw-semibold text-muted mb-2" style={{ letterSpacing: '0.05em' }}>ANTICIPO</p>

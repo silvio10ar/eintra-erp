@@ -3,6 +3,10 @@ import api from '../../api/client'
 import { getPermisos, getUser } from '../../store/authStore'
 import Form11 from '../compras/Form11'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
+import DateInput from '../../components/DateInput'
+import Finanzas from '../finanzas/Finanzas'
+import FusionProveedores from './FusionProveedores'
+import FacturaIA from '../compras/FacturaIA'
 
 const CONDICIONES_PAGO = [
   'TRANSF. BANCARIA', 'CHEQUE', 'EFECTIVO', 'CUENTA CORRIENTE',
@@ -21,7 +25,7 @@ const PROV_VACIO = {
 }
 
 const CLI_VACIO = {
-  nombre: '', cuit: '', contacto: '', telefono: '', email: '',
+  nombre: '', codigo: '', cuit: '', contacto: '', telefono: '', email: '',
   direccion: '', localidad: '', cp: '', condicion_pago: '',
 }
 
@@ -30,8 +34,9 @@ export default function Administracion() {
   const permisos  = getPermisos()
   const canWrite  = user?.rol === 'admin' || !!permisos?.compras?.escribir || !!permisos?.administracion?.escribir
 
-  const [tab, setTab]         = useState('proveedores')
+  const [tab, setTab]             = useState('proveedores')
   const [provsList, setProvsList] = useState([])
+  const [modalFacturaIA, setModalFacturaIA] = useState(null)  // null | 'compra' | 'venta'
 
   // Proveedores para Form11 (cargados al entrar en esa pestaña)
   useEffect(() => {
@@ -65,11 +70,47 @@ export default function Administracion() {
             <i className="bi bi-clipboard-check me-1" /> Evaluaciones (Form 11)
           </button>
         </li>
+        <li className="nav-item">
+          <button className={`nav-link ${tab === 'facturas' ? 'active' : ''}`} onClick={() => setTab('facturas')}>
+            <i className="bi bi-receipt me-1" /> Facturas
+          </button>
+        </li>
+        {canWrite && (
+          <li className="nav-item">
+            <button className={`nav-link ${tab === 'fusiones' ? 'active' : ''}`} onClick={() => setTab('fusiones')}>
+              <i className="bi bi-shuffle me-1" /> Fusión prov.
+            </button>
+          </li>
+        )}
       </ul>
 
       {tab === 'proveedores' && <TabProveedores />}
       {tab === 'clientes'    && <TabClientes />}
       {tab === 'form11'      && <Form11 canWrite={canWrite} proveedores={provsList} />}
+      {tab === 'facturas' && (
+        <>
+          {canWrite && (
+            <div className="d-flex gap-2 mb-3">
+              <button className="btn btn-sm btn-outline-primary" onClick={() => setModalFacturaIA('compra')}>
+                <i className="bi bi-robot me-1" />Cargar factura de compra IA
+              </button>
+              <button className="btn btn-sm btn-outline-success" onClick={() => setModalFacturaIA('venta')}>
+                <i className="bi bi-robot me-1" />Cargar factura de venta IA
+              </button>
+            </div>
+          )}
+          <Finanzas canWrite={canWrite} noDashboard />
+        </>
+      )}
+      {tab === 'fusiones'    && <FusionProveedores canWrite={canWrite} />}
+
+      {modalFacturaIA && (
+        <FacturaIA
+          tipo={modalFacturaIA}
+          onClose={() => setModalFacturaIA(null)}
+          onGuardado={() => setModalFacturaIA(null)}
+        />
+      )}
     </div>
   )
 }
@@ -150,6 +191,29 @@ function TabProveedores() {
     }
   }
 
+  const eliminarProveedor = async (p) => {
+    if (!window.confirm(`¿Eliminar DEFINITIVAMENTE el proveedor "${p.nombre}"?\nEsta acción no se puede deshacer.`)) return
+    try {
+      await api.delete(`/compras/proveedores/${p.id}/borrar`)
+      cargar()
+    } catch (e) {
+      alert(e.response?.data?.error || 'Error al eliminar')
+    }
+  }
+
+  // Detectar duplicados por nombre normalizado y por CUIT
+  const nombresCount = {}, cuitsCount = {}
+  for (const p of lista) {
+    const n = p.nombre.trim().toLowerCase()
+    nombresCount[n] = (nombresCount[n] || 0) + 1
+    if (p.cuit?.trim()) {
+      const c = p.cuit.replace(/\D/g, '')
+      if (c) cuitsCount[c] = (cuitsCount[c] || 0) + 1
+    }
+  }
+  const dupNombre = new Set(lista.filter(p => nombresCount[p.nombre.trim().toLowerCase()] > 1).map(p => p.id))
+  const dupCuit   = new Set(lista.filter(p => { const c = p.cuit?.replace(/\D/g,''); return c && cuitsCount[c] > 1 }).map(p => p.id))
+
   return (
     <>
       <div className="d-flex flex-wrap gap-2 mb-3 align-items-center">
@@ -198,10 +262,20 @@ function TabProveedores() {
               </td></tr>
             ) : lista.length === 0 ? (
               <tr><td colSpan={11} className="text-center py-4 text-muted">Sin resultados</td></tr>
-            ) : lista.map(p => (
-              <tr key={p.id} className={!p.activo ? 'opacity-50' : ''}>
-                <td className="fw-semibold">{p.nombre}</td>
-                <td className="font-monospace small">{p.cuit || '—'}</td>
+            ) : lista.map(p => {
+              const esDupNombre = dupNombre.has(p.id)
+              const esDupCuit   = dupCuit.has(p.id)
+              const rowClass    = esDupCuit ? 'table-danger' : esDupNombre ? 'table-warning' : (!p.activo ? 'opacity-50' : '')
+              return (
+              <tr key={p.id} className={rowClass}>
+                <td className="fw-semibold">
+                  {p.nombre}
+                  {esDupNombre && <span className="badge bg-warning text-dark ms-2" style={{fontSize:'0.65rem'}}>Nombre dup.</span>}
+                </td>
+                <td className="font-monospace small">
+                  {p.cuit || '—'}
+                  {esDupCuit && <span className="badge bg-danger ms-2" style={{fontSize:'0.65rem'}}>CUIT dup.</span>}
+                </td>
                 <td>{p.contacto || '—'}</td>
                 <td>{p.telefono || '—'}</td>
                 <td className="small">{p.email || '—'}</td>
@@ -226,15 +300,26 @@ function TabProveedores() {
                         title={p.activo ? 'Desactivar' : 'Activar'} onClick={() => toggleActivo(p)}>
                         <i className={`bi bi-${p.activo ? 'slash-circle' : 'check-circle'}`} />
                       </button>
+                      <button className="btn btn-sm btn-outline-danger" title="Eliminar definitivamente"
+                        onClick={() => eliminarProveedor(p)}>
+                        <i className="bi bi-trash" />
+                      </button>
                     </div>
                   )}
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>
-      <div className="text-muted small">{lista.length} registro{lista.length !== 1 ? 's' : ''}</div>
+      {(dupNombre.size > 0 || dupCuit.size > 0) && (
+        <div className="small mt-2">
+          {dupNombre.size > 0 && <span className="badge bg-warning text-dark me-2">Nombre duplicado</span>}
+          {dupCuit.size > 0   && <span className="badge bg-danger me-2">CUIT duplicado</span>}
+          Revisá y fusioná o eliminá los registros marcados
+        </div>
+      )}
+      <div className="text-muted small mt-1">{lista.length} registro{lista.length !== 1 ? 's' : ''}</div>
 
       {modal && (
         <ModalProveedor
@@ -335,7 +420,7 @@ function ModalProveedor({ modal, form, setForm, error, guardando, onClose, onSub
                 </div>
                 <div className="col-md-3">
                   <label className="form-label">Fecha de Selección</label>
-                  <input type="date" className="form-control" value={form.fecha_seleccion} onChange={set('fecha_seleccion')} />
+                  <DateInput className="form-control" value={form.fecha_seleccion} onChange={v => setForm(f => ({ ...f, fecha_seleccion: v }))} />
                 </div>
                 <div className="col-md-3">
                   <label className="form-label">Frecuencia de Evaluación</label>
@@ -379,7 +464,6 @@ function TabClientes() {
   const [lista,        setLista]        = useState([])
   const [cargando,     setCargando]     = useState(false)
   const [buscar,       setBuscar]       = useState('')
-  const [verInactivos, setVerInactivos] = useState(false)
   const [modal,        setModal]        = useState(null)
   const [form,         setForm]         = useState(CLI_VACIO)
   const [error,        setError]        = useState('')
@@ -389,8 +473,7 @@ function TabClientes() {
     setCargando(true)
     try {
       const params = {}
-      if (buscar)       params.buscar = buscar
-      if (verInactivos) params.todos  = '1'
+      if (buscar) params.buscar = buscar
       const { data } = await api.get('/ventas/clientes', { params })
       setLista(data)
     } catch (e) {
@@ -398,7 +481,7 @@ function TabClientes() {
     } finally {
       setCargando(false)
     }
-  }, [buscar, verInactivos])
+  }, [buscar])
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -420,22 +503,17 @@ function TabClientes() {
     }
   }
 
-  const toggleActivo = async c => {
-    if (!window.confirm(`¿${c.activo ? 'Desactivar' : 'Activar'} el cliente "${c.nombre}"?`)) return
+  const eliminarCliente = async c => {
+    if (!window.confirm(`¿Eliminar DEFINITIVAMENTE el cliente "${c.nombre}"?\nEsta acción no se puede deshacer.`)) return
     try { await api.delete(`/ventas/clientes/${c.id}`); cargar() }
-    catch (e) { alert(e.response?.data?.error || 'Error') }
+    catch (e) { alert(e.response?.data?.error || 'Error al eliminar') }
   }
 
   return (
     <>
       <div className="d-flex flex-wrap gap-2 mb-3 align-items-center">
         <input className="form-control form-control-sm" style={{ maxWidth: 280 }}
-          placeholder="Buscar por nombre o CUIT..." value={buscar} onChange={e => setBuscar(e.target.value)}/>
-        <div className="form-check form-switch mb-0 ms-1">
-          <input className="form-check-input" type="checkbox" id="chkInactCli"
-            checked={verInactivos} onChange={e => setVerInactivos(e.target.checked)}/>
-          <label className="form-check-label small" htmlFor="chkInactCli">Ver inactivos</label>
-        </div>
+          placeholder="Buscar por nombre, código o CUIT..." value={buscar} onChange={e => setBuscar(e.target.value)}/>
         <div className="ms-auto">
           {puedeEscribir && (
             <button className="btn btn-primary btn-sm" onClick={abrirNuevo}>
@@ -449,9 +527,9 @@ function TabClientes() {
         <table className="table table-sm table-hover align-middle">
           <thead className="table-dark">
             <tr>
-              <th>Nombre</th><th>CUIT</th><th>Contacto</th><th>Teléfono</th>
+              <th>Código</th><th>Nombre</th><th>CUIT</th><th>Contacto</th><th>Teléfono</th>
               <th>Email</th><th>Cond. Pago</th><th>Localidad</th>
-              <th className="text-center">Estado</th><th style={{ width: 90 }}></th>
+              <th style={{ width: 90 }}></th>
             </tr>
           </thead>
           <tbody>
@@ -462,7 +540,8 @@ function TabClientes() {
             ) : lista.length === 0 ? (
               <tr><td colSpan={9} className="text-center py-4 text-muted">Sin resultados</td></tr>
             ) : lista.map(c => (
-              <tr key={c.id} className={!c.activo ? 'opacity-50' : ''}>
+              <tr key={c.id}>
+                <td className="font-monospace fw-semibold">{c.codigo || '—'}</td>
                 <td className="fw-semibold">{c.nombre}</td>
                 <td className="font-monospace small">{c.cuit || '—'}</td>
                 <td>{c.contacto || '—'}</td>
@@ -470,20 +549,15 @@ function TabClientes() {
                 <td className="small">{c.email || '—'}</td>
                 <td className="small">{c.condicion_pago || '—'}</td>
                 <td>{c.localidad || '—'}</td>
-                <td className="text-center">
-                  <span className={`badge ${c.activo ? 'bg-success' : 'bg-secondary'}`}>
-                    {c.activo ? 'Activo' : 'Inactivo'}
-                  </span>
-                </td>
                 <td>
                   {puedeEscribir && (
                     <div className="d-flex gap-1 justify-content-end">
                       <button className="btn btn-outline-secondary btn-sm" title="Editar" onClick={() => abrirEditar(c)}>
                         <i className="bi bi-pencil" />
                       </button>
-                      <button className={`btn btn-sm ${c.activo ? 'btn-outline-danger' : 'btn-outline-success'}`}
-                        title={c.activo ? 'Desactivar' : 'Activar'} onClick={() => toggleActivo(c)}>
-                        <i className={`bi bi-${c.activo ? 'slash-circle' : 'check-circle'}`} />
+                      <button className="btn btn-sm btn-outline-danger" title="Eliminar definitivamente"
+                        onClick={() => eliminarCliente(c)}>
+                        <i className="bi bi-trash" />
                       </button>
                     </div>
                   )}
@@ -521,11 +595,16 @@ function ModalCliente({ modal, form, setForm, error, guardando, onClose, onSubmi
             <div className="modal-body">
               {error && <div className="alert alert-danger py-2 small">{error}</div>}
               <div className="row g-3">
-                <div className="col-md-8">
+                <div className="col-md-6">
                   <label className="form-label fw-semibold">Nombre <span className="text-danger">*</span></label>
                   <input className="form-control" value={form.nombre} onChange={set('nombre')} autoFocus />
                 </div>
-                <div className="col-md-4">
+                <div className="col-md-3">
+                  <label className="form-label">Código</label>
+                  <input className="form-control font-monospace" value={form.codigo} onChange={set('codigo')}
+                    placeholder="ej: UNILE" maxLength={5} style={{ textTransform: 'uppercase' }} />
+                </div>
+                <div className="col-md-3">
                   <label className="form-label">CUIT</label>
                   <input className="form-control" value={form.cuit} onChange={set('cuit')} placeholder="XX-XXXXXXXX-X" />
                 </div>

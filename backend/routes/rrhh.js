@@ -8,6 +8,9 @@ const { verificarToken } = require('../middleware/auth');
 const router = express.Router();
 const puede = req => req.usuario?.rol === 'admin' || !!(req.permisos?.rrhh?.escribir);
 
+// Fecha actual en zona horaria Argentina (evita desfase UTC)
+const hoyAR = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' })
+
 // ── Hikvision ISAPI helper (Digest Auth) ──────────────────────────────────────
 function md5(s) { return crypto.createHash('md5').update(s).digest('hex'); }
 
@@ -91,9 +94,11 @@ router.get('/dashboard', verificarToken, (req, res) => {
   const porProyecto = db.prepare(`
     SELECT p.id, p.nombre,
            COALESCE(SUM(r.horas),0) AS horas
-    FROM rrhh_proyectos p
+    FROM proyectos p
     LEFT JOIN rrhh_registros r ON r.proyecto_id = p.id AND r.fecha BETWEEN ? AND ?
+    WHERE p.codigo NOT LIKE 'HIST-%'
     GROUP BY p.id
+    HAVING horas > 0
     ORDER BY horas DESC
     LIMIT 15
   `).all(desde, hasta);
@@ -148,12 +153,14 @@ router.get('/registros', verificarToken, (req, res) => {
   const rows = db.prepare(`
     SELECT r.*,
            e.nombre AS empleado_nombre, e.tipo AS empleado_tipo,
-           p.nombre AS proyecto_nombre,
+           COALESCE(rp.nombre, p.nombre, a.nombre) AS proyecto_nombre,
            c.codigo AS cat_codigo, c.descripcion AS cat_descripcion, c.grupo AS cat_grupo
     FROM rrhh_registros r
-    LEFT JOIN rrhh_empleados e  ON e.id = r.empleado_id
-    LEFT JOIN rrhh_proyectos p  ON p.id = r.proyecto_id
-    LEFT JOIN rrhh_categorias c ON c.id = r.categoria_id
+    LEFT JOIN rrhh_empleados   e  ON e.id = r.empleado_id
+    LEFT JOIN rrhh_proyectos   rp ON rp.id = r.proyecto_id
+    LEFT JOIN proyectos        p  ON p.id  = r.proyecto_id
+    LEFT JOIN rrhh_actividades a  ON a.id  = r.actividad_id
+    LEFT JOIN rrhh_categorias  c  ON c.id  = r.categoria_id
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY r.fecha DESC, r.id DESC
     LIMIT 5000
@@ -177,25 +184,35 @@ router.post('/registros', verificarToken, (req, res) => {
 });
 
 router.post('/registros/batch', verificarToken, (req, res) => {
-  const puedeCargar = req.usuario?.rol === 'admin'
-    || !!(req.permisos?.rrhh?.escribir)
-    || !!(req.permisos?.partes?.escribir);
-  if (!puedeCargar) return res.status(403).json({ error: 'Sin permiso' });
+  if (!req.usuario) return res.status(403).json({ error: 'Sin permiso' });
   const { registros } = req.body;
   if (!Array.isArray(registros) || registros.length === 0)
     return res.status(400).json({ error: 'Se requiere un array de registros' });
 
+  const esAdmin = req.usuario?.rol === 'admin'
+    || !!(req.permisos?.rrhh?.escribir)
+    || !!(req.permisos?.partes?.escribir);
+
+  let empleadoForzado = null;
+  if (!esAdmin) {
+    const u = db.prepare('SELECT rrhh_empleado_id FROM usuarios WHERE id=?').get(req.usuario.id);
+    if (!u?.rrhh_empleado_id)
+      return res.status(400).json({ error: 'Tu usuario no tiene empleado asociado. Pedile al administrador que lo configure.' });
+    empleadoForzado = u.rrhh_empleado_id;
+  }
+
   const ins = db.prepare(`
     INSERT INTO rrhh_registros
-      (fecha,empleado_id,proyecto_id,categoria_id,hora_inicio,hora_fin,horas,modulo,descripcion)
-    VALUES (?,?,?,?,?,?,?,?,?)
+      (fecha,empleado_id,proyecto_id,actividad_id,categoria_id,hora_inicio,hora_fin,horas,modulo,descripcion)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
   `);
 
   let insertados = 0;
   db.transaction(() => {
     for (const r of registros) {
-      if (!r.fecha || !r.empleado_id || !r.horas) continue;
-      ins.run(r.fecha, r.empleado_id, r.proyecto_id || null, r.categoria_id || null,
+      const empId = empleadoForzado ?? r.empleado_id;
+      if (!r.fecha || !empId || !r.horas) continue;
+      ins.run(r.fecha, empId, r.proyecto_id || null, r.actividad_id || null, r.categoria_id || null,
               r.hora_inicio || '', r.hora_fin || '', Number(r.horas), r.modulo || '', r.descripcion || '');
       insertados++;
     }
@@ -206,13 +223,13 @@ router.post('/registros/batch', verificarToken, (req, res) => {
 
 router.put('/registros/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
-  const { fecha, empleado_id, proyecto_id, categoria_id, hora_inicio, hora_fin, horas, modulo, descripcion } = req.body;
+  const { fecha, empleado_id, proyecto_id, actividad_id, categoria_id, hora_inicio, hora_fin, horas, modulo, descripcion } = req.body;
 
   db.prepare(`
     UPDATE rrhh_registros
-    SET fecha=?,empleado_id=?,proyecto_id=?,categoria_id=?,hora_inicio=?,hora_fin=?,horas=?,modulo=?,descripcion=?
+    SET fecha=?,empleado_id=?,proyecto_id=?,actividad_id=?,categoria_id=?,hora_inicio=?,hora_fin=?,horas=?,modulo=?,descripcion=?
     WHERE id=?
-  `).run(fecha, empleado_id, proyecto_id || null, categoria_id || null,
+  `).run(fecha, empleado_id, proyecto_id || null, actividad_id || null, categoria_id || null,
          hora_inicio || '', hora_fin || '', Number(horas), modulo || '', descripcion || '',
          req.params.id);
 
@@ -249,13 +266,14 @@ router.post('/empleados', verificarToken, (req, res) => {
 
 router.put('/empleados/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
-  const { nombre, tipo, empresa, activo, id_dispositivo, horario_entrada, horario_salida } = req.body;
-  db.prepare(`UPDATE rrhh_empleados SET nombre=?,tipo=?,empresa=?,activo=?,id_dispositivo=?,horario_entrada=?,horario_salida=? WHERE id=?`)
+  const { nombre, tipo, empresa, activo, id_dispositivo, horario_entrada, horario_salida, obliga_fichar } = req.body;
+  db.prepare(`UPDATE rrhh_empleados SET nombre=?,tipo=?,empresa=?,activo=?,id_dispositivo=?,horario_entrada=?,horario_salida=?,obliga_fichar=? WHERE id=?`)
     .run(nombre.trim().toUpperCase(), tipo || 'interno', empresa || '',
          activo !== undefined ? Number(activo) : 1,
          id_dispositivo || '',
          horario_entrada || '',
          horario_salida  || '',
+         obliga_fichar !== undefined ? Number(obliga_fichar) : 1,
          req.params.id);
   res.json({ ok: true });
 });
@@ -272,30 +290,74 @@ router.delete('/empleados/:id', verificarToken, (req, res) => {
   }
 });
 
-// ── Proyectos ─────────────────────────────────────────────────────────────────
+// ── Proyectos (vista de solo lectura desde módulo principal) ──────────────────
 router.get('/proyectos', verificarToken, (req, res) => {
   const rows = db.prepare(`
-    SELECT p.*,
-           (SELECT COALESCE(SUM(horas),0) FROM rrhh_registros r WHERE r.proyecto_id = p.id) AS total_horas
-    FROM rrhh_proyectos p
-    ORDER BY p.activo DESC, p.nombre
+    SELECT p.id, p.codigo, p.nombre, p.estado, p.cliente_nombre,
+           COALESCE((SELECT SUM(horas) FROM rrhh_registros r WHERE r.proyecto_id = p.id), 0) AS total_horas
+    FROM proyectos p
+    WHERE p.codigo NOT LIKE 'HIST-%'
+    ORDER BY p.estado='Activo' DESC, p.nombre
   `).all();
   res.json(rows);
 });
 
-router.post('/proyectos', verificarToken, (req, res) => {
+// ── Fusionador de proyectos legado ────────────────────────────────────────────
+try { db.exec(`ALTER TABLE rrhh_proyectos ADD COLUMN revisado INTEGER DEFAULT 0`) } catch {}
+
+// ── Actividades internas ───────────────────────────────────────────────────────
+try { db.exec(`CREATE TABLE IF NOT EXISTS rrhh_actividades (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, activo INTEGER DEFAULT 1)`) } catch {}
+try { db.exec(`ALTER TABLE rrhh_registros ADD COLUMN actividad_id INTEGER`) } catch {}
+
+router.get('/actividades', verificarToken, (req, res) => {
+  const rows = db.prepare(`SELECT * FROM rrhh_actividades ORDER BY activo DESC, nombre`).all();
+  res.json(rows);
+});
+router.post('/actividades', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
   const { nombre } = req.body;
-  if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
-  const r = db.prepare(`INSERT INTO rrhh_proyectos (nombre) VALUES (?)`).run(nombre.trim().toUpperCase());
+  if (!nombre?.trim()) return res.status(400).json({ error: 'nombre requerido' });
+  const r = db.prepare(`INSERT INTO rrhh_actividades (nombre, activo) VALUES (?, 1)`).run(nombre.trim().toUpperCase());
   res.json({ id: r.lastInsertRowid });
 });
-
-router.put('/proyectos/:id', verificarToken, (req, res) => {
+router.put('/actividades/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
   const { nombre, activo } = req.body;
-  db.prepare(`UPDATE rrhh_proyectos SET nombre=?,activo=? WHERE id=?`)
+  db.prepare(`UPDATE rrhh_actividades SET nombre=?, activo=? WHERE id=?`)
     .run(nombre.trim().toUpperCase(), activo !== undefined ? Number(activo) : 1, req.params.id);
+  res.json({ ok: true });
+});
+
+router.get('/proyectos-legado', verificarToken, (req, res) => {
+  const rows = db.prepare(`
+    SELECT rp.id, rp.nombre, rp.revisado,
+           COUNT(r.id)  AS total_registros,
+           MIN(r.fecha) AS fecha_desde,
+           MAX(r.fecha) AS fecha_hasta
+    FROM rrhh_proyectos rp
+    LEFT JOIN rrhh_registros r ON r.proyecto_id = rp.id
+    WHERE rp.revisado = 0
+    GROUP BY rp.id
+    HAVING total_registros > 0
+    ORDER BY MAX(r.fecha) DESC
+  `).all();
+  res.json(rows);
+});
+
+router.post('/proyectos-legado/:id/fusionar', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  const { proyecto_id_nuevo } = req.body;
+  if (!proyecto_id_nuevo) return res.status(400).json({ error: 'proyecto_id_nuevo requerido' });
+  const cambios = db.prepare(
+    `UPDATE rrhh_registros SET proyecto_id = ? WHERE proyecto_id = ?`
+  ).run(proyecto_id_nuevo, req.params.id).changes;
+  db.prepare(`UPDATE rrhh_proyectos SET revisado = 1 WHERE id = ?`).run(req.params.id);
+  res.json({ ok: true, registros_actualizados: cambios });
+});
+
+router.post('/proyectos-legado/:id/conservar', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  db.prepare(`UPDATE rrhh_proyectos SET revisado = 1 WHERE id = ?`).run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -355,7 +417,7 @@ router.post('/dispositivos/:id/debug-acs', verificarToken, async (req, res) => {
   const disp = db.prepare('SELECT * FROM rrhh_dispositivos WHERE id=?').get(req.params.id);
   if (!disp) return res.status(404).json({ error: 'No encontrado' });
   const { desde, hasta } = req.body;
-  const hoy = new Date().toISOString().split('T')[0];
+  const hoy = hoyAR();
   try {
     const body = {
       AcsEventCond: {
@@ -443,7 +505,7 @@ router.post('/dispositivos/:id/sync', verificarToken, async (req, res) => {
   const disp = db.prepare('SELECT * FROM rrhh_dispositivos WHERE id=?').get(req.params.id);
   if (!disp) return res.status(404).json({ error: 'Dispositivo no encontrado' });
 
-  const hoy   = new Date().toISOString().split('T')[0];
+  const hoy   = hoyAR();
   const desde = req.body.desde || hoy;
   const hasta = req.body.hasta || hoy;
 
@@ -472,7 +534,7 @@ router.post('/dispositivos/sync-todos', verificarToken, async (req, res) => {
   const dispositivos = db.prepare('SELECT * FROM rrhh_dispositivos WHERE activo=1').all();
   if (dispositivos.length === 0) return res.json({ ok: true, insertados: 0, duplicados: 0, dispositivos: [] });
 
-  const hoy   = new Date().toISOString().split('T')[0];
+  const hoy   = hoyAR();
   const desde = req.body.desde || hoy;
   const hasta = req.body.hasta || hoy;
 
@@ -669,9 +731,10 @@ router.get('/partes/semana', verificarToken, (req, res) => {
 // ── Partes: horas por proyecto activo desglosadas por tarea ──────────────────
 router.get('/partes/proyectos', verificarToken, (req, res) => {
   const dias = Math.min(Math.max(parseInt(req.query.dias) || 7, 1), 90);
-  const hasta = new Date().toISOString().split('T')[0];
-  const desdeD = new Date(); desdeD.setDate(desdeD.getDate() - (dias - 1));
-  const desde = desdeD.toISOString().split('T')[0];
+  const hasta = hoyAR();
+  const [hy, hm, hd] = hasta.split('-').map(Number);
+  const desdeD = new Date(hy, hm - 1, hd - (dias - 1));
+  const desde = desdeD.toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' });
 
   const rows = db.prepare(`
     SELECT
@@ -680,7 +743,7 @@ router.get('/partes/proyectos', verificarToken, (req, res) => {
       c.grupo  AS cat_grupo,
       ROUND(SUM(r.horas), 2) AS horas
     FROM rrhh_registros r
-    JOIN rrhh_proyectos p ON p.id = r.proyecto_id AND p.activo = 1
+    JOIN proyectos p ON p.id = r.proyecto_id
     LEFT JOIN rrhh_categorias c ON c.id = r.categoria_id
     WHERE r.fecha BETWEEN ? AND ?
     GROUP BY p.id, r.categoria_id
@@ -769,7 +832,7 @@ router.get('/informes/tareas', verificarToken, (req, res) => {
 
   const rows = db.prepare(`
     SELECT e.nombre AS empleado, r.fecha,
-           COALESCE(p.nombre, '') AS proyecto,
+           COALESCE(rp.nombre, p.nombre, a.nombre, '') AS proyecto,
            COALESCE(c.codigo, '') AS codigo,
            COALESCE(c.descripcion, '') AS tarea,
            COALESCE(c.grupo, '') AS grupo,
@@ -779,8 +842,10 @@ router.get('/informes/tareas', verificarToken, (req, res) => {
            COALESCE(r.descripcion, '') AS observacion
     FROM rrhh_registros r
     JOIN rrhh_empleados e ON e.id = r.empleado_id
-    LEFT JOIN rrhh_proyectos  p ON p.id = r.proyecto_id
-    LEFT JOIN rrhh_categorias c ON c.id = r.categoria_id
+    LEFT JOIN rrhh_proyectos   rp ON rp.id = r.proyecto_id
+    LEFT JOIN proyectos        p  ON p.id  = r.proyecto_id
+    LEFT JOIN rrhh_actividades a  ON a.id  = r.actividad_id
+    LEFT JOIN rrhh_categorias  c  ON c.id  = r.categoria_id
     WHERE ${where.join(' AND ')}
     ORDER BY e.nombre, r.fecha, r.hora_inicio
   `).all(...params);
@@ -801,7 +866,7 @@ router.get('/resumen-ayer', verificarToken, (req, res) => {
   const fecha = ayer.toISOString().slice(0, 10);
 
   const fichadas = db.prepare(`
-    SELECT e.id, e.nombre,
+    SELECT e.id, e.nombre, COALESCE(e.obliga_fichar, 1) AS obliga_fichar,
            MIN(a.hora) AS entrada, MAX(a.hora) AS salida,
            CASE WHEN MIN(a.hora) != MAX(a.hora) THEN
              ROUND((
@@ -813,6 +878,7 @@ router.get('/resumen-ayer', verificarToken, (req, res) => {
     FROM rrhh_asistencia a
     JOIN rrhh_empleados e ON e.id = a.empleado_id
     WHERE a.fecha = ? AND a.empleado_id IS NOT NULL AND e.activo = 1
+      AND COALESCE(e.obliga_fichar, 1) != 0
     GROUP BY a.empleado_id
     ORDER BY e.nombre
   `).all(fecha);
@@ -828,6 +894,7 @@ router.get('/resumen-ayer', verificarToken, (req, res) => {
     SELECT e.id, e.nombre
     FROM rrhh_empleados e
     WHERE e.activo = 1
+      AND NOT (e.tipo = 'interno' AND COALESCE(e.obliga_fichar, 1) = 0)
       AND e.id NOT IN (
         SELECT DISTINCT empleado_id FROM rrhh_asistencia
         WHERE fecha = ? AND empleado_id IS NOT NULL
@@ -839,8 +906,9 @@ router.get('/resumen-ayer', verificarToken, (req, res) => {
     fecha,
     empleados: fichadas.map(f => ({
       ...f,
-      tiene_parte:  !!partesMap[f.id],
-      horas_parte:  partesMap[f.id]?.horas_parte || 0,
+      requiere_parte: f.obliga_fichar !== 0,
+      tiene_parte:    !!partesMap[f.id],
+      horas_parte:    partesMap[f.id]?.horas_parte || 0,
     })),
     sin_fichar: sinFichar,
   });
@@ -849,7 +917,11 @@ router.get('/resumen-ayer', verificarToken, (req, res) => {
 // ── Mi Ayer ───────────────────────────────────────────────────────────────────
 
 router.get('/mi-ayer', verificarToken, (req, res) => {
-  const u = db.prepare('SELECT rrhh_empleado_id FROM usuarios WHERE id=?').get(req.usuario.id);
+  const u = db.prepare(`
+    SELECT u.rrhh_empleado_id, COALESCE(e.obliga_fichar, 1) AS obliga_fichar
+    FROM usuarios u LEFT JOIN rrhh_empleados e ON e.id = u.rrhh_empleado_id
+    WHERE u.id=?
+  `).get(req.usuario.id);
   if (!u?.rrhh_empleado_id) return res.json(null);
 
   const ayer = new Date();
@@ -877,11 +949,12 @@ router.get('/mi-ayer', verificarToken, (req, res) => {
 
   res.json({
     fecha,
-    entrada:       fichada?.entrada       || null,
-    salida:        fichada?.salida        || null,
-    horas_fichada: fichada?.horas_fichada || null,
-    tiene_parte:   (parte?.n || 0) > 0,
-    horas_parte:   parte?.horas_parte     || 0,
+    entrada:        fichada?.entrada       || null,
+    salida:         fichada?.salida        || null,
+    horas_fichada:  fichada?.horas_fichada || null,
+    requiere_parte: u.obliga_fichar !== 0,
+    tiene_parte:    (parte?.n || 0) > 0,
+    horas_parte:    parte?.horas_parte     || 0,
   });
 });
 
@@ -893,10 +966,12 @@ router.get('/mi-parte', verificarToken, (req, res) => {
   const fecha = req.query.fecha || new Date().toISOString().slice(0, 10);
   const rows = db.prepare(`
     SELECT r.*, c.codigo AS cat_codigo, c.descripcion AS cat_descripcion, c.grupo AS cat_grupo,
-           p.nombre AS proyecto_nombre
+           COALESCE(rp.nombre, p.nombre, a.nombre) AS proyecto_nombre
     FROM rrhh_registros r
-    LEFT JOIN rrhh_categorias c ON c.id = r.categoria_id
-    LEFT JOIN rrhh_proyectos  p ON p.id = r.proyecto_id
+    LEFT JOIN rrhh_categorias  c  ON c.id  = r.categoria_id
+    LEFT JOIN rrhh_proyectos   rp ON rp.id = r.proyecto_id
+    LEFT JOIN proyectos        p  ON p.id  = r.proyecto_id
+    LEFT JOIN rrhh_actividades a  ON a.id  = r.actividad_id
     WHERE r.empleado_id = ? AND r.fecha = ?
     ORDER BY r.hora_inicio
   `).all(u.rrhh_empleado_id, fecha);

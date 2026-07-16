@@ -22,7 +22,10 @@ router.get('/', verificarToken, (req, res) => {
     SELECT p.*,
       COALESCE((SELECT SUM(total) FROM proyecto_costos WHERE proyecto_id=p.id), 0) AS costo_total,
       COALESCE((SELECT COUNT(*) FROM proyecto_documentos WHERE proyecto_id=p.id AND lower(aplica)='aplica'), 0) AS docs_aplican,
-      COALESCE((SELECT COUNT(*) FROM proyecto_documentos WHERE proyecto_id=p.id AND lower(aplica)='aplica' AND lower(estado)='realizado'), 0) AS docs_realizados
+      COALESCE((SELECT COUNT(*) FROM proyecto_documentos WHERE proyecto_id=p.id AND lower(aplica)='aplica' AND lower(estado)='realizado'), 0) AS docs_realizados,
+      (SELECT COUNT(*) FROM proyecto_tarea WHERE proyecto_id=p.id) AS plan_tareas,
+      (SELECT ROUND(SUM(avance*duracion_dias)*1.0 / NULLIF(SUM(duracion_dias),0))
+         FROM proyecto_tarea WHERE proyecto_id=p.id) AS plan_avance
     FROM proyectos p
     ${where}
     ORDER BY p.created_at DESC

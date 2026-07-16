@@ -109,4 +109,208 @@ router.post('/backup-ahora', async (req, res) => {
   }
 })
 
+// ── Backup descargable ────────────────────────────────────────────────────────
+
+// GET /backup-db — descarga la BD como archivo (backup seguro en caliente)
+router.get('/backup-db', async (req, res) => {
+  if (!esAdmin(req)) return res.status(403).json({ error: 'Sin permisos' })
+
+  const path = require('path')
+  const fs   = require('fs')
+  const { db: sqliteDb } = require('../db/database')
+
+  const rawPath = process.env.DB_PATH || './db/eintra_erp.db'
+  const dbPath  = path.isAbsolute(rawPath) ? rawPath : path.resolve(__dirname, '..', rawPath)
+  const fecha   = new Date().toISOString().slice(0, 10)
+  const tmpPath = dbPath + '.download_tmp'
+
+  try {
+    await sqliteDb.backup(tmpPath)
+    const size = fs.statSync(tmpPath).size
+    res.setHeader('Content-Disposition', `attachment; filename="eintra_erp_backup_${fecha}.db"`)
+    res.setHeader('Content-Type', 'application/octet-stream')
+    res.setHeader('Content-Length', size)
+    const stream = fs.createReadStream(tmpPath)
+    stream.pipe(res)
+    stream.on('end',   () => fs.unlink(tmpPath, () => {}))
+    stream.on('error', () => { fs.unlink(tmpPath, () => {}); if (!res.headersSent) res.status(500).json({ error: 'Error al leer backup' }) })
+  } catch (e) {
+    try { fs.unlinkSync(tmpPath) } catch (_) {}
+    res.status(500).json({ error: 'Error al generar backup: ' + e.message })
+  }
+})
+
+// GET /instalador — genera y descarga el paquete de instalación del sistema
+router.get('/instalador', (req, res) => {
+  if (!esAdmin(req)) return res.status(403).json({ error: 'Sin permisos' })
+
+  const path   = require('path')
+  const fs     = require('fs')
+  const os     = require('os')
+  const { spawn } = require('child_process')
+
+  const appRoot  = path.resolve(__dirname, '../..')
+  const fecha    = new Date().toISOString().slice(0, 10)
+  const tmpDir   = fs.mkdtempSync(path.join(os.tmpdir(), 'eintra-inst-'))
+  const cleanup  = () => { try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch(_) {} }
+
+  // ── Generar install.sh ──────────────────────────────────────────────────────
+  const installSh = `#!/bin/bash
+# ================================================================
+#  E-INTRA ERP — Script de instalación autónoma
+#  Generado: ${fecha}
+#  Uso: bash install.sh [ruta_destino]
+#  Ejemplo: bash install.sh /home/administrador/eintra-erp
+# ================================================================
+set -e
+RUTA=\${1:-/home/administrador/eintra-erp}
+PORT=3002
+SCRIPT_DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
+
+echo "============================================"
+echo " E-INTRA ERP — Instalación"
+echo " Destino: \$RUTA"
+echo "============================================"
+
+# ── Verificar Node.js ───────────────────────────
+if ! command -v node &>/dev/null; then
+  echo ""
+  echo "ERROR: Node.js no está instalado. Instalarlo manualmente:"
+  echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -"
+  echo "  sudo apt-get install -y nodejs"
+  echo "  sudo npm install -g pm2"
+  exit 1
+fi
+echo "[node] \$(node -v) / npm \$(npm -v)"
+
+# ── Verificar PM2 ───────────────────────────────
+if ! command -v pm2 &>/dev/null; then
+  echo "[pm2] Instalando PM2..."
+  sudo npm install -g pm2
+fi
+
+# ── Crear directorios ───────────────────────────
+mkdir -p "\$RUTA/backend/db" "\$RUTA/frontend" "\$RUTA/uploads" "\$RUTA/logs"
+
+# ── Copiar archivos ─────────────────────────────
+echo "[copy] Copiando archivos..."
+cp -r "\$SCRIPT_DIR/backend" "\$RUTA/"
+cp -r "\$SCRIPT_DIR/frontend" "\$RUTA/"
+
+# ── .env inicial (solo si no existe) ───────────
+if [ ! -f "\$RUTA/backend/.env" ]; then
+  echo "[env] Creando .env..."
+  cat > "\$RUTA/backend/.env" << 'ENVEOF'
+PORT=3002
+JWT_SECRET=eintra_erp_secret_CAMBIAR_EN_PRODUCCION
+JWT_EXPIRES_IN=10h
+DB_PATH=./db/eintra_erp.db
+UPLOADS_PATH=../uploads
+NODE_ENV=production
+ENVEOF
+  echo "[env] IMPORTANTE: cambiar JWT_SECRET en \$RUTA/backend/.env"
+fi
+
+# ── Dependencias backend ────────────────────────
+echo "[npm] Instalando dependencias backend..."
+cd "\$RUTA/backend" && npm install --omit=dev
+
+# ── Build frontend ──────────────────────────────
+if [ -d "\$SCRIPT_DIR/frontend/dist" ]; then
+  echo "[dist] Usando frontend ya compilado"
+elif [ ! -d "\$RUTA/frontend/dist" ]; then
+  echo "[vite] Compilando frontend..."
+  cd "\$RUTA/frontend" && npm install && npm run build
+fi
+
+# ── PM2 ─────────────────────────────────────────
+echo "[pm2] Gestionando servicio..."
+if pm2 list 2>/dev/null | grep -q 'eintra-erp'; then
+  pm2 restart eintra-erp --update-env
+else
+  cd "\$RUTA/backend"
+  NODE_ENV=production pm2 start server.js --name eintra-erp
+  pm2 save
+  USUARIO=\${SUDO_USER:-\$(whoami)}
+  sudo env PATH=\$PATH:/usr/bin pm2 startup systemd -u "\$USUARIO" --hp "/home/\$USUARIO" 2>/dev/null || true
+  pm2 save
+fi
+
+# ── Cron backup nightly ─────────────────────────
+NODE_BIN=\$(which node 2>/dev/null || echo /usr/bin/node)
+CRON_JOB="0 0 * * * \$NODE_BIN \$RUTA/backend/scripts/backup-email.js >> \$RUTA/logs/backup.log 2>&1"
+( crontab -l 2>/dev/null | grep -v "backup-email.js"; echo "\$CRON_JOB" ) | crontab -
+echo "[cron] Backup programado a medianoche"
+
+echo ""
+echo "============================================"
+echo " Instalación completada"
+echo " Acceder: http://\$(hostname -I | awk '{print \$1}'):\$PORT"
+echo "============================================"
+`
+  fs.writeFileSync(path.join(tmpDir, 'install.sh'), installSh, { mode: 0o755 })
+
+  // ── Armar lista de archivos a incluir ───────────────────────────────────────
+  const include = [
+    'backend/server.js', 'backend/package.json',
+    'backend/routes', 'backend/middleware', 'backend/helpers',
+    'backend/db/database.js', 'backend/scripts',
+    'frontend/src', 'frontend/package.json', 'frontend/vite.config.js', 'frontend/index.html',
+  ]
+  if (fs.existsSync(path.join(appRoot, 'frontend/dist'))) include.push('frontend/dist')
+
+  const tarArgs = [
+    '-czf', '-',
+    '--exclude=node_modules', '--exclude=.env', '--exclude=*.db', '--exclude=.git',
+    '-C', appRoot, ...include,
+    '-C', tmpDir, 'install.sh',
+  ]
+
+  res.setHeader('Content-Disposition', `attachment; filename="eintra-erp-instalador-${fecha}.tar.gz"`)
+  res.setHeader('Content-Type', 'application/gzip')
+
+  const tar = spawn('tar', tarArgs)
+  tar.stdout.pipe(res)
+  tar.stderr.on('data', d => console.error('[instalador tar]', d.toString()))
+  tar.on('error', e => { cleanup(); if (!res.headersSent) res.status(500).json({ error: 'Error: ' + e.message }) })
+  tar.on('close', cleanup)
+  res.on('close', cleanup)
+})
+
+// ── Directivas ────────────────────────────────────────────────────────────────
+
+router.get('/directivas', (req, res) => {
+  res.json(db.prepare('SELECT * FROM directivas ORDER BY orden, id').all())
+})
+
+router.post('/directivas', (req, res) => {
+  if (!esAdmin(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const { titulo, descripcion } = req.body
+  if (!titulo?.trim()) return res.status(400).json({ error: 'Título requerido' })
+  const maxOrden = db.prepare('SELECT COALESCE(MAX(orden),0) as m FROM directivas').get().m
+  const r = db.prepare("INSERT INTO directivas (titulo, descripcion, orden) VALUES (?,?,?)").run(titulo.trim(), descripcion||'', maxOrden + 1)
+  res.status(201).json(db.prepare('SELECT * FROM directivas WHERE id=?').get(r.lastInsertRowid))
+})
+
+router.put('/directivas/:id', (req, res) => {
+  if (!esAdmin(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const { titulo, descripcion, activa } = req.body
+  if (!titulo?.trim()) return res.status(400).json({ error: 'Título requerido' })
+  db.prepare('UPDATE directivas SET titulo=?, descripcion=?, activa=? WHERE id=?')
+    .run(titulo.trim(), descripcion||'', activa !== undefined ? (activa ? 1 : 0) : 1, req.params.id)
+  res.json(db.prepare('SELECT * FROM directivas WHERE id=?').get(req.params.id))
+})
+
+router.patch('/directivas/:id/toggle', (req, res) => {
+  if (!esAdmin(req)) return res.status(403).json({ error: 'Sin permisos' })
+  db.prepare('UPDATE directivas SET activa = CASE WHEN activa=1 THEN 0 ELSE 1 END WHERE id=?').run(req.params.id)
+  res.json(db.prepare('SELECT * FROM directivas WHERE id=?').get(req.params.id))
+})
+
+router.delete('/directivas/:id', (req, res) => {
+  if (!esAdmin(req)) return res.status(403).json({ error: 'Sin permisos' })
+  db.prepare('DELETE FROM directivas WHERE id=?').run(req.params.id)
+  res.json({ ok: true })
+})
+
 module.exports = router

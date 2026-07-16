@@ -1,0 +1,240 @@
+[
+  {
+    "item_num": 1,
+    "categoria": "Lanzamiento de proyecto",
+    "item": "OC cliente",
+    "subitem": "",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 2,
+    "categoria": "Lanzamiento de proyecto",
+    "item": "Cronograma de proyecto",
+    "subitem": "",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 3,
+    "categoria": "Ingeniería",
+    "item": "Memoria / Propuesta Técnica",
+    "subitem": "",
+    "responsable": "Gustavo V."
+  },
+  {
+    "item_num": 4,
+    "categoria": "Ingeniería",
+    "item": "Diseño (Ingeniería de detalle)",
+    "subitem": "",
+    "responsable": "Gustavo V."
+  },
+  {
+    "item_num": 5,
+    "categoria": "Ingeniería",
+    "item": "Planos",
+    "subitem": "Plano de estructura",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 6,
+    "categoria": "Ingeniería",
+    "item": "Planos",
+    "subitem": "Plano de soporte",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 7,
+    "categoria": "Ingeniería",
+    "item": "Planos",
+    "subitem": "Plano de tuberias",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 8,
+    "categoria": "Ingeniería",
+    "item": "Planos",
+    "subitem": "Plano del cliente",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 9,
+    "categoria": "Ingeniería",
+    "item": "Planos",
+    "subitem": "P&D",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 10,
+    "categoria": "Ingeniería",
+    "item": "Planos",
+    "subitem": "Plano Eléctrico",
+    "responsable": "Silvio L."
+  },
+  {
+    "item_num": 11,
+    "categoria": "Ingeniería",
+    "item": "Documentación",
+    "subitem": "Software del PLC",
+    "responsable": "Silvio L."
+  },
+  {
+    "item_num": 12,
+    "categoria": "Ingeniería",
+    "item": "Documentación",
+    "subitem": "Certificados de la materia prima (Chapas)",
+    "responsable": "Andreina V."
+  },
+  {
+    "item_num": 13,
+    "categoria": "Ingeniería",
+    "item": "Documentación",
+    "subitem": "Certificados de la materia prima (Pintura)",
+    "responsable": "Andreina V."
+  },
+  {
+    "item_num": 14,
+    "categoria": "Ingeniería",
+    "item": "Documentación",
+    "subitem": "Certificados de la materia prima (Caños)",
+    "responsable": "Andreina V."
+  },
+  {
+    "item_num": 15,
+    "categoria": "Ingeniería",
+    "item": "Documentación",
+    "subitem": "Certificados de la materia prima (Placas)",
+    "responsable": "Andreina V."
+  },
+  {
+    "item_num": 16,
+    "categoria": "Ingeniería",
+    "item": "Documentación",
+    "subitem": "Certificado de los soldadores",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 17,
+    "categoria": "Ingeniería",
+    "item": "Documentación",
+    "subitem": "Manuales del equipamiento",
+    "responsable": "Daniel R."
+  },
+  {
+    "item_num": 18,
+    "categoria": "Ingeniería",
+    "item": "Manuales (Databook)",
+    "subitem": "",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 19,
+    "categoria": "Ingeniería",
+    "item": "Manuales",
+    "subitem": "",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 20,
+    "categoria": "Gestión de calidad",
+    "item": "Hoja de ruta",
+    "subitem": "Form  8",
+    "responsable": "Fabian G."
+  },
+  {
+    "item_num": 21,
+    "categoria": "Gestión de calidad",
+    "item": "Control de granallado de chapas y perfiles",
+    "subitem": "Form  21",
+    "responsable": "Fabian G."
+  },
+  {
+    "item_num": 22,
+    "categoria": "Gestión de calidad",
+    "item": "Control de espesor de pintura Base",
+    "subitem": "Form  22",
+    "responsable": "Fabian G."
+  },
+  {
+    "item_num": 23,
+    "categoria": "Gestión de calidad",
+    "item": "Verificación de soldadura",
+    "subitem": "Form  34",
+    "responsable": "Fabian G."
+  },
+  {
+    "item_num": 24,
+    "categoria": "Gestión de calidad",
+    "item": "Listado de chapas utilizadas",
+    "subitem": "Form  36",
+    "responsable": "Fabian G."
+  },
+  {
+    "item_num": 25,
+    "categoria": "Gestión de calidad",
+    "item": "Informe de No Conformidad (INC)",
+    "subitem": "Form  16",
+    "responsable": "Fabian G."
+  },
+  {
+    "item_num": 26,
+    "categoria": "Gestión de calidad",
+    "item": "Acta de Inspección",
+    "subitem": "Form 35",
+    "responsable": "Antonio"
+  },
+  {
+    "item_num": 27,
+    "categoria": "Gestión de calidad",
+    "item": "Medición de espesor de pintura",
+    "subitem": "Form 26",
+    "responsable": "Fabian G."
+  },
+  {
+    "item_num": 28,
+    "categoria": "Gestión de calidad",
+    "item": "Pruebas",
+    "subitem": "Eléctricas Form 27",
+    "responsable": "Silvio L."
+  },
+  {
+    "item_num": 29,
+    "categoria": "Gestión de calidad",
+    "item": "Pruebas",
+    "subitem": "Mecánicas (ver con Form 35)",
+    "responsable": "Daniel R."
+  },
+  {
+    "item_num": 30,
+    "categoria": "Gestión de calidad",
+    "item": "Chapa identificadora de módulo",
+    "subitem": "Form 37",
+    "responsable": "Jose L."
+  },
+  {
+    "item_num": 31,
+    "categoria": "Gestión de calidad",
+    "item": "Packing list",
+    "subitem": "",
+    "responsable": "Fabian G."
+  },
+  {
+    "item_num": 32,
+    "categoria": "Gestión de No Conformidades",
+    "item": "No conformidades de gestión",
+    "subitem": "Form 5",
+    "responsable": "Marcelo L."
+  },
+  {
+    "item_num": 33,
+    "categoria": "Gestión de No Conformidades",
+    "item": "Informe de No Conformidad (INC)",
+    "subitem": "Form  16",
+    "responsable": "Fabian G."
+  },
+  {
+    "item_num": 34,
+    "categoria": "Comunicaciones",
+    "item": "Informe de No Conformidad (INC)",
+    "subitem": "",
+    "responsable": "Jose L."
+  }
+]

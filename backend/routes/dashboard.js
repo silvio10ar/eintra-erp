@@ -19,6 +19,7 @@ router.get('/resumen', verificarToken, (req, res) => {
   // ── Compras ────────────────────────────────────────────────────────────────
   const ocAbiertas = db.prepare("SELECT COUNT(*) as c FROM ordenes_compra WHERE estado IN ('Emitida','Parcial')").get().c;
   const ocMes      = db.prepare("SELECT COUNT(*) as c FROM ordenes_compra WHERE fecha>=?").get(desde).c;
+  const ocVencidas = db.prepare("SELECT COUNT(*) as c FROM ordenes_compra WHERE estado IN ('Emitida','Parcial') AND fecha_entrega_est!='' AND fecha_entrega_est<?").get(hoy).c;
 
   // ── Ventas ─────────────────────────────────────────────────────────────────
   const pptoBorrador = db.prepare("SELECT COUNT(*) as c FROM presupuestos WHERE estado='Borrador'").get().c;
@@ -26,8 +27,8 @@ router.get('/resumen', verificarToken, (req, res) => {
   const pptoMes      = db.prepare("SELECT COUNT(*) as c FROM presupuestos WHERE fecha>=?").get(desde).c;
 
   // ── Proyectos ──────────────────────────────────────────────────────────────
-  const proyActivos  = db.prepare("SELECT COUNT(*) as c FROM proyectos WHERE estado='Activo'").get().c;
-  const proyEnEspera = db.prepare("SELECT COUNT(*) as c FROM proyectos WHERE estado='En espera'").get().c;
+  const proyActivos  = db.prepare("SELECT COUNT(*) as c FROM proyectos WHERE estado='Activo'  AND codigo NOT LIKE 'HIST-%'").get().c;
+  const proyEnEspera = db.prepare("SELECT COUNT(*) as c FROM proyectos WHERE estado='En espera' AND codigo NOT LIKE 'HIST-%'").get().c;
 
   // ── Producción ─────────────────────────────────────────────────────────────
   const otAbiertas  = db.prepare("SELECT COUNT(*) as c FROM ordenes_trabajo WHERE estado IN ('Pendiente','En proceso','Pausada')").get().c;
@@ -58,8 +59,11 @@ router.get('/resumen', verificarToken, (req, res) => {
   ).all();
 
   const oc_pendientes = db.prepare(
-    "SELECT id,numero,fecha,proveedor_nombre,estado FROM ordenes_compra WHERE estado IN ('Emitida','Parcial') ORDER BY fecha ASC LIMIT 6"
-  ).all();
+    `SELECT id,numero,fecha,proveedor_nombre,estado,fecha_entrega_est,
+            CASE WHEN fecha_entrega_est!='' AND fecha_entrega_est<? THEN 1 ELSE 0 END AS vencida
+     FROM ordenes_compra WHERE estado IN ('Emitida','Parcial')
+     ORDER BY CASE WHEN fecha_entrega_est!='' THEN 0 ELSE 1 END, fecha_entrega_est ASC, fecha ASC LIMIT 6`
+  ).all(hoy);
 
   // ── Fichadas del día ───────────────────────────────────────────────────────
   let fichadas_hoy = [];
@@ -74,6 +78,7 @@ router.get('/resumen', verificarToken, (req, res) => {
       FROM rrhh_asistencia a
       LEFT JOIN rrhh_empleados e ON e.id = a.empleado_id
       WHERE a.fecha = ? AND a.empleado_ext != ''
+        AND (e.id IS NULL OR e.tipo != 'interno' OR e.obliga_fichar != 0)
       GROUP BY COALESCE(CAST(a.empleado_id AS TEXT), a.empleado_ext)
       ORDER BY MIN(a.hora)
     `).all(hoy);
@@ -81,6 +86,7 @@ router.get('/resumen', verificarToken, (req, res) => {
       SELECT e.id, e.nombre, e.horario_entrada
       FROM rrhh_empleados e
       WHERE e.activo = 1
+        AND NOT (e.tipo = 'interno' AND COALESCE(e.obliga_fichar, 1) = 0)
         AND e.id NOT IN (
           SELECT DISTINCT empleado_id FROM rrhh_asistencia
           WHERE fecha = ? AND empleado_id IS NOT NULL
@@ -91,7 +97,7 @@ router.get('/resumen', verificarToken, (req, res) => {
 
   res.json({
     stock:     { alertas: alertasStock, total: totalProductos },
-    compras:   { abiertas: ocAbiertas, mes: ocMes },
+    compras:   { abiertas: ocAbiertas, mes: ocMes, vencidas: ocVencidas },
     ventas:    { borrador: pptoBorrador, aprobado: pptoAprobado, mes: pptoMes },
     proyectos: { activos: proyActivos, en_espera: proyEnEspera },
     produccion:{ abiertas: otAbiertas, urgentes: otUrgentes, vencidas: otVencidas },

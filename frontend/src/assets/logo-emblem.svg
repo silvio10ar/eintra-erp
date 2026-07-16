@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 62 62" role="img" aria-label="E-INTRA">
+  <defs>
+    <linearGradient id="bg" x1="25%" y1="0%" x2="75%" y2="100%">
+      <stop offset="0%" stop-color="#4db8f0"/>
+      <stop offset="100%" stop-color="#1358b8"/>
+    </linearGradient>
+    <clipPath id="clip"><circle cx="31" cy="31" r="28.5"/></clipPath>
+  </defs>
+  <!-- Anillo blanco exterior -->
+  <circle cx="31" cy="31" r="31" fill="white"/>
+  <!-- Fondo azul con gradiente -->
+  <circle cx="31" cy="31" r="29.5" fill="url(#bg)"/>
+  <!-- Ondas de agua (sinusoidales horizontales) -->
+  <g clip-path="url(#clip)">
+    <path d="M 2 26 C 10 18 18 34 26 26 C 34 18 42 34 50 26 C 55 21 58 20 63 21"
+          fill="none" stroke="rgba(255,255,255,0.95)" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 2 36 C 10 28 18 44 26 36 C 34 28 42 44 50 36 C 55 31 58 30 63 31"
+          fill="none" stroke="rgba(255,255,255,0.95)" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 2 46 C 10 38 18 54 26 46 C 34 38 42 54 50 46 C 55 41 58 40 63 41"
+          fill="none" stroke="rgba(255,255,255,0.65)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
