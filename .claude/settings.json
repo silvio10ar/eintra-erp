@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(timeout 8 ssh -o BatchMode=yes -o ConnectTimeout=5 administrador@10.1.1.10 \"echo OK\")",
+      "Bash(node --check routes/auth.js)",
+      "Bash(node --check db/database.js)",
+      "Bash(timeout 90 node_modules/.bin/vite build --logLevel warn)",
+      "Bash(node --check routes/finanzas.js)",
+      "Bash(node_modules/.bin/vite build *)",
+      "Bash(node --check routes/proyectos.js)",
+      "Bash(python3 -c \"import openpyxl\")",
+      "Bash(python -c \"import openpyxl\")",
+      "Bash(node -e \"console.log\\(process.version\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(node /c/Users/silvi/AppData/Local/Temp/claude/c--Users-silvi-eintra-erp/e4be2cb6-fb75-4983-a748-635f98a3ed89/scratchpad/analizar_arca.js)",
+      "Bash(cp \"/c/Users/silvi/AppData/Local/Temp/claude/c--Users-silvi-eintra-erp/e4be2cb6-fb75-4983-a748-635f98a3ed89/scratchpad/analizar_arca.js\" c:/Users/silvi/eintra-erp/backend/_tmp_analizar_arca.js)",
+      "Bash(node _tmp_analizar_arca.js)",
+      "Bash(awk -F'\\\\t' 'NR>1 && $5==\"\" {c++} END{print \"sin cliente_id:\", c}' fv_2023_2026.tsv)",
+      "Bash(awk -F'\\\\t' 'NR>1 {c++} END{print \"total:\", c}' fv_2023_2026.tsv)",
+      "Bash(node _tmp_fix_2023_2026.js)",
+      "Bash(rm -f c:/Users/silvi/eintra-erp/backend/_tmp_fix_2023_2026.js)",
+      "Bash(node --check routes/compras.js)",
+      "Bash(node --check routes/dashboard.js)",
+      "Bash(timeout 8 ssh -o BatchMode=yes -o ConnectTimeout=5 administrador@10.1.1.10 \"echo conectado\")",
+      "Bash(echo \"scp \\\\\"C:\\\\\\\\Users\\\\\\\\silvi\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\c--Users-silvi-eintra-erp\\\\\\\\e4be2cb6-fb75-4983-a748-635f98a3ed89\\\\\\\\scratchpad\\\\\\\\oc_liesa_s39630.sql\\\\\" administrador@10.1.1.10:/tmp/oc_liesa_s39630.sql\")",
+      "Bash(git commit -m ' *)",
+      "Bash(git fetch *)",
+      "Bash(npm --version)",
+      "Bash(npm view *)",
+      "Bash(DB_PATH=/c/Users/silvi/AppData/Local/Temp/claude/c--Users-silvi-eintra-erp/e4be2cb6-fb75-4983-a748-635f98a3ed89/scratchpad/test_upgrade.db NODE_ENV=test node -e ' *)",
+      "Bash(rm -f \"/c/Users/silvi/AppData/Local/Temp/claude/c--Users-silvi-eintra-erp/e4be2cb6-fb75-4983-a748-635f98a3ed89/scratchpad/test_upgrade.db\"*)"
+    ]
+  }
+}
