@@ -1,13 +1,13 @@
 const jwt = require('jsonwebtoken');
 const { db } = require('../db/database');
 
-const MODULOS = ['stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios','rrhh','partes','codificacion','materiales'];
+const MODULOS = ['stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios','rrhh','partes','codificacion','materiales','calidad'];
 
 const MODULOS_LABEL = {
   stock:'Stock', compras:'Compras', ventas:'Ventas', proyectos:'Proyectos',
   produccion:'Producción', finanzas:'Finanzas', mantenimiento:'Mantenimiento',
   administracion:'Administración', usuarios:'Usuarios', rrhh:'RRHH', partes:'Partes',
-  codificacion:'Codificación', materiales:'Materiales',
+  codificacion:'Codificación', materiales:'Materiales', calidad:'Calidad',
 };
 
 // padre → [submodulos]: acceso al padre otorga el mismo acceso a todos sus submodulos

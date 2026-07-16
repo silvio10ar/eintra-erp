@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../api/client'
 import { getUser } from '../store/authStore'
+import DateInput from './DateInput'
 
 const GRUPOS = [
   { grupo: 'Granallado',              color: '#6c757d' },
@@ -31,20 +32,24 @@ export default function MiParte({ show, onClose }) {
   const [fecha,       setFecha]       = useState(hoy)
   const [filas,       setFilas]       = useState([])
   const [cargados,    setCargados]    = useState([])
-  const [categorias,  setCategorias]  = useState([])
-  const [proyectos,   setProyectos]   = useState([])
-  const [saving,      setSaving]      = useState(false)
+  const [categorias,    setCategorias]    = useState([])
+  const [proyectos,     setProyectos]     = useState([])
+  const [actividades,   setActividades]   = useState([])
+  const [saving,        setSaving]        = useState(false)
   const [loadReg,     setLoadReg]     = useState(false)
   const [sinEmpleado, setSinEmpleado] = useState(false)
 
   useEffect(() => {
     if (!show) return
-    Promise.all([api.get('/rrhh/categorias'), api.get('/rrhh/proyectos')])
-      .then(([c, p]) => {
-        setCategorias(c.data)
-        setProyectos(p.data.filter(x => x.activo))
-      })
-      .catch(() => {})
+    Promise.all([
+      api.get('/rrhh/categorias'),
+      api.get('/rrhh/proyectos'),
+      api.get('/rrhh/actividades'),
+    ]).then(([c, p, a]) => {
+      setCategorias(c.data)
+      setProyectos(p.data.filter(x => x.estado === 'Activo'))
+      setActividades(a.data.filter(x => x.activo))
+    }).catch(() => {})
   }, [show])
 
   const cargarRegistros = useCallback(() => {
@@ -68,7 +73,7 @@ export default function MiParte({ show, onClose }) {
 
   const addFila = (cat) => setFilas(fs => [...fs, {
     _key: Date.now() + Math.random(),
-    cat_id: cat?.id || '', ini: '', fin: '', horas: '', proyecto_id: '', descripcion: '',
+    cat_id: cat?.id || '', ini: '', fin: '', horas: '', asignacion: '', descripcion: '',
   }])
 
   const updFila = (key, field, val) => setFilas(fs => fs.map(f => {
@@ -91,11 +96,17 @@ export default function MiParte({ show, onClose }) {
     if (!validas.length) { alert('Completá al menos una fila con código, INI y FIN'); return }
     setSaving(true)
     try {
-      const registros = validas.map(f => ({
-        fecha, categoria_id: f.cat_id, proyecto_id: f.proyecto_id || null,
-        hora_inicio: f.ini, hora_fin: f.fin, horas: parseFloat(f.horas),
-        descripcion: f.descripcion || '',
-      }))
+      const registros = validas.map(f => {
+        const esAct = f.asignacion?.startsWith('a:')
+        const asigId = f.asignacion ? Number(f.asignacion.slice(2)) : null
+        return {
+          fecha, categoria_id: f.cat_id,
+          proyecto_id:  esAct ? null : (asigId || null),
+          actividad_id: esAct ? asigId : null,
+          hora_inicio: f.ini, hora_fin: f.fin, horas: parseFloat(f.horas),
+          descripcion: f.descripcion || '',
+        }
+      })
       const r = await api.post('/rrhh/mi-parte', { registros })
       alert(`${r.data.insertados} registros guardados`)
       setFilas([])
@@ -143,8 +154,8 @@ export default function MiParte({ show, onClose }) {
               {/* Fecha */}
               <div className="d-flex align-items-center gap-3 mb-3">
                 <label className="fw-semibold mb-0">Fecha:</label>
-                <input type="date" className="form-control form-control-sm" style={{ width: 160 }}
-                  value={fecha} onChange={e => setFecha(e.target.value)} />
+                <DateInput className="form-control form-control-sm" style={{ width: 160 }}
+                  value={fecha} onChange={v => setFecha(v)} />
                 {totalCarg > 0 && (
                   <span className="badge bg-success fs-6">
                     <i className="bi bi-check-circle me-1" />{fmtH(totalCarg)} ya cargadas
@@ -271,9 +282,18 @@ export default function MiParte({ show, onClose }) {
                             <td className="text-center fw-semibold text-primary">{f.horas ? `${parseFloat(f.horas).toFixed(1)}h` : '—'}</td>
                             <td>
                               <select className="form-select form-select-sm" style={{ fontSize: '0.78rem' }}
-                                value={f.proyecto_id} onChange={e => updFila(f._key, 'proyecto_id', e.target.value)}>
+                                value={f.asignacion} onChange={e => updFila(f._key, 'asignacion', e.target.value)}>
                                 <option value="">—</option>
-                                {proyectos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                                {proyectos.length > 0 && (
+                                  <optgroup label="Proyectos">
+                                    {proyectos.map(p => <option key={p.id} value={`p:${p.id}`}>{p.nombre}</option>)}
+                                  </optgroup>
+                                )}
+                                {actividades.length > 0 && (
+                                  <optgroup label="Actividades">
+                                    {actividades.map(a => <option key={a.id} value={`a:${a.id}`}>{a.nombre}</option>)}
+                                  </optgroup>
+                                )}
                               </select>
                             </td>
                             <td><input type="text" className="form-control form-control-sm" placeholder="descripción" value={f.descripcion} onChange={e => updFila(f._key, 'descripcion', e.target.value)} /></td>

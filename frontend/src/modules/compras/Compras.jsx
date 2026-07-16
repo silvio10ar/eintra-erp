@@ -31,8 +31,27 @@ const CAMPOS_PROV = [
   { k:'vendedor',       l:'Vendedor'       },
   { k:'condicion_pago', l:'Cond. de Pago'  },
 ]
-const ITEM_VACIO = { producto_id:'', producto_codigo:'', descripcion:'', unidad:'UND.', cantidad:1, precio_unitario:0, bonif1:0, bonif2:0, bonif3:0, bonif4:0, precio_final:0, plazo:'INMEDIATO', cant_recibida:0, sin_codificar:false }
-const FORM_OC = { proveedor_id:'', proveedor_nombre:'', proveedor_cuit:'', fecha:hoy(), moneda:'DÓLAR', tasa_cambio:0, autorizado_por:'', elaborado_por:'', condicion_pago:'TRANSF. BANCARIA', lugar_entrega:'e-intra', presupuesto_n:'', observaciones:'', fecha_entrega_est:'', estado_doc:'', items:[{ ...ITEM_VACIO }] }
+const ITEM_VACIO = { producto_id:'', producto_codigo:'', descripcion:'', unidad:'UND.', cantidad:1, precio_unitario:0, bonif1:0, bonif2:0, bonif3:0, bonif4:0, precio_final:0, plazo:'INMEDIATO', dias_plazo:'', cant_recibida:0, sin_codificar:false }
+const FORM_OC = { proveedor_id:'', proveedor_nombre:'', proveedor_cuit:'', fecha:hoy(), moneda:'DÓLAR', tasa_cambio:0, autorizado_por:'', elaborado_por:'', condicion_pago:'TRANSF. BANCARIA', lugar_entrega:'e-intra', presupuesto_n:'', observaciones:'', fecha_entrega_est:'', estado_doc:'', modo_plazo:'OC', dias_plazo:'', items:[{ ...ITEM_VACIO }] }
+
+function sumarDias(fechaISO, dias) {
+  if (!fechaISO || dias === '' || dias == null) return ''
+  const [y, m, d] = fechaISO.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + parseInt(dias, 10))
+  return dt.toISOString().slice(0, 10)
+}
+
+// Vista previa de la fecha de entrega calculada, misma lógica que el backend
+function fechaEntregaPreview(formOC) {
+  const { fecha, modo_plazo, dias_plazo, items } = formOC
+  if (modo_plazo === 'ITEM') {
+    const conPlazo = (items||[]).filter(it => it.dias_plazo !== '' && it.dias_plazo != null)
+    if (!conPlazo.length) return ''
+    return conPlazo.map(it => sumarDias(fecha, it.dias_plazo)).sort()[0]
+  }
+  return sumarDias(fecha, dias_plazo)
+}
 
 const ESTADOS_DOC = ['', 'PENDIENTE', 'RECIBIDA', 'CONFORME', 'NO CONFORME', 'OBSERVADA']
 
@@ -163,8 +182,10 @@ export default function Compras() {
       presupuesto_n: oc.presupuesto_n || '', observaciones: oc.observaciones || '',
       fecha_entrega_est: oc.fecha_entrega_est || '',
       estado_doc: oc.estado_doc || '',
+      modo_plazo: oc.modo_plazo === 'ITEM' ? 'ITEM' : 'OC',
+      dias_plazo: oc.dias_plazo ?? '',
       items: oc.items?.length
-        ? oc.items.map(it => ({ id: it.id, producto_id: it.producto_id||'', producto_codigo: it.producto_codigo||'', descripcion: it.descripcion||'', unidad: it.unidad||'UND.', cantidad: it.cantidad, precio_unitario: it.precio_unitario, bonif1: it.bonif1||0, bonif2: it.bonif2||0, bonif3: it.bonif3||0, bonif4: it.bonif4||0, precio_final: it.precio_final, plazo: it.plazo||'INMEDIATO', cant_recibida: it.cant_recibida||0, sin_codificar: !!it.sin_codificar }))
+        ? oc.items.map(it => ({ id: it.id, producto_id: it.producto_id||'', producto_codigo: it.producto_codigo||'', descripcion: it.descripcion||'', unidad: it.unidad||'UND.', cantidad: it.cantidad, precio_unitario: it.precio_unitario, bonif1: it.bonif1||0, bonif2: it.bonif2||0, bonif3: it.bonif3||0, bonif4: it.bonif4||0, precio_final: it.precio_final, plazo: it.plazo||'INMEDIATO', dias_plazo: it.dias_plazo ?? '', cant_recibida: it.cant_recibida||0, sin_codificar: !!it.sin_codificar }))
         : [{ ...ITEM_VACIO }],
     })
     setErrOC(''); setSugsP([]); setSugsItem({ idx: null, list: [] }); setRefPrecios({}); setModalForm(oc)
@@ -656,7 +677,7 @@ export default function Compras() {
                       {modalOC.autorizado_por && <div className="col-auto"><strong>Autoriza:</strong> {modalOC.autorizado_por}</div>}
                       {modalOC.elaborado_por  && <div className="col-auto"><strong>Elabora:</strong> {modalOC.elaborado_por}</div>}
                       {modalOC.presupuesto_n      && <div className="col-auto"><strong>Ppto N°:</strong> {modalOC.presupuesto_n}</div>}
-                      {modalOC.fecha_entrega_est  && <div className="col-auto"><strong>Entrega Est.:</strong> {fmtF(modalOC.fecha_entrega_est)}</div>}
+                      {modalOC.fecha_entrega_est  && <div className="col-auto"><strong>Entrega Est.:</strong> {fmtF(modalOC.fecha_entrega_est)}{modalOC.modo_plazo==='ITEM' ? ' (por ítem)' : ''}</div>}
                       {modalOC.numero_remito      && <div className="col-auto"><strong>Remito:</strong> {modalOC.numero_remito}</div>}
                       {modalOC.fecha_recepcion    && <div className="col-auto"><strong>Recibido:</strong> {fmtF(modalOC.fecha_recepcion)}</div>}
                       {modalOC.observaciones      && <div className="col-12 text-muted"><i>{modalOC.observaciones}</i></div>}
@@ -700,7 +721,7 @@ export default function Compras() {
                           <th>#</th><th>DESCRIPCIÓN</th><th className="text-center">UNID.</th>
                           <th className="text-end">CANT.</th><th className="text-end">PRECIO U.</th>
                           <th className="text-center">BON.</th><th className="text-end">PRECIO F.</th>
-                          <th className="text-end">SUBTOTAL</th><th className="text-center">PLAZO</th>
+                          <th className="text-end">SUBTOTAL</th><th className="text-center">ENTREGA</th>
                           <th className="text-end">RECIBIDO</th>
                         </tr>
                       </thead>
@@ -719,7 +740,11 @@ export default function Compras() {
                               <td className="text-center text-muted">{bons||'—'}</td>
                               <td className="text-end fw-semibold">{fmtN(it.precio_final)}</td>
                               <td className="text-end">{fmtN(sub)}</td>
-                              <td className="text-center text-muted">{it.plazo}</td>
+                              <td className="text-center text-muted">
+                                {it.dias_plazo != null && it.dias_plazo !== ''
+                                  ? `${it.dias_plazo}d — ${fmtF(sumarDias(modalOC.fecha, it.dias_plazo))}`
+                                  : it.plazo}
+                              </td>
                               <td className="text-end">
                                 {it.producto_id
                                   ? <span className={pend > 0 ? 'text-warning' : 'text-success'}>{fmtN(it.cant_recibida||0)}/{fmtN(it.cantidad)}</span>
@@ -869,10 +894,26 @@ export default function Compras() {
                       <input className="form-control form-control-sm" value={formOC.presupuesto_n}
                         onChange={e=>setFormOC(p=>({...p,presupuesto_n:e.target.value}))}/>
                     </div>
-                    <div className="col-md-2">
-                      <label className="form-label small fw-medium mb-1">Fecha Entrega Est.</label>
-                      <DateInput className="form-control form-control-sm" value={formOC.fecha_entrega_est}
-                        onChange={v=>setFormOC(p=>({...p,fecha_entrega_est:v}))}/>
+                    <div className="col-md-3">
+                      <label className="form-label small fw-medium mb-1">Plazo de entrega</label>
+                      <div className="d-flex align-items-center gap-2">
+                        <select className="form-select form-select-sm" style={{maxWidth:110}} value={formOC.modo_plazo}
+                          onChange={e=>setFormOC(p=>({...p,modo_plazo:e.target.value}))}>
+                          <option value="OC">Toda la OC</option>
+                          <option value="ITEM">Por ítem</option>
+                        </select>
+                        {formOC.modo_plazo === 'OC' && (
+                          <input type="number" min="0" className="form-control form-control-sm text-end" style={{maxWidth:70}}
+                            placeholder="días" value={formOC.dias_plazo}
+                            onChange={e=>setFormOC(p=>({...p,dias_plazo:e.target.value}))}/>
+                        )}
+                      </div>
+                      <div className="small text-muted mt-1">
+                        {formOC.modo_plazo === 'ITEM'
+                          ? 'Días de plazo por ítem, abajo en la tabla'
+                          : 'Días desde la fecha de la OC'}
+                        {' — '}Entrega est.: <strong>{fmtF(fechaEntregaPreview(formOC)) || '—'}</strong>
+                      </div>
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small fw-medium mb-1">Estado Doc.</label>
@@ -965,7 +1006,7 @@ export default function Compras() {
                         <th style={{width:56}}>B4%</th>
                         <th style={{width:96}}>PRECIO F.</th>
                         <th style={{width:96}}>SUBTOTAL</th>
-                        <th style={{width:96}}>PLAZO</th>
+                        <th style={{width:96}}>DÍAS/ENTREGA</th>
                         <th style={{width:28}}/>
                       </tr>
                     </thead>
@@ -1067,7 +1108,19 @@ export default function Compras() {
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}} title={`OC #${refPrecios[idx].numero} — ${fmtF(refPrecios[idx].fecha)}`}>{fmtN(refPrecios[idx].precio_final)}</div>}
                           </td>
                           <td className="text-end fw-bold align-middle" style={{background:'#eef2ff'}}>{fmtN((parseFloat(it.cantidad)||0) * (parseFloat(it.precio_final)||0))}</td>
-                          <td><input className="form-control form-control-sm border-0 p-0 px-1" value={it.plazo} onChange={e=>setItem(idx,'plazo',e.target.value)}/></td>
+                          <td>
+                            {formOC.modo_plazo === 'ITEM' ? (
+                              <>
+                                <input type="number" min="0" className="form-control form-control-sm border-0 p-0 px-1 text-end"
+                                  placeholder="días" value={it.dias_plazo}
+                                  onChange={e=>setItem(idx,'dias_plazo',e.target.value)}/>
+                                {it.dias_plazo !== '' && it.dias_plazo != null &&
+                                  <div className="text-muted text-end" style={{fontSize:'0.62rem',lineHeight:1.1}}>{fmtF(sumarDias(formOC.fecha, it.dias_plazo))}</div>}
+                              </>
+                            ) : (
+                              <div className="text-muted text-center" style={{fontSize:'0.7rem'}}>ver arriba</div>
+                            )}
+                          </td>
                           <td className="text-center align-middle">
                             <button type="button" className="btn btn-xs text-danger py-0 px-1" disabled={formOC.items.length===1} onClick={()=>quitarItem(idx)}>
                               <i className="bi bi-x"/>

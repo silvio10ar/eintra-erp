@@ -8,3 +8,5 @@ backend/.env
 *.xlsx
 *.zip
 *.py
+/*.db
+/calidad/

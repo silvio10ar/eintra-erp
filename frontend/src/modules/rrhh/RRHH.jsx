@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
+import DateInput from '../../components/DateInput'
 
 const ANOS  = Array.from({ length: 9 }, (_, i) => 2020 + i)
 const MESES = [
@@ -26,7 +27,10 @@ export default function RRHH() {
   const [dash,      setDash]      = useState(null)
   const [registros, setRegistros] = useState([])
   const [empleados, setEmpleados] = useState([])
-  const [proyectos, setProyectos] = useState([])
+  const [proyectosMain,    setProyectosMain]    = useState([])
+  const [proyectosActivos, setProyectosActivos] = useState([])
+  const [actividades,      setActividades]      = useState([])
+  const [modalAct,         setModalAct]         = useState(null)
   const [categorias,setCategorias]= useState([])
   const [loading,   setLoading]   = useState(false)
   const [saving,    setSaving]    = useState(false)
@@ -40,36 +44,40 @@ export default function RRHH() {
   // modales — el objeto ES el form
   const [modalReg,   setModalReg]   = useState(null)
   const [modalEmp,   setModalEmp]   = useState(null)
-  const [modalProy,  setModalProy]  = useState(null)
   const [modalDisp,  setModalDisp]  = useState(null)
   const [verInactivos, setVerInactivos] = useState(false)
 
   // parte diario
   const [parteEmp,     setParteEmp]     = useState('')
-  const [parteDate,    setParteDate]    = useState(new Date().toISOString().split('T')[0])
+  const [parteDate,    setParteDate]    = useState(new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }))
   const [parteFilas,   setParteFilas]   = useState([])
   const [savingParte,  setSavingParte]  = useState(false)
 
   // asistencia
   const [asistencia,   setAsistencia]   = useState([])
   const [dispositivos, setDispositivos] = useState([])
-  const [syncDesde,    setSyncDesde]    = useState(new Date().toISOString().split('T')[0])
-  const [syncHasta,    setSyncHasta]    = useState(new Date().toISOString().split('T')[0])
+  const [syncDesde,    setSyncDesde]    = useState(new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }))
+  const [syncHasta,    setSyncHasta]    = useState(new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }))
   const [syncLoading,  setSyncLoading]  = useState(false)
   const [syncResult,   setSyncResult]   = useState(null)
-  const [fAsistFecha,  setFAsistFecha]  = useState(new Date().toISOString().split('T')[0])
+  const [fAsistFecha,  setFAsistFecha]  = useState(new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }))
   const [fAsistEmp,    setFAsistEmp]    = useState('')
   const [empDispositivo, setEmpDispositivo] = useState([])
 
   // informes
-  const hoy = new Date().toISOString().split('T')[0]
-  const primerDiaMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+  const hoy = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' })
+  const primerDiaMes = hoy.substring(0, 7) + '-01'
   const [infTab,        setInfTab]        = useState('asistencia')
   const [infDesde,      setInfDesde]      = useState(primerDiaMes)
   const [infHasta,      setInfHasta]      = useState(hoy)
   const [infEmpleado,   setInfEmpleado]   = useState('')
   const [infData,       setInfData]       = useState(null)
   const [infLoading,    setInfLoading]    = useState(false)
+
+  // ── fusionador ─────────────────────────────────────────────────────────────
+  const [legado,       setLegado]       = useState([])
+  const [legadoLoad,   setLegadoLoad]   = useState(false)
+  const [fusSelect,    setFusSelect]    = useState({}) // { [legado_id]: proyectos_id_seleccionado }
 
   // ── datos maestros ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -79,12 +87,16 @@ export default function RRHH() {
       api.get('/rrhh/proyectos'),
       api.get('/rrhh/dispositivos'),
       api.get('/rrhh/asistencia/empleados-dispositivo'),
-    ]).then(([c, e, p, d, ed]) => {
+      api.get('/proyectos?estado=Activo'),
+      api.get('/rrhh/actividades'),
+    ]).then(([c, e, pm, d, ed, pa, act]) => {
       setCategorias(c.data)
       setEmpleados(e.data)
-      setProyectos(p.data)
+      setProyectosMain(pm.data)
       setDispositivos(d.data)
       setEmpDispositivo(ed.data)
+      setActividades(act.data)
+      setProyectosActivos(pa.data)
     }).catch(() => {})
   }, [])
 
@@ -130,7 +142,11 @@ export default function RRHH() {
   useEffect(() => { if (tab === 'asistencia')  cargarAsistencia() }, [tab, cargarAsistencia])
 
   const reloadEmpleados = () => api.get('/rrhh/empleados').then(r => setEmpleados(r.data))
-  const reloadProyectos = () => api.get('/rrhh/proyectos').then(r => setProyectos(r.data))
+  const reloadProyectos  = () => Promise.all([
+    api.get('/rrhh/proyectos'),
+    api.get('/proyectos?estado=Activo'),
+  ]).then(([pm, pa]) => { setProyectosMain(pm.data); setProyectosActivos(pa.data) })
+  const reloadActividades = () => api.get('/rrhh/actividades').then(r => setActividades(r.data))
 
   // ── acciones dispositivo ──────────────────────────────────────────────────
   function guardarDispositivo() {
@@ -184,7 +200,14 @@ export default function RRHH() {
       return
     }
     setSaving(true)
-    const req = m.id ? api.put(`/rrhh/registros/${m.id}`, m) : api.post('/rrhh/registros', m)
+    const esActividad = m.asignacion?.startsWith('a:')
+    const asigId = m.asignacion ? Number(m.asignacion.slice(2)) : null
+    const payload = {
+      ...m,
+      proyecto_id:  esActividad ? null : (asigId || null),
+      actividad_id: esActividad ? asigId : null,
+    }
+    const req = m.id ? api.put(`/rrhh/registros/${m.id}`, payload) : api.post('/rrhh/registros', payload)
     req.then(() => {
       setModalReg(null)
       cargarReg()
@@ -220,16 +243,6 @@ export default function RRHH() {
     setSaving(true)
     const req = m.id ? api.put(`/rrhh/empleados/${m.id}`, m) : api.post('/rrhh/empleados', m)
     req.then(() => { setModalEmp(null); reloadEmpleados() })
-       .catch(e => alert(e.response?.data?.error || 'Error al guardar'))
-       .finally(() => setSaving(false))
-  }
-
-  function guardarProyecto() {
-    const m = modalProy
-    if (!m.nombre?.trim()) { alert('El nombre es obligatorio'); return }
-    setSaving(true)
-    const req = m.id ? api.put(`/rrhh/proyectos/${m.id}`, m) : api.post('/rrhh/proyectos', m)
-    req.then(() => { setModalProy(null); reloadProyectos() })
        .catch(e => alert(e.response?.data?.error || 'Error al guardar'))
        .finally(() => setSaving(false))
   }
@@ -286,7 +299,7 @@ export default function RRHH() {
             <div className="card text-center h-100">
               <div className="card-body">
                 <div className="fs-2 fw-bold text-info">
-                  {empleados.filter(e=>e.activo).length} / {proyectos.filter(p=>p.activo).length}
+                  {empleados.filter(e=>e.activo).length} / {proyectosMain.filter(p=>p.estado==='Activo').length}
                 </div>
                 <div className="text-muted small">Empleados / Proyectos activos</div>
               </div>
@@ -404,15 +417,15 @@ export default function RRHH() {
             </select>
             <select className="form-select form-select-sm" style={{width:180}} value={fProy} onChange={e=>setFProy(e.target.value)}>
               <option value="">Todos los proyectos</option>
-              {proyectos.filter(p=>p.activo).map(p=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+              {proyectosActivos.map(p=><option key={p.id} value={p.id}>{p.codigo ? `${p.codigo} — ${p.nombre}` : p.nombre}</option>)}
             </select>
             <span className="badge bg-secondary align-self-center">
               {registros.length} registros · {fmtH(totalH)}
             </span>
           </div>
           <button className="btn btn-primary btn-sm" onClick={() => setModalReg({
-            fecha: new Date().toISOString().split('T')[0],
-            empleado_id:'', proyecto_id:'', categoria_id:'',
+            fecha: new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }),
+            empleado_id:'', asignacion:'', categoria_id:'',
             hora_inicio:'', hora_fin:'', horas:'', modulo:'', descripcion:''
           })}>
             <i className="bi bi-plus-lg me-1"/>Nuevo registro
@@ -451,7 +464,10 @@ export default function RRHH() {
                   <td>{r.modulo||'—'}</td>
                   <td style={{maxWidth:160}} className="text-truncate" title={r.descripcion}>{r.descripcion||'—'}</td>
                   <td className="text-nowrap">
-                    <button className="btn btn-sm btn-outline-secondary py-0 me-1" onClick={() => setModalReg({...r})}>
+                    <button className="btn btn-sm btn-outline-secondary py-0 me-1" onClick={() => setModalReg({
+                      ...r,
+                      asignacion: r.actividad_id ? `a:${r.actividad_id}` : r.proyecto_id ? `p:${r.proyecto_id}` : ''
+                    })}>
                       <i className="bi bi-pencil"/>
                     </button>
                     <button className="btn btn-sm btn-outline-danger py-0" onClick={() => eliminarRegistro(r.id)}>
@@ -482,6 +498,11 @@ export default function RRHH() {
           <td>
             {e.nombre}
             {!e.activo && <span className="badge bg-secondary ms-2" style={{fontSize:'0.65rem'}}>inactivo</span>}
+            {e.activo && e.obliga_fichar === 0 && (
+              <span className="badge bg-warning text-dark ms-2" style={{fontSize:'0.65rem'}}>
+                <i className="bi bi-clock-history me-1"/>sin fichar
+              </span>
+            )}
           </td>
           <td>{e.empresa||'—'}</td>
           <td className="text-end">{fmtH(e.horas_anio)}</td>
@@ -625,44 +646,40 @@ export default function RRHH() {
   }
 
   function TabProyectos() {
+    const COLORES = { 'Activo':'success', 'En espera':'warning', 'Completado':'primary', 'Cancelado':'danger' }
     return (
       <div>
-        <div className="d-flex justify-content-between align-items-center mb-3">
-          <div className="d-flex gap-2">
-            <span className="badge bg-success">{proyectos.filter(p=>p.activo).length} activos</span>
-            <span className="badge bg-secondary">{proyectos.filter(p=>!p.activo).length} inactivos</span>
-          </div>
-          <button className="btn btn-primary btn-sm"
-            onClick={() => setModalProy({ nombre:'', activo:1 })}>
-            <i className="bi bi-plus-lg me-1"/>Nuevo proyecto
-          </button>
+        <div className="d-flex gap-2 align-items-center mb-3">
+          <span className="badge bg-success">{proyectosMain.filter(p=>p.estado==='Activo').length} activos</span>
+          <span className="badge bg-warning text-dark">{proyectosMain.filter(p=>p.estado==='En espera').length} en espera</span>
+          <span className="text-muted small ms-2">Los proyectos se gestionan en el módulo Proyectos</span>
         </div>
 
         <div className="table-responsive">
           <table className="table table-sm table-hover">
             <thead className="table-dark">
-              <tr><th>Proyecto</th><th className="text-end">Total horas</th><th>Estado</th><th></th></tr>
+              <tr>
+                <th>Código</th>
+                <th>Proyecto</th>
+                <th>Cliente</th>
+                <th className="text-end">Total horas</th>
+                <th>Estado</th>
+              </tr>
             </thead>
             <tbody>
-              {proyectos.map(p => (
+              {proyectosMain.map(p => (
                 <tr key={p.id}>
+                  <td className="text-nowrap"><span className="badge bg-secondary">{p.codigo||'—'}</span></td>
                   <td>{p.nombre}</td>
-                  <td className="text-end fw-semibold">{fmtH(p.total_horas)}</td>
+                  <td className="text-muted small">{p.cliente_nombre||'—'}</td>
+                  <td className="text-end fw-semibold">{p.total_horas > 0 ? fmtH(p.total_horas) : <span className="text-muted">—</span>}</td>
                   <td>
-                    <span className={`badge bg-${p.activo?'success':'secondary'}`}>
-                      {p.activo?'Activo':'Inactivo'}
-                    </span>
-                  </td>
-                  <td>
-                    <button className="btn btn-sm btn-outline-secondary py-0"
-                      onClick={() => setModalProy({...p})}>
-                      <i className="bi bi-pencil"/>
-                    </button>
+                    <span className={`badge bg-${COLORES[p.estado]||'secondary'}`}>{p.estado||'—'}</span>
                   </td>
                 </tr>
               ))}
-              {proyectos.length===0 && (
-                <tr><td colSpan={4} className="text-center text-muted py-4">Sin proyectos</td></tr>
+              {proyectosMain.length===0 && (
+                <tr><td colSpan={5} className="text-center text-muted py-4">Sin proyectos</td></tr>
               )}
             </tbody>
           </table>
@@ -686,7 +703,7 @@ export default function RRHH() {
     const addFila = (cat) => setParteFilas(fs => [...fs, {
       _key: Date.now() + Math.random(),
       cat_id: cat?.id || '', ini: '', fin: '', horas: '',
-      proyecto_id: '', descripcion: '',
+      asignacion: '', descripcion: '',
     }])
 
     const updFila = (key, field, val) => setParteFilas(fs => fs.map(f => {
@@ -731,12 +748,18 @@ export default function RRHH() {
       if (validas.length === 0) { alert('Completá al menos una fila con código, INI y FIN'); return }
       setSavingParte(true)
       try {
-        const registros = validas.map(f => ({
-          fecha: parteDate, empleado_id: Number(parteEmp),
-          categoria_id: f.cat_id || null, proyecto_id: f.proyecto_id || null,
-          hora_inicio: f.ini, hora_fin: f.fin, horas: parseFloat(f.horas),
-          modulo: '', descripcion: f.descripcion || '',
-        }))
+        const registros = validas.map(f => {
+          const esAct = f.asignacion?.startsWith('a:')
+          const asigId = f.asignacion ? Number(f.asignacion.slice(2)) : null
+          return {
+            fecha: parteDate, empleado_id: Number(parteEmp),
+            categoria_id: f.cat_id || null,
+            proyecto_id:  esAct ? null : (asigId || null),
+            actividad_id: esAct ? asigId : null,
+            hora_inicio: f.ini, hora_fin: f.fin, horas: parseFloat(f.horas),
+            modulo: '', descripcion: f.descripcion || '',
+          }
+        })
         const r = await api.post('/rrhh/registros/batch', { registros })
         alert(`${r.data.insertados} registros guardados correctamente`)
         setParteFilas([])
@@ -772,8 +795,8 @@ export default function RRHH() {
               </div>
               <div>
                 <label className="form-label small mb-1 fw-semibold">Fecha</label>
-                <input type="date" className="form-control form-control-sm" style={{width:150}}
-                  value={parteDate} onChange={e => setParteDate(e.target.value)}/>
+                <DateInput className="form-control form-control-sm" style={{width:150}}
+                  value={parteDate} onChange={v => setParteDate(v)}/>
               </div>
               <div className="ms-auto text-muted small align-self-center">
                 <i className="bi bi-file-earmark-text me-1"/>Form 42 · Parte Diario
@@ -889,11 +912,20 @@ export default function RRHH() {
                       </td>
                       <td>
                         <select className="form-select form-select-sm" style={{fontSize:'0.78rem'}}
-                          value={f.proyecto_id}
-                          onChange={e => updFila(f._key, 'proyecto_id', e.target.value)}>
+                          value={f.asignacion}
+                          onChange={e => updFila(f._key, 'asignacion', e.target.value)}>
                           <option value="">—</option>
-                          {proyectos.filter(p => p.activo).map(p =>
-                            <option key={p.id} value={p.id}>{p.nombre}</option>
+                          <optgroup label="Proyectos activos">
+                            {proyectosActivos.map(p =>
+                              <option key={p.id} value={`p:${p.id}`}>{p.codigo ? `${p.codigo} — ${p.nombre}` : p.nombre}</option>
+                            )}
+                          </optgroup>
+                          {actividades.filter(a=>a.activo).length > 0 && (
+                            <optgroup label="Actividades">
+                              {actividades.filter(a=>a.activo).map(a =>
+                                <option key={a.id} value={`a:${a.id}`}>{a.nombre}</option>
+                              )}
+                            </optgroup>
                           )}
                         </select>
                       </td>
@@ -995,11 +1027,11 @@ export default function RRHH() {
           <div className="card-body py-2">
             <div className="d-flex gap-2 align-items-center flex-wrap">
               <span className="text-muted small fw-semibold">Sincronizar registros:</span>
-              <input type="date" className="form-control form-control-sm" style={{width:145}}
-                value={syncDesde} onChange={e => setSyncDesde(e.target.value)}/>
+              <DateInput className="form-control form-control-sm" style={{width:145}}
+                value={syncDesde} onChange={v => setSyncDesde(v)}/>
               <span className="text-muted small">al</span>
-              <input type="date" className="form-control form-control-sm" style={{width:145}}
-                value={syncHasta} onChange={e => setSyncHasta(e.target.value)}/>
+              <DateInput className="form-control form-control-sm" style={{width:145}}
+                value={syncHasta} onChange={v => setSyncHasta(v)}/>
               <button className="btn btn-sm btn-success" disabled={syncLoading || !disp}
                 onClick={sincronizar}>
                 {syncLoading
@@ -1019,8 +1051,8 @@ export default function RRHH() {
         {/* Filtros */}
         <div className="d-flex gap-2 align-items-center mb-3 flex-wrap">
           <span className="text-muted small">Ver día:</span>
-          <input type="date" className="form-control form-control-sm" style={{width:145}}
-            value={fAsistFecha} onChange={e => setFAsistFecha(e.target.value)}/>
+          <DateInput className="form-control form-control-sm" style={{width:145}}
+            value={fAsistFecha} onChange={v => setFAsistFecha(v)}/>
           <select className="form-select form-select-sm" style={{width:200}}
             value={fAsistEmp} onChange={e => setFAsistEmp(e.target.value)}>
             <option value="">Todos los empleados</option>
@@ -1195,8 +1227,8 @@ export default function RRHH() {
               <div className="row g-3">
                 <div className="col-md-4">
                   <label className="form-label fw-semibold">Fecha *</label>
-                  <input type="date" className="form-control form-control-sm"
-                    value={m.fecha||''} onChange={e => upd('fecha', e.target.value)}/>
+                  <DateInput className="form-control form-control-sm"
+                    value={m.fecha||''} onChange={v => upd('fecha', v)}/>
                 </div>
                 <div className="col-md-8">
                   <label className="form-label fw-semibold">Empleado *</label>
@@ -1217,13 +1249,27 @@ export default function RRHH() {
                 </div>
 
                 <div className="col-md-6">
-                  <label className="form-label fw-semibold">Proyecto</label>
+                  <label className="form-label fw-semibold">Proyecto / Actividad</label>
                   <select className="form-select form-select-sm"
-                    value={m.proyecto_id||''} onChange={e => upd('proyecto_id', e.target.value)}>
-                    <option value="">— sin proyecto —</option>
-                    {proyectos.filter(p=>p.activo).map(p=>(
-                      <option key={p.id} value={p.id}>{p.nombre}</option>
-                    ))}
+                    value={m.asignacion||''} onChange={e => upd('asignacion', e.target.value)}>
+                    <option value="">— sin asignar —</option>
+                    {m.proyecto_id && !m.asignacion?.startsWith('a:') && !proyectosActivos.some(p => String(p.id) === String(m.proyecto_id)) && m.proyecto_nombre && (
+                      <optgroup label="Proyecto actual (legado)">
+                        <option value={`p:${m.proyecto_id}`}>{m.proyecto_nombre}</option>
+                      </optgroup>
+                    )}
+                    <optgroup label="Proyectos activos">
+                      {proyectosActivos.map(p=>(
+                        <option key={p.id} value={`p:${p.id}`}>{p.codigo ? `${p.codigo} — ${p.nombre}` : p.nombre}</option>
+                      ))}
+                    </optgroup>
+                    {actividades.filter(a=>a.activo).length > 0 && (
+                      <optgroup label="Actividades">
+                        {actividades.filter(a=>a.activo).map(a=>(
+                          <option key={a.id} value={`a:${a.id}`}>{a.nombre}</option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
                 <div className="col-md-6">
@@ -1340,7 +1386,7 @@ export default function RRHH() {
                     placeholder="Nº de empleado en el dispositivo (ej: 1, 5, 123)"/>
                   <div className="form-text">Para vincular registros de asistencia automáticamente.</div>
                 </div>
-                <div className="col-12"><hr className="my-1"/><small className="text-muted fw-semibold">Horario</small></div>
+                <div className="col-12"><hr className="my-1"/><small className="text-muted fw-semibold">Horario y fichada</small></div>
                 <div className="col-md-6">
                   <label className="form-label fw-semibold">Entrada esperada</label>
                   <input type="time" className="form-control form-control-sm"
@@ -1353,6 +1399,23 @@ export default function RRHH() {
                     value={m.horario_salida||''} onChange={e => upd('horario_salida', e.target.value)}/>
                   <div className="form-text">Salidas anteriores se marcarán en rojo.</div>
                 </div>
+                {m.tipo === 'interno' && (
+                  <div className="col-12">
+                    <div className="form-check form-switch">
+                      <input className="form-check-input" type="checkbox" role="switch"
+                        id="obligaFicharSwitch"
+                        checked={m.obliga_fichar !== 0 && m.obliga_fichar !== false}
+                        onChange={e => upd('obliga_fichar', e.target.checked ? 1 : 0)}
+                      />
+                      <label className="form-check-label" htmlFor="obligaFicharSwitch">
+                        Obligado a fichar
+                      </label>
+                    </div>
+                    <div className="form-text">
+                      Si está desactivado, este empleado no aparece en el control de asistencia del Dashboard ni en "Sin fichar".
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             <div className="modal-footer">
@@ -1440,45 +1503,340 @@ export default function RRHH() {
     )
   }
 
-  function ModalProyecto() {
-    if (!modalProy) return null
-    const m   = modalProy
-    const upd = (k, v) => setModalProy(x => ({ ...x, [k]: v }))
+  // ── TabActividades ────────────────────────────────────────────────────────────
+  function TabActividades() {
+    function guardar() {
+      const m = modalAct
+      if (!m.nombre?.trim()) { alert('El nombre es obligatorio'); return }
+      const req = m.id
+        ? api.put(`/rrhh/actividades/${m.id}`, m)
+        : api.post('/rrhh/actividades', m)
+      req.then(() => { setModalAct(null); reloadActividades() })
+         .catch(e => alert(e.response?.data?.error || 'Error al guardar'))
+    }
     return (
-      <div className="modal fade show d-block" style={{ background:'rgba(0,0,0,.5)' }}>
-        <div className="modal-dialog">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h5 className="modal-title">{m.id ? 'Editar proyecto' : 'Nuevo proyecto'}</h5>
-              <button className="btn-close" onClick={() => setModalProy(null)}/>
-            </div>
-            <div className="modal-body">
-              <div className="row g-3">
-                <div className="col-12">
+      <div>
+        <div className="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <h6 className="mb-0 fw-semibold">Actividades internas</h6>
+            <small className="text-muted">Tareas generales, mantenimiento, etc.</small>
+          </div>
+          <button className="btn btn-primary btn-sm" onClick={() => setModalAct({ nombre: '', activo: 1 })}>
+            <i className="bi bi-plus-lg me-1"/>Nueva actividad
+          </button>
+        </div>
+        <div className="table-responsive">
+          <table className="table table-sm table-hover">
+            <thead className="table-dark">
+              <tr><th>Nombre</th><th>Estado</th><th></th></tr>
+            </thead>
+            <tbody>
+              {actividades.filter(a => a.activo).map(a => (
+                <tr key={a.id}>
+                  <td className="fw-semibold">{a.nombre}</td>
+                  <td><span className="badge bg-success">Activa</span></td>
+                  <td>
+                    <button className="btn btn-sm btn-outline-secondary py-0 me-1" onClick={() => setModalAct({...a})}>
+                      <i className="bi bi-pencil"/>
+                    </button>
+                    <button className="btn btn-sm btn-outline-warning py-0" title="Desactivar"
+                      onClick={() => api.put(`/rrhh/actividades/${a.id}`, {...a, activo:0}).then(reloadActividades)}>
+                      <i className="bi bi-eye-slash"/>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {actividades.filter(a => !a.activo).map(a => (
+                <tr key={a.id} className="text-muted">
+                  <td>{a.nombre}</td>
+                  <td><span className="badge bg-secondary">Inactiva</span></td>
+                  <td>
+                    <button className="btn btn-sm btn-outline-success py-0" title="Activar"
+                      onClick={() => api.put(`/rrhh/actividades/${a.id}`, {...a, activo:1}).then(reloadActividades)}>
+                      <i className="bi bi-eye"/>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {actividades.length === 0 && (
+                <tr><td colSpan={3} className="text-center text-muted py-4">Sin actividades. Creá la primera.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {modalAct && (
+          <div className="modal fade show d-block" style={{ background:'rgba(0,0,0,.5)' }}>
+            <div className="modal-dialog">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">{modalAct.id ? 'Editar actividad' : 'Nueva actividad'}</h5>
+                  <button className="btn-close" onClick={() => setModalAct(null)}/>
+                </div>
+                <div className="modal-body">
                   <label className="form-label fw-semibold">Nombre *</label>
                   <input type="text" className="form-control"
-                    value={m.nombre||''} onChange={e => upd('nombre', e.target.value)}/>
+                    value={modalAct.nombre || ''}
+                    onChange={e => setModalAct(x => ({...x, nombre: e.target.value}))}
+                    autoFocus/>
                 </div>
-                {m.id && (
-                  <div className="col-md-6">
-                    <label className="form-label fw-semibold">Estado</label>
-                    <select className="form-select"
-                      value={m.activo} onChange={e => upd('activo', Number(e.target.value))}>
-                      <option value={1}>Activo</option>
-                      <option value={0}>Inactivo</option>
-                    </select>
-                  </div>
-                )}
+                <div className="modal-footer">
+                  <button className="btn btn-secondary btn-sm" onClick={() => setModalAct(null)}>Cancelar</button>
+                  <button className="btn btn-primary btn-sm" onClick={guardar}>Guardar</button>
+                </div>
               </div>
             </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary btn-sm" onClick={() => setModalProy(null)}>Cancelar</button>
-              <button className="btn btn-primary btn-sm" disabled={saving} onClick={guardarProyecto}>
-                {saving ? 'Guardando...' : 'Guardar'}
-              </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── TabFusionador ────────────────────────────────────────────────────────────
+  function TabFusionador() {
+    function cargar() {
+      setLegadoLoad(true)
+      api.get('/rrhh/proyectos-legado')
+        .then(r => setLegado(r.data))
+        .catch(() => {})
+        .finally(() => setLegadoLoad(false))
+    }
+    // Cargar la primera vez que se muestra
+    if (legado.length === 0 && !legadoLoad) cargar()
+
+    function fusionar(id) {
+      const nuevo = fusSelect[id]
+      if (!nuevo) { alert('Seleccioná un proyecto de destino'); return }
+      if (!confirm('¿Fusionar? Todos los registros con ese nombre legado van a apuntar al proyecto seleccionado.')) return
+      api.post(`/rrhh/proyectos-legado/${id}/fusionar`, { proyecto_id_nuevo: nuevo })
+        .then(r => {
+          alert(`Fusionado. ${r.data.registros_actualizados} registros actualizados.`)
+          setLegado(prev => prev.filter(p => p.id !== id))
+        })
+        .catch(e => alert(e.response?.data?.error || 'Error al fusionar'))
+    }
+
+    function conservar(id, nombre) {
+      if (!confirm(`¿Conservar el nombre "${nombre}"? Va a quedar como está, sin cambios en los registros.`)) return
+      api.post(`/rrhh/proyectos-legado/${id}/conservar`)
+        .then(() => setLegado(prev => prev.filter(p => p.id !== id)))
+        .catch(e => alert(e.response?.data?.error || 'Error'))
+    }
+
+    const pendientes = legado.filter(p => !p.revisado)
+
+    return (
+      <div>
+        <div className="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <h6 className="mb-0 fw-semibold">Proyectos legado sin resolver</h6>
+            <small className="text-muted">Nombres importados que aún no fueron mapeados a un proyecto del módulo</small>
+          </div>
+          <button className="btn btn-outline-secondary btn-sm" onClick={cargar} disabled={legadoLoad}>
+            <i className="bi bi-arrow-clockwise me-1"/>{legadoLoad ? 'Cargando...' : 'Actualizar'}
+          </button>
+        </div>
+
+        {legadoLoad && <div className="text-center py-4"><span className="spinner-border text-primary"/></div>}
+
+        {!legadoLoad && pendientes.length === 0 && (
+          <div className="alert alert-success">
+            <i className="bi bi-check-circle me-2"/>Todos los proyectos legado fueron resueltos.
+          </div>
+        )}
+
+        {!legadoLoad && pendientes.length > 0 && (
+          <div className="table-responsive">
+            <table className="table table-sm table-hover align-middle">
+              <thead className="table-dark">
+                <tr>
+                  <th>Nombre legado</th>
+                  <th className="text-center">Registros</th>
+                  <th>Desde</th>
+                  <th>Hasta</th>
+                  <th style={{minWidth:220}}>Fusionar con proyecto activo</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendientes.map(p => (
+                  <tr key={p.id}>
+                    <td className="fw-semibold">{p.nombre}</td>
+                    <td className="text-center">
+                      <span className="badge bg-secondary">{p.total_registros}</span>
+                    </td>
+                    <td className="text-nowrap small">{p.fecha_desde || '—'}</td>
+                    <td className="text-nowrap small">{p.fecha_hasta || '—'}</td>
+                    <td>
+                      <select className="form-select form-select-sm"
+                        value={fusSelect[p.id] || ''}
+                        onChange={e => setFusSelect(prev => ({ ...prev, [p.id]: e.target.value }))}>
+                        <option value="">— seleccionar destino —</option>
+                        {proyectosMain.map(pa => (
+                          <option key={pa.id} value={pa.id}>
+                            {pa.codigo ? `${pa.codigo} — ${pa.nombre}` : pa.nombre}{pa.estado !== 'Activo' ? ` (${pa.estado})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="text-nowrap">
+                      <button className="btn btn-sm btn-primary me-1"
+                        disabled={!fusSelect[p.id]}
+                        onClick={() => fusionar(p.id)}>
+                        <i className="bi bi-arrow-left-right me-1"/>Fusionar
+                      </button>
+                      <button className="btn btn-sm btn-outline-secondary"
+                        onClick={() => conservar(p.id, p.nombre)}>
+                        <i className="bi bi-check me-1"/>Conservar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── TabActividades ───────────────────────────────────────────────────────────
+  function TabActividades() {
+    function guardarActividad() {
+      const m = modalAct
+      if (!m.nombre?.trim()) { alert('El nombre es obligatorio'); return }
+      setSaving(true)
+      const req = m.id
+        ? api.put(`/rrhh/actividades/${m.id}`, { nombre: m.nombre, activo: m.activo })
+        : api.post('/rrhh/actividades', { nombre: m.nombre })
+      req.then(() => { setModalAct(null); reloadActividades() })
+        .catch(e => alert(e.response?.data?.error || 'Error al guardar'))
+        .finally(() => setSaving(false))
+    }
+
+    const activas   = actividades.filter(a => a.activo)
+    const inactivas = actividades.filter(a => !a.activo)
+
+    return (
+      <div>
+        <div className="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <h6 className="mb-0 fw-semibold">Actividades internas</h6>
+            <small className="text-muted">Tareas generales que pueden seleccionarse en los partes</small>
+          </div>
+          <button className="btn btn-primary btn-sm"
+            onClick={() => setModalAct({ nombre: '', activo: 1 })}>
+            <i className="bi bi-plus-lg me-1"/>Nueva actividad
+          </button>
+        </div>
+
+        {actividades.length === 0 && (
+          <div className="text-center text-muted py-5">
+            <i className="bi bi-list-task fs-1 d-block mb-2"/>
+            No hay actividades cargadas
+          </div>
+        )}
+
+        {activas.length > 0 && (
+          <div className="card mb-3">
+            <div className="card-header py-2 fw-semibold small">Activas</div>
+            <div className="table-responsive">
+              <table className="table table-sm table-hover align-middle mb-0">
+                <tbody>
+                  {activas.map(a => (
+                    <tr key={a.id}>
+                      <td>{a.nombre}</td>
+                      <td className="text-end">
+                        <button className="btn btn-outline-secondary btn-sm me-1"
+                          onClick={() => setModalAct({ id: a.id, nombre: a.nombre, activo: a.activo })}>
+                          <i className="bi bi-pencil"/>
+                        </button>
+                        <button className="btn btn-outline-warning btn-sm"
+                          onClick={() => {
+                            if (!confirm(`¿Desactivar "${a.nombre}"?`)) return
+                            api.put(`/rrhh/actividades/${a.id}`, { nombre: a.nombre, activo: 0 })
+                              .then(() => reloadActividades())
+                              .catch(e => alert(e.response?.data?.error || 'Error'))
+                          }}>
+                          <i className="bi bi-pause-circle"/>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
+        )}
+
+        {inactivas.length > 0 && (
+          <div className="card">
+            <div className="card-header py-2 fw-semibold small text-muted">Inactivas</div>
+            <div className="table-responsive">
+              <table className="table table-sm table-hover align-middle mb-0">
+                <tbody>
+                  {inactivas.map(a => (
+                    <tr key={a.id} className="text-muted">
+                      <td>{a.nombre}</td>
+                      <td className="text-end">
+                        <button className="btn btn-outline-secondary btn-sm me-1"
+                          onClick={() => setModalAct({ id: a.id, nombre: a.nombre, activo: a.activo })}>
+                          <i className="bi bi-pencil"/>
+                        </button>
+                        <button className="btn btn-outline-success btn-sm"
+                          onClick={() => {
+                            api.put(`/rrhh/actividades/${a.id}`, { nombre: a.nombre, activo: 1 })
+                              .then(() => reloadActividades())
+                              .catch(e => alert(e.response?.data?.error || 'Error'))
+                          }}>
+                          <i className="bi bi-play-circle"/>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Modal actividad */}
+        {modalAct && (
+          <div className="modal show d-block" style={{background:'rgba(0,0,0,.4)'}}>
+            <div className="modal-dialog">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">{modalAct.id ? 'Editar actividad' : 'Nueva actividad'}</h5>
+                  <button className="btn-close" onClick={() => setModalAct(null)}/>
+                </div>
+                <div className="modal-body">
+                  <div className="mb-3">
+                    <label className="form-label fw-semibold small">Nombre</label>
+                    <input className="form-control" value={modalAct.nombre}
+                      onChange={e => setModalAct(p => ({ ...p, nombre: e.target.value }))}
+                      placeholder="Ej: MANTENIMIENTO INTERNO"
+                      autoFocus
+                    />
+                  </div>
+                  {modalAct.id && (
+                    <div className="form-check form-switch">
+                      <input className="form-check-input" type="checkbox" id="actSwitch"
+                        checked={!!modalAct.activo}
+                        onChange={e => setModalAct(p => ({ ...p, activo: e.target.checked ? 1 : 0 }))}/>
+                      <label className="form-check-label" htmlFor="actSwitch">Activa</label>
+                    </div>
+                  )}
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={() => setModalAct(null)}>Cancelar</button>
+                  <button className="btn btn-primary" onClick={guardarActividad} disabled={saving}>
+                    {saving ? <span className="spinner-border spinner-border-sm me-1"/> : null}
+                    Guardar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -1559,13 +1917,13 @@ export default function RRHH() {
               </div>
               <div>
                 <label className="form-label small mb-1 fw-semibold">Desde</label>
-                <input type="date" className="form-control form-control-sm"
-                  value={infDesde} onChange={e => setInfDesde(e.target.value)} />
+                <DateInput className="form-control form-control-sm"
+                  value={infDesde} onChange={v => setInfDesde(v)} />
               </div>
               <div>
                 <label className="form-label small mb-1 fw-semibold">Hasta</label>
-                <input type="date" className="form-control form-control-sm"
-                  value={infHasta} onChange={e => setInfHasta(e.target.value)} />
+                <DateInput className="form-control form-control-sm"
+                  value={infHasta} onChange={v => setInfHasta(v)} />
               </div>
               <div>
                 <label className="form-label small mb-1 fw-semibold">Empleado</label>
@@ -1687,7 +2045,9 @@ export default function RRHH() {
           { id:'asistencia', icon:'person-check',           label:'Asistencia'  },
           { id:'registros',  icon:'clock-history',          label:'Horas'       },
           { id:'empleados',  icon:'people',                  label:'Empleados'  },
-          { id:'proyectos',  icon:'kanban',                  label:'Proyectos'  },
+          { id:'proyectos',   icon:'kanban',                  label:'Proyectos'   },
+          { id:'actividades', icon:'list-task',              label:'Actividades' },
+          { id:'fusionador',  icon:'arrow-left-right',       label:'Fusionador'  },
           { id:'informes',   icon:'file-earmark-bar-graph', label:'Informes'    },
         ].map(t => (
           <li key={t.id} className="nav-item">
@@ -1705,12 +2065,13 @@ export default function RRHH() {
       {tab==='registros'  && TabRegistros()}
       {tab==='empleados'  && TabEmpleados()}
       {tab==='proyectos'  && TabProyectos()}
+      {tab==='actividades' && TabActividades()}
+      {tab==='fusionador' && TabFusionador()}
       {tab==='informes'   && TabInformes()}
 
       {/* Modales */}
       {ModalRegistro()}
       {ModalEmpleado()}
-      {ModalProyecto()}
       {ModalDispositivo()}
     </div>
   )

@@ -29,6 +29,7 @@ router.post('/login',
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '10h' }
     );
+    db.prepare('INSERT INTO login_log (usuario_id, ip) VALUES (?,?)').run(u.id, req.ip || '');
     const permisos = getPermisosEfectivos(u.id, u.rol);
     res.json({ token, usuario: { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, empleado_nombre: u.empleado_nombre || null, rrhh_empleado_id: u.rrhh_empleado_id || null, permisos } });
   }
@@ -42,6 +43,24 @@ router.get('/modulos', verificarToken, (req, res) => {
   res.json(MODULOS.map(m => ({ id: m, label: MODULOS_LABEL[m] ?? m, padre: submodulosMap[m] ?? null })));
 });
 
+router.post('/impersonate/:id', verificarToken, (req, res) => {
+  if (req.usuario?.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  const u = db.prepare(`
+    SELECT u.*, e.nombre AS empleado_nombre
+    FROM usuarios u
+    LEFT JOIN rrhh_empleados e ON e.id = u.rrhh_empleado_id
+    WHERE u.id=? AND u.activo=1
+  `).get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+  const token = jwt.sign(
+    { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || '10h' }
+  );
+  const permisos = getPermisosEfectivos(u.id, u.rol);
+  res.json({ token, usuario: { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, empleado_nombre: u.empleado_nombre || null, rrhh_empleado_id: u.rrhh_empleado_id || null, permisos } });
+});
+
 router.get('/me', verificarToken, (req, res) => {
   const u = db.prepare('SELECT id,username,nombre,email,rol FROM usuarios WHERE id=?').get(req.usuario.id);
   if (!u) return res.status(404).json({ error: 'No encontrado' });
@@ -53,11 +72,20 @@ router.get('/usuarios', verificarToken, (req, res) => {
     return res.status(403).json({ error: 'Sin permisos' });
   res.json(db.prepare(`
     SELECT u.id, u.username, u.nombre, u.email, u.rol, u.activo,
-           u.rrhh_empleado_id, e.nombre AS empleado_nombre
+           u.rrhh_empleado_id, e.nombre AS empleado_nombre,
+           (SELECT MAX(fecha) FROM login_log WHERE usuario_id = u.id) AS ultimo_login
     FROM usuarios u
     LEFT JOIN rrhh_empleados e ON e.id = u.rrhh_empleado_id
     ORDER BY u.nombre
   `).all());
+});
+
+router.get('/usuarios/:id/login-log', verificarToken, (req, res) => {
+  if (!['admin','gerencia'].includes(req.usuario.rol))
+    return res.status(403).json({ error: 'Sin permisos' });
+  res.json(db.prepare(`
+    SELECT id, fecha, ip FROM login_log WHERE usuario_id = ? ORDER BY fecha DESC LIMIT 200
+  `).all(req.params.id));
 });
 
 router.post('/usuarios', verificarToken,

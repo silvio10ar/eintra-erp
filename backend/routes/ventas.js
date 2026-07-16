@@ -29,13 +29,12 @@ router.get('/stats', verificarToken, (req, res) => {
 // ── Clientes ──────────────────────────────────────────────────────────────────
 
 router.get('/clientes', verificarToken, (req, res) => {
-  const { buscar, todos } = req.query;
-  const soloActivos = todos !== '1';
-  let where = soloActivos ? 'WHERE activo=1' : '';
+  const { buscar } = req.query;
+  let where = '';
   const params = [];
   if (buscar) {
     const b = buscarCondicion(buscar, ['nombre', 'cuit', 'codigo']);
-    where = soloActivos ? `WHERE (${b.cond}) AND activo=1` : `WHERE (${b.cond})`;
+    where = `WHERE (${b.cond})`;
     params.push(...b.params);
   }
   res.json(db.prepare(`SELECT * FROM clientes ${where} ORDER BY nombre`).all(...params));
@@ -45,10 +44,14 @@ router.post('/clientes', verificarToken, body('nombre').trim().notEmpty(), (req,
   if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
   const errs = validationResult(req);
   if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
-  const { nombre, cuit, contacto, telefono, email, direccion, localidad, cp, condicion_pago } = req.body;
+  const { nombre, codigo, cuit, contacto, telefono, email, direccion, localidad, cp, condicion_pago } = req.body;
+  const codigoNorm = (codigo||'').trim().toUpperCase();
+  if (codigoNorm && db.prepare('SELECT 1 FROM clientes WHERE codigo=?').get(codigoNorm)) {
+    return res.status(409).json({ error: `El código "${codigoNorm}" ya está en uso por otro cliente` });
+  }
   try {
-    const r = db.prepare('INSERT INTO clientes (nombre,cuit,contacto,telefono,email,direccion,localidad,cp,condicion_pago) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(nombre, cuit||'', contacto||'', telefono||'', email||'', direccion||'', localidad||'', cp||'', condicion_pago||'');
+    const r = db.prepare('INSERT INTO clientes (nombre,codigo,cuit,contacto,telefono,email,direccion,localidad,cp,condicion_pago) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(nombre, codigoNorm, cuit||'', contacto||'', telefono||'', email||'', direccion||'', localidad||'', cp||'', condicion_pago||'');
     res.status(201).json(db.prepare('SELECT * FROM clientes WHERE id=?').get(r.lastInsertRowid));
   } catch(e) {
     if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'El cliente ya existe' });
@@ -60,9 +63,14 @@ router.put('/clientes/:id', verificarToken, (req, res) => {
   if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
   const c = db.prepare('SELECT * FROM clientes WHERE id=?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'No encontrado' });
-  const { nombre, cuit, contacto, telefono, email, direccion, localidad, cp, condicion_pago } = req.body;
-  db.prepare('UPDATE clientes SET nombre=?,cuit=?,contacto=?,telefono=?,email=?,direccion=?,localidad=?,cp=?,condicion_pago=? WHERE id=?')
-    .run(nombre??c.nombre, cuit??c.cuit, contacto??c.contacto, telefono??c.telefono,
+  const { nombre, codigo, cuit, contacto, telefono, email, direccion, localidad, cp, condicion_pago } = req.body;
+  const codigoNorm = codigo != null ? codigo.trim().toUpperCase() : c.codigo;
+  if (codigoNorm && codigoNorm !== c.codigo) {
+    const otro = db.prepare('SELECT 1 FROM clientes WHERE codigo=? AND id!=?').get(codigoNorm, req.params.id);
+    if (otro) return res.status(409).json({ error: `El código "${codigoNorm}" ya está en uso por otro cliente` });
+  }
+  db.prepare('UPDATE clientes SET nombre=?,codigo=?,cuit=?,contacto=?,telefono=?,email=?,direccion=?,localidad=?,cp=?,condicion_pago=? WHERE id=?')
+    .run(nombre??c.nombre, codigoNorm, cuit??c.cuit, contacto??c.contacto, telefono??c.telefono,
          email??c.email, direccion??c.direccion, localidad??c.localidad, cp??c.cp,
          condicion_pago??c.condicion_pago, req.params.id);
   res.json(db.prepare('SELECT * FROM clientes WHERE id=?').get(req.params.id));
@@ -72,9 +80,17 @@ router.delete('/clientes/:id', verificarToken, (req, res) => {
   if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
   const c = db.prepare('SELECT * FROM clientes WHERE id=?').get(req.params.id);
   if (!c) return res.status(404).json({ error: 'No encontrado' });
-  const nuevoActivo = c.activo ? 0 : 1;
-  db.prepare('UPDATE clientes SET activo=? WHERE id=?').run(nuevoActivo, req.params.id);
-  res.json({ ok: true, activo: nuevoActivo });
+
+  const tienePpto  = db.prepare('SELECT 1 FROM presupuestos WHERE cliente_id=? LIMIT 1').get(c.id)
+  const tieneFact  = db.prepare('SELECT 1 FROM facturas_venta WHERE cliente_id=? LIMIT 1').get(c.id)
+  const tieneProy  = db.prepare('SELECT 1 FROM proyectos WHERE cliente_id=? LIMIT 1').get(c.id)
+
+  if (tienePpto || tieneFact || tieneProy) {
+    return res.status(409).json({ error: 'El cliente tiene presupuestos, facturas o proyectos asociados. Reasigná esos registros antes de eliminarlo.' })
+  }
+
+  db.prepare('DELETE FROM clientes WHERE id=?').run(c.id);
+  res.json({ ok: true });
 });
 
 // ── Presupuestos ──────────────────────────────────────────────────────────────

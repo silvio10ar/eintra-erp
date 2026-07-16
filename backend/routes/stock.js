@@ -107,20 +107,17 @@ router.get('/movimientos', verificarToken, (req, res) => {
   if (desde)       { conds.push('m.fecha>=?');          params.push(desde); }
   if (hasta)       { conds.push('m.fecha<=?');          params.push(hasta); }
   if (campo && valor) {
-    const v = `%${valor}%`;
-    const mapa = {
-      codigo:          'm_p.codigo LIKE ?',
-      descripcion:     'm_p.descripcion LIKE ?',
-      proveedor:       'm.proveedor LIKE ?',
-      proyecto:        'm.proyecto LIKE ?',
-      cliente_interno: 'm.cliente_interno LIKE ?',
-      observaciones:   'm.observaciones LIKE ?',
+    const mapaCols = {
+      codigo:          'm_p.codigo',
+      descripcion:     'm_p.descripcion',
+      proveedor:       'm.proveedor',
+      proyecto:        'm.proyecto',
+      cliente_interno: 'm.cliente_interno',
+      observaciones:   'm.observaciones',
     };
-    if (mapa[campo]) { conds.push(mapa[campo]); params.push(v); }
-    else {
-      conds.push('(m_p.codigo LIKE ? OR m_p.descripcion LIKE ? OR m.proveedor LIKE ? OR m.proyecto LIKE ? OR m.cliente_interno LIKE ?)');
-      params.push(v,v,v,v,v);
-    }
+    const col = mapaCols[campo];
+    const bc = buscarCondicion(valor, col ? [col] : ['m_p.codigo','m_p.descripcion','m.proveedor','m.proyecto','m.cliente_interno']);
+    conds.push(bc.cond); params.push(...bc.params);
   }
   const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';
   const offset = (parseInt(page)-1)*parseInt(limit);
@@ -213,12 +210,11 @@ router.get('/exportar-historial', verificarToken, (req, res) => {
   if (desde) { conds.push('m.fecha>=?'); params.push(desde); }
   if (hasta) { conds.push('m.fecha<=?'); params.push(hasta); }
   if (campo && valor) {
-    const v = `%${valor}%`;
-    const mapa = { codigo:'m_p.codigo LIKE ?', descripcion:'m_p.descripcion LIKE ?',
-      proveedor:'m.proveedor LIKE ?', proyecto:'m.proyecto LIKE ?',
-      cliente_interno:'m.cliente_interno LIKE ?' };
-    if (mapa[campo]) { conds.push(mapa[campo]); params.push(v); }
-    else { conds.push('(m_p.codigo LIKE ? OR m_p.descripcion LIKE ? OR m.proveedor LIKE ? OR m.proyecto LIKE ? OR m.cliente_interno LIKE ?)'); params.push(v,v,v,v,v); }
+    const mapaCols = { codigo:'m_p.codigo', descripcion:'m_p.descripcion',
+      proveedor:'m.proveedor', proyecto:'m.proyecto', cliente_interno:'m.cliente_interno' };
+    const col = mapaCols[campo];
+    const bc = buscarCondicion(valor, col ? [col] : ['m_p.codigo','m_p.descripcion','m.proveedor','m.proyecto','m.cliente_interno']);
+    conds.push(bc.cond); params.push(...bc.params);
   }
   const where = conds.length ? 'WHERE '+conds.join(' AND ') : '';
   const movs = db.prepare(`
@@ -369,6 +365,49 @@ router.delete('/ingresos-pendientes/:id', verificarToken, (req, res) => {
   const row = db.prepare('SELECT * FROM ingresos_pendientes WHERE id=?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'No encontrado' });
   db.prepare('DELETE FROM ingresos_pendientes WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ── Ingresos pendientes SIN OC ────────────────────────────────────────────────
+
+router.get('/ingresos-sin-oc-pendientes', verificarToken, (req, res) => {
+  const rows = db.prepare(`
+    SELECT ip.*, p.stock_actual, p.codigo as producto_codigo_actual, p.descripcion as producto_desc_actual
+    FROM ingresos_sin_oc_pendientes ip
+    LEFT JOIN productos p ON p.id = ip.producto_id
+    ORDER BY ip.created_at ASC
+  `).all();
+  res.json(rows);
+});
+
+router.post('/ingresos-sin-oc-pendientes/:id/confirmar', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const row = db.prepare('SELECT * FROM ingresos_sin_oc_pendientes WHERE id=?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'No encontrado' });
+  const { producto_id } = req.body;
+  const pid = producto_id || row.producto_id;
+  if (!pid) return res.status(400).json({ error: 'Se requiere seleccionar un producto del catálogo' });
+  const prod = db.prepare('SELECT * FROM productos WHERE id=?').get(pid);
+  if (!prod) return res.status(404).json({ error: 'Producto no encontrado' });
+  const hoyStr = new Date().toISOString().slice(0,10);
+  db.transaction(() => {
+    db.prepare("UPDATE productos SET stock_actual=stock_actual+?, updated_at=datetime('now','localtime') WHERE id=?")
+      .run(row.cantidad, pid);
+    db.prepare(`INSERT INTO movimientos_stock
+      (producto_id,tipo,cantidad,fecha,referencia,tipo_doc,doc_id,precio_unit,observaciones,created_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(pid, 'entrada', row.cantidad, hoyStr,
+           row.form49_numero, 'form49', row.form49_id, row.precio_costo||0,
+           `Ingreso sin OC ${row.form49_numero} — ${row.descripcion}`,
+           req.usuario.id);
+    db.prepare('DELETE FROM ingresos_sin_oc_pendientes WHERE id=?').run(row.id);
+  })();
+  res.json({ ok: true });
+});
+
+router.delete('/ingresos-sin-oc-pendientes/:id', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permisos' });
+  db.prepare('DELETE FROM ingresos_sin_oc_pendientes WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 

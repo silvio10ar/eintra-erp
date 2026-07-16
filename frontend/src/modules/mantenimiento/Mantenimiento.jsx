@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import api from '../../api/client'
 import { puedeEscribir, getUser } from '../../store/authStore'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
+import DateInput from '../../components/DateInput'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -949,7 +950,7 @@ export default function Mantenimiento() {
                     <div className="row g-3">
                       <div className="col-md-6">
                         <label className="form-label fw-semibold">Fecha *</label>
-                        <input type="date" className="form-control" value={formEjec.fecha} onChange={e => setFormEjec(f => ({ ...f, fecha: e.target.value }))} />
+                        <DateInput className="form-control" value={formEjec.fecha} onChange={v => setFormEjec(f => ({ ...f, fecha: v }))} />
                       </div>
                       <div className="col-md-6">
                         <label className="form-label fw-semibold">Resultado *</label>
@@ -1090,11 +1091,11 @@ export default function Mantenimiento() {
                     </div>
                     <div className="col-md-6">
                       <label className="form-label fw-semibold">Fecha detección *</label>
-                      <input type="date" className="form-control" value={formCo.fecha_deteccion} onChange={e => setFormCo(f => ({ ...f, fecha_deteccion: e.target.value }))} />
+                      <DateInput className="form-control" value={formCo.fecha_deteccion} onChange={v => setFormCo(f => ({ ...f, fecha_deteccion: v }))} />
                     </div>
                     <div className="col-md-6">
                       <label className="form-label">Fecha inicio reparación</label>
-                      <input type="date" className="form-control" value={formCo.fecha_inicio} onChange={e => setFormCo(f => ({ ...f, fecha_inicio: e.target.value }))} />
+                      <DateInput className="form-control" value={formCo.fecha_inicio} onChange={v => setFormCo(f => ({ ...f, fecha_inicio: v }))} />
                     </div>
                     <div className="col-12">
                       <label className="form-label fw-semibold">Descripción de la falla *</label>
@@ -1148,7 +1149,7 @@ export default function Mantenimiento() {
                   <div className="row g-3">
                     <div className="col-md-6">
                       <label className="form-label">Fecha fin</label>
-                      <input type="date" className="form-control" value={formCierre.fecha_fin} onChange={e => setFormCierre(f => ({ ...f, fecha_fin: e.target.value }))} />
+                      <DateInput className="form-control" value={formCierre.fecha_fin} onChange={v => setFormCierre(f => ({ ...f, fecha_fin: v }))} />
                     </div>
                     <div className="col-md-6">
                       <label className="form-label fw-semibold">Resultado *</label>
@@ -1258,14 +1259,14 @@ export default function Mantenimiento() {
             </select>
           </div>
           <div className="col-md-2">
-            <input type="date" className="form-control" title="Desde"
+            <DateInput className="form-control" title="Desde"
               value={filtHistInsp.desde}
-              onChange={e => setFiltHistInsp(f => ({ ...f, desde: e.target.value }))} />
+              onChange={v => setFiltHistInsp(f => ({ ...f, desde: v }))} />
           </div>
           <div className="col-md-2">
-            <input type="date" className="form-control" title="Hasta"
+            <DateInput className="form-control" title="Hasta"
               value={filtHistInsp.hasta}
-              onChange={e => setFiltHistInsp(f => ({ ...f, hasta: e.target.value }))} />
+              onChange={v => setFiltHistInsp(f => ({ ...f, hasta: v }))} />
           </div>
           <div className="col-md-1">
             <button className="btn btn-outline-secondary w-100" onClick={cargarHistorialInspecciones}>

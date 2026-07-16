@@ -7,6 +7,28 @@ const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
 
+// ── Plazo de entrega: OC única o por ítem, calculado en días desde la fecha de OC ──
+function sumarDias(fechaISO, dias) {
+  if (!fechaISO || dias == null || dias === '') return '';
+  const [y, m, d] = fechaISO.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + parseInt(dias, 10));
+  return dt.toISOString().slice(0, 10);
+}
+
+function calcularFechaEntregaOC(fecha, modo_plazo, dias_plazo, items, fallback) {
+  if (modo_plazo === 'ITEM') {
+    const conPlazo = (items || []).filter(it => it.dias_plazo != null && it.dias_plazo !== '');
+    const pendientes = conPlazo.filter(it => (Number(it.cant_recibida) || 0) < (Number(it.cantidad) || 0));
+    const base = pendientes.length ? pendientes : conPlazo;
+    if (!base.length) return fallback || '';
+    const fechas = base.map(it => sumarDias(fecha, it.dias_plazo)).sort();
+    return pendientes.length ? fechas[0] : fechas[fechas.length - 1];
+  }
+  if (dias_plazo != null && dias_plazo !== '') return sumarDias(fecha, dias_plazo);
+  return fallback || '';
+}
+
 // ── Proveedores ────────────────────────────────────────────────────────────────
 
 router.get('/proveedores', verificarToken, (req, res) => {
@@ -19,7 +41,7 @@ router.get('/proveedores', verificarToken, (req, res) => {
     where = soloActivos ? `WHERE (${b.cond}) AND activo=1` : `WHERE (${b.cond})`;
     params.push(...b.params);
   }
-  res.json(db.prepare(`SELECT * FROM proveedores ${where} ORDER BY nombre`).all(...params));
+  res.json(db.prepare(`SELECT * FROM proveedores ${where} ORDER BY nombre COLLATE NOCASE`).all(...params));
 });
 
 const puedeEscribirAdmin = (req) => req.usuario?.rol === 'admin' || req.permisos?.compras?.escribir || req.permisos?.administracion?.escribir;
@@ -85,15 +107,200 @@ router.post('/proveedores/fusionar', verificarToken, (req, res) => {
           .run(master_id, masterNombre, dup.nombre, master_id);
       }
     }
-    // Desactivar duplicados
+    // Eliminar duplicados — sus datos ya fueron reasignados al maestro
     for (const dup_id of duplicados) {
-      db.prepare('UPDATE proveedores SET activo=0 WHERE id=?').run(dup_id);
+      db.prepare('DELETE FROM proveedores WHERE id=?').run(dup_id);
     }
   })();
 
   const oc_reasignadas = db.prepare('SELECT COUNT(*) as c FROM ordenes_compra WHERE proveedor_id=?').get(master_id).c;
   res.json({ ok: true, oc_reasignadas });
 });
+
+// ── GET: todos los nombres de proveedores de todos los módulos ────────────────
+// ── GET: detalle de documentos que referencian un nombre de proveedor ─────────
+router.get('/proveedores/fusiones/detalle', verificarToken, (req, res) => {
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const { nombre } = req.query
+  if (!nombre) return res.status(400).json({ error: 'nombre requerido' })
+  const n = nombre.trim()
+
+  const oc = db.prepare(`SELECT numero, fecha, estado FROM ordenes_compra WHERE trim(proveedor_nombre)=? ORDER BY id DESC LIMIT 20`).all(n)
+  const f49 = db.prepare(`SELECT numero, fecha FROM form49_ingresos WHERE trim(proveedor_nombre)=? ORDER BY id DESC LIMIT 20`).all(n)
+  let fact = []
+  try { fact = db.prepare(`SELECT nro_factura, fecha, total FROM facturas_compra WHERE trim(proveedor_nombre)=? ORDER BY id DESC LIMIT 20`).all(n) } catch(_) {}
+  let prod = []
+  try { prod = db.prepare(`SELECT codigo, descripcion FROM productos WHERE trim(proveedor)=? LIMIT 20`).all(n) } catch(_) {}
+  let mov = []
+  try { mov = db.prepare(`SELECT id, fecha, tipo FROM movimientos_stock WHERE trim(proveedor)=? ORDER BY id DESC LIMIT 10`).all(n) } catch(_) {}
+
+  res.json({ oc, f49, fact, prod, mov })
+})
+
+router.get('/proveedores/fusiones/todos', verificarToken, (req, res) => {
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+
+  // 1. Maestro (solo activos — los inactivos son duplicados ya procesados)
+  const maestro = db.prepare('SELECT id, nombre, cuit, activo FROM proveedores WHERE activo=1').all()
+  const mapaId  = {}   // nombre_norm -> { id, cuit, activo }
+  for (const p of maestro) {
+    const k = p.nombre.trim().toUpperCase()
+    mapaId[k] = { id: p.id, cuit: p.cuit, activo: p.activo, nombre_real: p.nombre }
+  }
+
+  // 2. Fuentes de texto libre (col_cuit = columna con el CUIT si la tabla lo guarda)
+  const FUENTES = [
+    { tabla: 'ordenes_compra',                    col: 'proveedor_nombre',  etiqueta: 'Compras/OC',    col_cuit: 'proveedor_cuit' },
+    { tabla: 'form49_ingresos',                   col: 'proveedor_nombre',  etiqueta: 'Ingr.s/OC',     col_cuit: 'proveedor_cuit' },
+    { tabla: 'facturas_compra',                   col: 'proveedor_nombre',  etiqueta: 'Facturas',      col_cuit: 'proveedor_cuit' },
+    { tabla: 'productos',                         col: 'proveedor',         etiqueta: 'Stock',         col_cuit: null },
+    { tabla: 'movimientos_stock',                 col: 'proveedor',         etiqueta: 'Movim.',        col_cuit: null },
+    { tabla: 'mant_intervenciones_correctivas',   col: 'proveedor',         etiqueta: 'Mantenimiento', col_cuit: null },
+    { tabla: 'ingresos_pendientes',               col: 'proveedor_nombre',  etiqueta: 'Ing.Pend.',     col_cuit: null },
+    { tabla: 'ingresos_sin_oc_pendientes',        col: 'proveedor_nombre',  etiqueta: 'Ing.Sin OC',    col_cuit: null },
+  ]
+
+  // mapa nombre_upper → fuentes[]
+  const fuentesPor = {}
+  // mapa nombre_upper → cuit encontrado en tablas de texto
+  const cuitsPor   = {}
+
+  // Del maestro
+  for (const p of maestro) {
+    const k = p.nombre.trim().toUpperCase()
+    if (!fuentesPor[k]) fuentesPor[k] = new Set()
+    fuentesPor[k].add('Maestro')
+  }
+
+  // De cada tabla
+  for (const { tabla, col, etiqueta, col_cuit } of FUENTES) {
+    let rows
+    try {
+      const selectCuit = col_cuit ? `, "${col_cuit}" as cuit` : ''
+      rows = db.prepare(`SELECT "${col}" as n${selectCuit} FROM "${tabla}" WHERE "${col}" IS NOT NULL AND trim("${col}") != ''`).all()
+    } catch (_) { continue }
+    for (const row of rows) {
+      const k = (row.n || '').trim().toUpperCase()
+      if (!k) continue
+      if (!fuentesPor[k]) fuentesPor[k] = new Set()
+      fuentesPor[k].add(etiqueta)
+      // Guardar el primer CUIT no vacío que encontremos para este proveedor
+      if (row.cuit && row.cuit.trim() && !cuitsPor[k]) {
+        cuitsPor[k] = row.cuit.trim()
+      }
+    }
+  }
+
+  // Armar lista de todos los nombres únicos (usando el nombre real del maestro si existe)
+  const nombresReales = {}  // nombre_upper -> nombre como figura en el maestro o como texto
+  for (const p of maestro) nombresReales[p.nombre.trim().toUpperCase()] = p.nombre.trim()
+
+  for (const { tabla, col } of FUENTES) {
+    let rows
+    try { rows = db.prepare(`SELECT DISTINCT "${col}" as n FROM "${tabla}" WHERE "${col}" IS NOT NULL AND trim("${col}") != ''`).all() }
+    catch (_) { continue }
+    for (const { n } of rows) {
+      const k = n.trim().toUpperCase()
+      if (k && !nombresReales[k]) nombresReales[k] = n.trim()
+    }
+  }
+
+  const resultado = Object.keys(fuentesPor)
+    .sort((a, b) => a.localeCompare(b, 'es'))
+    .map(k => {
+      const m = mapaId[k]
+      // CUIT: del maestro primero, sino de las tablas de texto
+      const cuit = m?.cuit || cuitsPor[k] || ''
+      return {
+        nombre:       nombresReales[k] || k,
+        nombre_upper: k,
+        proveedor_id: m?.id    ?? null,
+        cuit,
+        activo:       m?.activo ?? null,
+        fuentes:      [...fuentesPor[k]].sort(),
+      }
+    })
+
+  res.json(resultado)
+})
+
+// ── POST: fusión completa (maestro + texto libre) ─────────────────────────────
+// body: { master_id, nombre_canon, cuit, duplicados_ids, nombres_texto }
+//   master_id: id canónico en proveedores (null → se crea nuevo)
+//   nombre_canon: nombre final del canónico
+//   duplicados_ids: [ids de proveedores a desactivar y reasignar]
+//   nombres_texto: [nombres de texto libre a reasignar al canónico]
+router.post('/proveedores/fusiones/aplicar', verificarToken, (req, res) => {
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  let { master_id, nombre_canon, cuit, duplicados_ids = [], nombres_texto = [] } = req.body
+  if (!nombre_canon?.trim()) return res.status(400).json({ error: 'nombre_canon requerido' })
+  nombre_canon = nombre_canon.trim()
+
+  const stats = { creado: false, oc: 0, form49: 0, facturas: 0, evaluaciones: 0, productos: 0, movimientos: 0, mant: 0, ing_pend: 0 }
+
+  db.transaction(() => {
+    // 1. Crear o actualizar el canónico
+    if (!master_id) {
+      const existe = db.prepare('SELECT id FROM proveedores WHERE nombre=?').get(nombre_canon)
+      if (existe) {
+        master_id = existe.id
+      } else {
+        const r = db.prepare('INSERT INTO proveedores (nombre, cuit, activo) VALUES (?,?,1)')
+          .run(nombre_canon, cuit || '')
+        master_id = r.lastInsertRowid
+        stats.creado = true
+      }
+    } else {
+      db.prepare('UPDATE proveedores SET nombre=?, cuit=COALESCE(NULLIF(?,\'\'), cuit), activo=1 WHERE id=?')
+        .run(nombre_canon, cuit || '', master_id)
+    }
+
+    // 2. Reasignar FK de duplicados_ids → master_id en todas las tablas, luego ELIMINAR el duplicado
+    for (const dup_id of duplicados_ids) {
+      stats.oc        += db.prepare('UPDATE ordenes_compra SET proveedor_id=?, proveedor_nombre=? WHERE proveedor_id=?').run(master_id, nombre_canon, dup_id).changes
+      stats.form49    += db.prepare('UPDATE form49_ingresos SET proveedor_id=?, proveedor_nombre=? WHERE proveedor_id=?').run(master_id, nombre_canon, dup_id).changes
+      stats.facturas  += db.prepare('UPDATE facturas_compra SET proveedor_id=?, proveedor_nombre=? WHERE proveedor_id=?').run(master_id, nombre_canon, dup_id).changes
+      stats.evaluaciones += db.prepare('UPDATE evaluaciones_proveedor SET proveedor_id=? WHERE proveedor_id=?').run(master_id, dup_id).changes
+      // Eliminar el duplicado — ya no tiene datos asociados
+      db.prepare('DELETE FROM proveedores WHERE id=?').run(dup_id)
+    }
+
+    // 3. Actualizar campos de texto libre con los nombres a fusionar
+    const todosNombres = [
+      ...nombres_texto,
+      ...duplicados_ids.map(id => {
+        const p = db.prepare('SELECT nombre FROM proveedores WHERE id=?').get(id)
+        return p?.nombre
+      }).filter(Boolean)
+    ]
+
+    for (const nom of todosNombres) {
+      if (!nom) continue
+      stats.oc        += db.prepare('UPDATE ordenes_compra SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(nombre_canon, nom).changes
+      stats.form49    += db.prepare('UPDATE form49_ingresos SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(nombre_canon, nom).changes
+      stats.facturas  += db.prepare('UPDATE facturas_compra SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(nombre_canon, nom).changes
+      stats.productos  += db.prepare('UPDATE productos SET proveedor=? WHERE lower(trim(proveedor))=lower(?)').run(nombre_canon, nom).changes
+      stats.movimientos += db.prepare('UPDATE movimientos_stock SET proveedor=? WHERE lower(trim(proveedor))=lower(?)').run(nombre_canon, nom).changes
+      stats.mant       += db.prepare('UPDATE mant_intervenciones_correctivas SET proveedor=? WHERE lower(trim(proveedor))=lower(?)').run(nombre_canon, nom).changes
+      stats.ing_pend   += db.prepare('UPDATE ingresos_pendientes SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(nombre_canon, nom).changes
+      try { db.prepare('UPDATE ingresos_sin_oc_pendientes SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(nombre_canon, nom) } catch (_) {}
+    }
+
+    // 4. Actualizar también campos de texto del maestro por su nombre anterior
+    // (por si el nombre_canon cambió respecto al master_id original)
+    const anteriorMaestro = db.prepare('SELECT nombre FROM proveedores WHERE id=?').get(master_id)
+    if (anteriorMaestro && anteriorMaestro.nombre !== nombre_canon) {
+      const viejoNombre = anteriorMaestro.nombre
+      db.prepare('UPDATE ordenes_compra SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(nombre_canon, viejoNombre)
+      db.prepare('UPDATE form49_ingresos SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(nombre_canon, viejoNombre)
+      db.prepare('UPDATE facturas_compra SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(nombre_canon, viejoNombre)
+      db.prepare('UPDATE productos SET proveedor=? WHERE lower(trim(proveedor))=lower(?)').run(nombre_canon, viejoNombre)
+      db.prepare('UPDATE movimientos_stock SET proveedor=? WHERE lower(trim(proveedor))=lower(?)').run(nombre_canon, viejoNombre)
+    }
+  })()
+
+  res.json({ ok: true, master_id, stats })
+})
 
 router.put('/proveedores/:id', verificarToken, (req, res) => {
   if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
@@ -112,6 +319,62 @@ router.put('/proveedores/:id', verificarToken, (req, res) => {
   res.json(db.prepare('SELECT * FROM proveedores WHERE id=?').get(req.params.id));
 });
 
+// ── POST: limpiar inactivos huérfanos (sin datos asociados) ──────────────────
+router.post('/proveedores/fusiones/limpiar-inactivos', verificarToken, (req, res) => {
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+
+  const inactivos = db.prepare('SELECT id, nombre, cuit FROM proveedores WHERE activo=0').all()
+  let eliminados = 0
+  const noEliminados = []
+
+  db.transaction(() => {
+    for (const p of inactivos) {
+      const tieneOC   = db.prepare('SELECT 1 FROM ordenes_compra WHERE proveedor_id=? LIMIT 1').get(p.id)
+      const tieneF49  = db.prepare('SELECT 1 FROM form49_ingresos WHERE proveedor_id=? LIMIT 1').get(p.id)
+      const tieneFact = db.prepare('SELECT 1 FROM facturas_compra WHERE proveedor_id=? LIMIT 1').get(p.id)
+      const tieneEval = db.prepare('SELECT 1 FROM evaluaciones_proveedor WHERE proveedor_id=? LIMIT 1').get(p.id)
+      const tieneDatos = tieneOC || tieneF49 || tieneFact || tieneEval
+
+      if (!tieneDatos) {
+        db.prepare('DELETE FROM proveedores WHERE id=?').run(p.id)
+        eliminados++
+        continue
+      }
+
+      // Tiene datos: buscar contraparte activa por CUIT
+      let activo = null
+      if (p.cuit && p.cuit.trim()) {
+        activo = db.prepare('SELECT id, nombre FROM proveedores WHERE activo=1 AND cuit=? AND id!=? LIMIT 1').get(p.cuit.trim(), p.id)
+      }
+
+      if (!activo) {
+        noEliminados.push(p.nombre)
+        continue
+      }
+
+      // Reasignar todos los FK al activo
+      db.prepare('UPDATE ordenes_compra SET proveedor_id=?, proveedor_nombre=? WHERE proveedor_id=?').run(activo.id, activo.nombre, p.id)
+      db.prepare('UPDATE form49_ingresos SET proveedor_id=?, proveedor_nombre=? WHERE proveedor_id=?').run(activo.id, activo.nombre, p.id)
+      db.prepare('UPDATE facturas_compra SET proveedor_id=?, proveedor_nombre=? WHERE proveedor_id=?').run(activo.id, activo.nombre, p.id)
+      db.prepare('UPDATE evaluaciones_proveedor SET proveedor_id=? WHERE proveedor_id=?').run(activo.id, p.id)
+      // Reasignar también los nombres en texto libre que aún apunten al nombre inactivo
+      db.prepare('UPDATE ordenes_compra SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(activo.nombre, p.nombre.trim())
+      db.prepare('UPDATE form49_ingresos SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(activo.nombre, p.nombre.trim())
+      db.prepare('UPDATE facturas_compra SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(activo.nombre, p.nombre.trim())
+      db.prepare('UPDATE productos SET proveedor=? WHERE lower(trim(proveedor))=lower(?)').run(activo.nombre, p.nombre.trim())
+      db.prepare('UPDATE movimientos_stock SET proveedor=? WHERE lower(trim(proveedor))=lower(?)').run(activo.nombre, p.nombre.trim())
+      db.prepare('UPDATE mant_intervenciones_correctivas SET proveedor=? WHERE lower(trim(proveedor))=lower(?)').run(activo.nombre, p.nombre.trim())
+      try { db.prepare('UPDATE ingresos_pendientes SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(activo.nombre, p.nombre.trim()) } catch (_) {}
+      try { db.prepare('UPDATE ingresos_sin_oc_pendientes SET proveedor_nombre=? WHERE lower(trim(proveedor_nombre))=lower(?)').run(activo.nombre, p.nombre.trim()) } catch (_) {}
+
+      db.prepare('DELETE FROM proveedores WHERE id=?').run(p.id)
+      eliminados++
+    }
+  })()
+
+  res.json({ eliminados, noEliminados })
+})
+
 router.delete('/proveedores/:id', verificarToken, (req, res) => {
   if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
   const p = db.prepare('SELECT * FROM proveedores WHERE id=?').get(req.params.id);
@@ -119,6 +382,25 @@ router.delete('/proveedores/:id', verificarToken, (req, res) => {
   const nuevoActivo = p.activo ? 0 : 1;
   db.prepare('UPDATE proveedores SET activo=? WHERE id=?').run(nuevoActivo, req.params.id);
   res.json({ ok: true, activo: nuevoActivo });
+});
+
+// Borrado definitivo — solo si no tiene datos asociados
+router.delete('/proveedores/:id/borrar', verificarToken, (req, res) => {
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const p = db.prepare('SELECT * FROM proveedores WHERE id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'No encontrado' });
+
+  const tieneOC   = db.prepare('SELECT 1 FROM ordenes_compra WHERE proveedor_id=? LIMIT 1').get(p.id)
+  const tieneF49  = db.prepare('SELECT 1 FROM form49_ingresos WHERE proveedor_id=? LIMIT 1').get(p.id)
+  const tieneFact = db.prepare('SELECT 1 FROM facturas_compra WHERE proveedor_id=? LIMIT 1').get(p.id)
+  const tieneEval = db.prepare('SELECT 1 FROM evaluaciones_proveedor WHERE proveedor_id=? LIMIT 1').get(p.id)
+
+  if (tieneOC || tieneF49 || tieneFact || tieneEval) {
+    return res.status(409).json({ error: 'El proveedor tiene documentos asociados (OC, facturas o evaluaciones). Usá Fusión de proveedores para reasignarlos antes de eliminar.' })
+  }
+
+  db.prepare('DELETE FROM proveedores WHERE id=?').run(p.id)
+  res.json({ ok: true })
 });
 
 // ── Órdenes de Compra ─────────────────────────────────────────────────────────
@@ -149,12 +431,99 @@ router.get('/oc', verificarToken, (req, res) => {
   res.json({ total, pagina: parseInt(page), datos });
 });
 
+router.get('/ultimo-precio', verificarToken, (req, res) => {
+  const { producto_id, descripcion, proveedor_id } = req.query;
+  if (!producto_id && !descripcion) return res.json(null);
+
+  const provCond  = proveedor_id ? 'AND o.proveedor_id = ?' : '';
+  const provParam = proveedor_id ? [proveedor_id] : [];
+
+  // Keywords: palabras > 2 chars, no numeros, no unidades comunes
+  const SKIP = new Set(['und', 'und.', 'por', 'con', 'para', 'los', 'las', 'del']);
+  const keywords = (descripcion || '')
+    .trim().split(/\s+/)
+    .filter(w => w.length > 2 && !/^\d/.test(w) && !SKIP.has(w.toLowerCase()))
+    .slice(0, 4);
+
+  const kwConds  = keywords.map(() => 'LOWER(i.descripcion) LIKE ?');
+  const kwParams = keywords.map(w => `%${w.toLowerCase()}%`);
+  const descCond = kwConds.length ? `OR (${kwConds.join(' AND ')})` : '';
+
+  const row = db.prepare(`
+    SELECT i.precio_unitario, i.bonif1, i.bonif2, i.bonif3, i.bonif4, i.precio_final,
+           o.fecha, o.numero, o.proveedor_nombre,
+           CASE WHEN i.producto_id = ? THEN 1 ELSE 2 END AS _prio
+    FROM oc_items i
+    JOIN ordenes_compra o ON o.id = i.oc_id
+    WHERE o.estado != 'Cancelada'
+      AND i.precio_final > 0
+      AND (i.producto_id = ? ${descCond})
+      ${provCond}
+    ORDER BY _prio ASC, o.fecha DESC, o.id DESC
+    LIMIT 1
+  `).get(producto_id || 0, producto_id || 0, ...kwParams, ...provParam);
+
+  res.json(row ? {
+    precio_unitario:  row.precio_unitario,
+    bonif1: row.bonif1, bonif2: row.bonif2, bonif3: row.bonif3, bonif4: row.bonif4,
+    precio_final:     row.precio_final,
+    fecha:            row.fecha,
+    numero:           row.numero,
+    proveedor_nombre: row.proveedor_nombre,
+  } : null);
+});
+
 router.get('/oc/:id', verificarToken, (req, res) => {
   const oc = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(req.params.id);
   if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
-  const items = db.prepare('SELECT * FROM oc_items WHERE oc_id=? ORDER BY item_num').all(oc.id);
+  const items = db.prepare(`
+    SELECT i.*, p.codigo as producto_codigo
+    FROM oc_items i LEFT JOIN productos p ON p.id = i.producto_id
+    WHERE i.oc_id=? ORDER BY i.item_num
+  `).all(oc.id);
   res.json({ ...oc, items });
 });
+
+// Items sin codificar — para revisión del admin
+router.get('/oc/items-sin-codificar', verificarToken, (req, res) => {
+  const rows = db.prepare(`
+    SELECT i.id, i.oc_id, i.item_num, i.descripcion, i.unidad, i.cantidad, i.precio_final,
+           o.numero as oc_numero, o.fecha as oc_fecha, o.proveedor_nombre, o.moneda
+    FROM oc_items i
+    JOIN ordenes_compra o ON o.id = i.oc_id
+    WHERE i.sin_codificar = 1
+    ORDER BY o.fecha DESC, o.id DESC, i.item_num
+  `).all()
+  res.json(rows)
+});
+
+router.patch('/oc/items/:itemId/codificar', verificarToken, (req, res) => {
+  if (req.usuario?.rol !== 'admin') return res.status(403).json({ error: 'Solo admin' });
+  const { producto_id } = req.body;
+  if (!producto_id) return res.status(400).json({ error: 'Falta producto_id' });
+  const prod = db.prepare('SELECT id, codigo, descripcion, unidad FROM productos WHERE id=?').get(producto_id);
+  if (!prod) return res.status(404).json({ error: 'Producto no encontrado' });
+  db.prepare('UPDATE oc_items SET producto_id=?, sin_codificar=0 WHERE id=?')
+    .run(producto_id, req.params.itemId);
+  res.json({ ok: true, codigo: prod.codigo });
+});
+
+function actualizarCatalogoDesdeOC(items, moneda, fecha, proveedor_id) {
+  for (const it of (items || [])) {
+    const precio = parseFloat(it.precio_final) || 0;
+    if (it.producto_id && precio > 0) {
+      db.prepare('UPDATE productos SET precio_costo=?, precio_moneda=?, precio_fecha=? WHERE id=?')
+        .run(precio, moneda || 'DÓLAR', fecha || '', it.producto_id);
+    }
+  }
+  if (proveedor_id) {
+    const conBonif = (items || []).find(it => it.bonif1 > 0 || it.bonif2 > 0 || it.bonif3 > 0 || it.bonif4 > 0);
+    if (conBonif) {
+      db.prepare('UPDATE proveedores SET bonif1=?, bonif2=?, bonif3=?, bonif4=? WHERE id=?')
+        .run(conBonif.bonif1||0, conBonif.bonif2||0, conBonif.bonif3||0, conBonif.bonif4||0, proveedor_id);
+    }
+  }
+}
 
 router.post('/oc', verificarToken, body('proveedor_nombre').trim().notEmpty(), (req, res) => {
   if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
@@ -163,26 +532,31 @@ router.post('/oc', verificarToken, body('proveedor_nombre').trim().notEmpty(), (
 
   const { proveedor_id, proveedor_nombre, proveedor_cuit, fecha, moneda, tasa_cambio,
           autorizado_por, elaborado_por, condicion_pago, lugar_entrega, presupuesto_n,
-          observaciones, fecha_entrega_est, estado_doc, items } = req.body;
+          observaciones, fecha_entrega_est, estado_doc, modo_plazo, dias_plazo, items } = req.body;
 
   const numero = nextNumeroOC();
+  const fechaOC = fecha||new Date().toISOString().slice(0,10);
+  const modoPlazoOC = modo_plazo === 'ITEM' ? 'ITEM' : 'OC';
+  const fechaEntregaCalc = calcularFechaEntregaOC(fechaOC, modoPlazoOC, dias_plazo, items, fecha_entrega_est);
   const trx = db.transaction(() => {
-    const r = db.prepare(`INSERT INTO ordenes_compra (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,moneda,tasa_cambio,autorizado_por,elaborado_por,condicion_pago,lugar_entrega,presupuesto_n,observaciones,fecha_entrega_est,estado_doc,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(numero, fecha||new Date().toISOString().slice(0,10), proveedor_id||null, proveedor_nombre,
+    const r = db.prepare(`INSERT INTO ordenes_compra (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,moneda,tasa_cambio,autorizado_por,elaborado_por,condicion_pago,lugar_entrega,presupuesto_n,observaciones,fecha_entrega_est,estado_doc,modo_plazo,dias_plazo,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(numero, fechaOC, proveedor_id||null, proveedor_nombre,
            proveedor_cuit||'', moneda||'DÓLAR', tasa_cambio||0, autorizado_por||'', elaborado_por||'',
            condicion_pago||'TRANSF. BANCARIA', lugar_entrega||'e-intra', presupuesto_n||'', observaciones||'',
-           fecha_entrega_est||'', estado_doc||'', req.usuario.id);
+           fechaEntregaCalc, estado_doc||'', modoPlazoOC, dias_plazo!=null && dias_plazo!=='' ? parseInt(dias_plazo,10) : null, req.usuario.id);
     const oc_id = r.lastInsertRowid;
     if (items?.length) {
       for (const [i, it] of items.entries()) {
-        db.prepare('INSERT INTO oc_items (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        db.prepare('INSERT INTO oc_items (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,dias_plazo,sin_codificar) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
           .run(oc_id, i+1, it.producto_id||null, it.cantidad||0, it.unidad||'UND.', it.descripcion||'',
-               it.precio_unitario||0, it.bonif1||0, it.bonif2||0, it.bonif3||0, it.bonif4||0, it.precio_final||0, it.plazo||'INMEDIATO');
+               it.precio_unitario||0, it.bonif1||0, it.bonif2||0, it.bonif3||0, it.bonif4||0, it.precio_final||0, it.plazo||'INMEDIATO',
+               it.dias_plazo!=null && it.dias_plazo!=='' ? parseInt(it.dias_plazo,10) : null, it.sin_codificar ? 1 : 0);
       }
     }
     return oc_id;
   });
   const oc_id = trx();
+  actualizarCatalogoDesdeOC(items, moneda, fecha, proveedor_id);
   const oc = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(oc_id);
   res.status(201).json({ ...oc, items: db.prepare('SELECT * FROM oc_items WHERE oc_id=? ORDER BY item_num').all(oc_id) });
 });
@@ -195,25 +569,34 @@ router.put('/oc/:id', verificarToken, (req, res) => {
   const { proveedor_id, proveedor_nombre, proveedor_cuit, fecha, moneda, tasa_cambio,
           autorizado_por, elaborado_por, condicion_pago, lugar_entrega, presupuesto_n,
           observaciones, estado, fecha_entrega_est, numero_remito, fecha_recepcion,
-          estado_doc, nro_factura, importe_facturado, fecha_vencimiento, pago_confirmado, items } = req.body;
+          estado_doc, nro_factura, importe_facturado, fecha_vencimiento, pago_confirmado,
+          modo_plazo, dias_plazo, items } = req.body;
+
+  const fechaOC = fecha??oc.fecha;
+  const modoPlazoOC = (modo_plazo ?? oc.modo_plazo) === 'ITEM' ? 'ITEM' : 'OC';
+  const diasPlazoOC = dias_plazo !== undefined ? dias_plazo : oc.dias_plazo;
+  const itemsParaCalculo = items ?? db.prepare('SELECT * FROM oc_items WHERE oc_id=?').all(req.params.id);
+  const fechaEntregaCalc = calcularFechaEntregaOC(fechaOC, modoPlazoOC, diasPlazoOC, itemsParaCalculo, fecha_entrega_est??oc.fecha_entrega_est??'');
 
   const trx = db.transaction(() => {
-    db.prepare(`UPDATE ordenes_compra SET proveedor_id=?,proveedor_nombre=?,proveedor_cuit=?,fecha=?,moneda=?,tasa_cambio=?,autorizado_por=?,elaborado_por=?,condicion_pago=?,lugar_entrega=?,presupuesto_n=?,observaciones=?,estado=?,fecha_entrega_est=?,numero_remito=?,fecha_recepcion=?,estado_doc=?,nro_factura=?,importe_facturado=?,fecha_vencimiento=?,pago_confirmado=?,updated_at=datetime('now','localtime') WHERE id=?`)
+    db.prepare(`UPDATE ordenes_compra SET proveedor_id=?,proveedor_nombre=?,proveedor_cuit=?,fecha=?,moneda=?,tasa_cambio=?,autorizado_por=?,elaborado_por=?,condicion_pago=?,lugar_entrega=?,presupuesto_n=?,observaciones=?,estado=?,fecha_entrega_est=?,numero_remito=?,fecha_recepcion=?,estado_doc=?,nro_factura=?,importe_facturado=?,fecha_vencimiento=?,pago_confirmado=?,modo_plazo=?,dias_plazo=?,updated_at=datetime('now','localtime') WHERE id=?`)
       .run(proveedor_id??oc.proveedor_id, proveedor_nombre??oc.proveedor_nombre, proveedor_cuit??oc.proveedor_cuit,
-           fecha??oc.fecha, moneda??oc.moneda, tasa_cambio??oc.tasa_cambio, autorizado_por??oc.autorizado_por,
+           fechaOC, moneda??oc.moneda, tasa_cambio??oc.tasa_cambio, autorizado_por??oc.autorizado_por,
            elaborado_por??oc.elaborado_por, condicion_pago??oc.condicion_pago, lugar_entrega??oc.lugar_entrega,
            presupuesto_n??oc.presupuesto_n, observaciones??oc.observaciones, estado??oc.estado,
-           fecha_entrega_est??oc.fecha_entrega_est??'', numero_remito??oc.numero_remito??'',
+           fechaEntregaCalc, numero_remito??oc.numero_remito??'',
            fecha_recepcion??oc.fecha_recepcion??'', estado_doc??oc.estado_doc??'',
            nro_factura??oc.nro_factura??'', importe_facturado??oc.importe_facturado??0,
            fecha_vencimiento??oc.fecha_vencimiento??'', pago_confirmado!=null?pago_confirmado:(oc.pago_confirmado??0),
+           modoPlazoOC, diasPlazoOC!=null && diasPlazoOC!=='' ? parseInt(diasPlazoOC,10) : null,
            req.params.id);
     if (items) {
       db.prepare('DELETE FROM oc_items WHERE oc_id=?').run(req.params.id);
       for (const [i, it] of items.entries()) {
-        db.prepare('INSERT INTO oc_items (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,cant_recibida) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        db.prepare('INSERT INTO oc_items (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,dias_plazo,cant_recibida,sin_codificar) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
           .run(req.params.id, i+1, it.producto_id||null, it.cantidad||0, it.unidad||'UND.', it.descripcion||'',
-               it.precio_unitario||0, it.bonif1||0, it.bonif2||0, it.bonif3||0, it.bonif4||0, it.precio_final||0, it.plazo||'INMEDIATO', it.cant_recibida||0);
+               it.precio_unitario||0, it.bonif1||0, it.bonif2||0, it.bonif3||0, it.bonif4||0, it.precio_final||0, it.plazo||'INMEDIATO',
+               it.dias_plazo!=null && it.dias_plazo!=='' ? parseInt(it.dias_plazo,10) : null, it.cant_recibida||0, it.sin_codificar ? 1 : 0);
       }
     }
   });
@@ -231,8 +614,7 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
   if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
   if (oc.estado === 'Cancelada') return res.status(400).json({ error: 'OC cancelada' });
 
-  const items = db.prepare('SELECT * FROM oc_items WHERE oc_id=? AND producto_id IS NOT NULL').all(oc.id);
-  const { recepciones, fecha, numero_remito } = req.body;
+  const { recepciones, fecha, numero_remito, producto_ids } = req.body;
   const fechaRec = fecha || new Date().toISOString().slice(0,10);
 
   const insIngreso = db.prepare(`
@@ -242,36 +624,54 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
   `);
 
   const trx = db.transaction(() => {
+    // Persiste asignaciones de producto hechas inline en el frontend
+    if (producto_ids && typeof producto_ids === 'object') {
+      const updProd = db.prepare('UPDATE oc_items SET producto_id=? WHERE id=? AND oc_id=?');
+      for (const [itemId, productId] of Object.entries(producto_ids)) {
+        updProd.run(productId, Number(itemId), oc.id);
+      }
+    }
+    // Se consideran TODOS los items (no solo los que ya tienen producto asignado):
+    // uno sin producto_id, o dejado explícitamente en 0 para recibir después, sigue pendiente
+    // y no debe dejar que la OC se marque como "Recibida" por completo.
+    const items = db.prepare('SELECT * FROM oc_items WHERE oc_id=?').all(oc.id);
     let todosRecibidos = true;
     for (const item of items) {
-      const cantRecibir = recepciones?.[item.id] ?? (item.cantidad - item.cant_recibida);
-      if (cantRecibir <= 0) continue;
       const pendiente = item.cantidad - item.cant_recibida;
-      if (pendiente <= 0) continue;
+      if (pendiente <= 0) continue; // ya estaba completo, no afecta el estado
+
+      if (item.producto_id == null) {
+        todosRecibidos = false; // sin producto asignado, no se puede ingresar a stock todavía
+        continue;
+      }
+      const cantRecibir = recepciones?.[item.id] ?? pendiente;
+      if (cantRecibir <= 0) { todosRecibidos = false; continue; }
       const real = Math.min(cantRecibir, pendiente);
       db.prepare("UPDATE oc_items SET cant_recibida=cant_recibida+? WHERE id=?").run(real, item.id);
       const prod = db.prepare('SELECT codigo, descripcion, unidad FROM productos WHERE id=?').get(item.producto_id);
       insIngreso.run(oc.id, oc.numero, oc.proveedor_nombre, item.id, item.producto_id,
         prod?.codigo||'', prod?.descripcion||item.descripcion||'', prod?.unidad||item.unidad||'UND.',
         real, item.precio_final||0, numero_remito||'', fechaRec);
-      const itemActual = db.prepare('SELECT cant_recibida FROM oc_items WHERE id=?').get(item.id);
-      if (itemActual.cant_recibida < item.cantidad) todosRecibidos = false;
+      if (real < pendiente) todosRecibidos = false;
     }
     const nuevoEstado = todosRecibidos ? 'Recibida' : 'Parcial';
-    db.prepare(`UPDATE ordenes_compra SET estado=?,fecha_recepcion=?,${numero_remito ? 'numero_remito=?,' : ''}updated_at=datetime('now','localtime') WHERE id=?`)
-      .run(nuevoEstado, fechaRec, ...(numero_remito ? [numero_remito] : []), oc.id);
+    const itemsActualizados = db.prepare('SELECT * FROM oc_items WHERE oc_id=?').all(oc.id);
+    const fechaEntregaCalc = calcularFechaEntregaOC(oc.fecha, oc.modo_plazo, oc.dias_plazo, itemsActualizados, oc.fecha_entrega_est);
+    db.prepare(`UPDATE ordenes_compra SET estado=?,fecha_recepcion=?,fecha_entrega_est=?,${numero_remito ? 'numero_remito=?,' : ''}updated_at=datetime('now','localtime') WHERE id=?`)
+      .run(nuevoEstado, fechaRec, fechaEntregaCalc, ...(numero_remito ? [numero_remito] : []), oc.id);
   });
   trx();
   res.json({ mensaje: 'Recepción registrada. Los materiales quedaron pendientes de ingreso al stock.' });
 });
 
-// Resetear recepción de OC (solo admin) — vuelve a Emitida y limpia cant_recibida
+// Resetear recepción de OC — vuelve a Emitida, limpia cant_recibida e ingresos_pendientes
 router.post('/oc/:id/resetear-recepcion', verificarToken, (req, res) => {
-  if (req.usuario?.rol !== 'admin') return res.status(403).json({ error: 'Solo administradores' });
+  if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const oc = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(req.params.id);
   if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
   db.transaction(() => {
     db.prepare("UPDATE oc_items SET cant_recibida=0 WHERE oc_id=?").run(oc.id);
+    db.prepare("DELETE FROM ingresos_pendientes WHERE oc_id=?").run(oc.id);
     db.prepare("UPDATE ordenes_compra SET estado='Emitida',fecha_recepcion='',numero_remito='',updated_at=datetime('now','localtime') WHERE id=?").run(oc.id);
   })();
   res.json({ ok: true });
@@ -466,33 +866,122 @@ router.get('/form49', verificarToken, (req, res) => {
   const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';
   const offset = (parseInt(page)-1)*parseInt(limit);
   const total  = db.prepare(`SELECT COUNT(*) as c FROM form49_ingresos f ${where}`).get(...params).c;
-  const datos  = db.prepare(`SELECT f.*, COUNT(i.id) as n_items FROM form49_ingresos f LEFT JOIN form49_items i ON f.id=i.form49_id ${where} GROUP BY f.id ORDER BY f.id DESC LIMIT ? OFFSET ?`).all(...params, parseInt(limit), offset);
+  const datos  = db.prepare(`SELECT f.*, COUNT(i.id) as n_items,
+    EXISTS(SELECT 1 FROM ingresos_sin_oc_pendientes p WHERE p.form49_id=f.id) as enviado_stock
+    FROM form49_ingresos f LEFT JOIN form49_items i ON f.id=i.form49_id ${where} GROUP BY f.id ORDER BY f.id DESC LIMIT ? OFFSET ?`).all(...params, parseInt(limit), offset);
   res.json({ total, datos });
+});
+
+router.get('/form49/stock-por-proveedor', verificarToken, (req, res) => {
+  const { proveedor_id, proveedor_nombre } = req.query;
+  if (!proveedor_id && !proveedor_nombre?.trim())
+    return res.status(400).json({ error: 'Falta proveedor' });
+  const conds = [], params = [];
+  if (proveedor_id) { conds.push('f.proveedor_id=?'); params.push(proveedor_id); }
+  if (proveedor_nombre?.trim()) { conds.push("lower(trim(f.proveedor_nombre)) LIKE lower(?)"); params.push(`%${proveedor_nombre.trim()}%`); }
+  const cond = conds.length ? conds.join(' OR ') : '1=1';
+  const ingresos = db.prepare(`
+    SELECT f.id, f.numero, f.fecha, f.proveedor_id, f.proveedor_nombre, f.proveedor_cuit,
+           f.moneda, f.tasa_cambio, f.condicion_pago
+    FROM form49_ingresos f
+    WHERE ${cond}
+    ORDER BY f.fecha DESC, f.id DESC
+  `).all(...params);
+  const result = [];
+  for (const f of ingresos) {
+    const items = db.prepare(`
+      SELECT id, descripcion, cantidad, unidad, precio_unitario, precio_final, producto_id, producto_codigo, plazo, destino
+      FROM form49_items
+      WHERE form49_id=?
+      ORDER BY id
+    `).all(f.id);
+    if (items.length) result.push({ ...f, items });
+  }
+  res.json(result);
+});
+
+router.post('/form49/generar-oc-proveedor', verificarToken, (req, res) => {
+  if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  const { proveedor_id, proveedor_nombre, proveedor_cuit, fecha, moneda, tasa_cambio,
+          condicion_pago, observaciones, items, fuente_numeros } = req.body;
+  if (!proveedor_nombre?.trim()) return res.status(400).json({ error: 'Falta proveedor' });
+  if (!items?.length) return res.status(400).json({ error: 'Sin ítems seleccionados' });
+  const numero = nextNumeroOC();
+  const hoy = new Date().toISOString().slice(0, 10);
+  const obs = observaciones?.trim() ||
+    `Generada desde ingresos sin OC${fuente_numeros?.length ? ': ' + fuente_numeros.join(', ') : ''}`;
+  const oc_id = db.transaction(() => {
+    const r = db.prepare(`INSERT INTO ordenes_compra
+      (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,moneda,tasa_cambio,
+       condicion_pago,lugar_entrega,observaciones,estado,fecha_recepcion,created_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(numero, fecha||hoy, proveedor_id||null, proveedor_nombre, proveedor_cuit||'',
+           moneda||'PESOS', parseFloat(tasa_cambio)||0,
+           condicion_pago||'', 'e-intra', obs, 'Recibida', fecha||hoy, req.usuario.id);
+    const oc_id = r.lastInsertRowid;
+    for (const [i, it] of items.entries()) {
+      db.prepare(`INSERT INTO oc_items
+        (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,
+         bonif1,bonif2,bonif3,bonif4,precio_final,plazo,cant_recibida)
+        VALUES (?,?,?,?,?,?,?,0,0,0,0,?,?,?)`)
+        .run(oc_id, i+1, it.producto_id||null, it.cantidad||0, it.unidad||'UND.',
+             it.descripcion||'', parseFloat(it.precio_unitario)||0,
+             parseFloat(it.precio_final)||0, it.plazo||'INMEDIATO', it.cantidad||0);
+    }
+    return oc_id;
+  })();
+  res.status(201).json({ oc_numero: numero, oc_id });
 });
 
 router.get('/form49/:id', verificarToken, (req, res) => {
   const f = db.prepare('SELECT * FROM form49_ingresos WHERE id=?').get(req.params.id);
   if (!f) return res.status(404).json({ error: 'No encontrado' });
   const items = db.prepare('SELECT * FROM form49_items WHERE form49_id=? ORDER BY id').all(f.id);
-  res.json({ ...f, items });
+  const enviado_stock = !!db.prepare('SELECT 1 FROM ingresos_sin_oc_pendientes WHERE form49_id=? LIMIT 1').get(f.id);
+  res.json({ ...f, enviado_stock, items });
 });
+
+function insertarItemsF49(fid, numero, proveedor_nombre, items) {
+  for (const it of items) {
+    db.prepare(`INSERT INTO form49_items
+      (form49_id,descripcion,cantidad,unidad,n_parte,n_serie,n_lote,destino,precio_unitario,precio_final,plazo,producto_id,producto_codigo)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(fid, it.descripcion||'', it.cantidad||0, it.unidad||'UND.',
+           it.n_parte||'', it.n_serie||'', it.n_lote||'',
+           'stock',
+           parseFloat(it.precio_unitario)||0, parseFloat(it.precio_final)||0, it.plazo||'INMEDIATO',
+           it.producto_id||null, it.producto_codigo||'');
+    if (it.producto_id) {
+      db.prepare(`INSERT INTO ingresos_sin_oc_pendientes
+        (form49_id,form49_numero,proveedor_nombre,descripcion,unidad,cantidad,n_parte,precio_costo,producto_id,producto_codigo)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`)
+        .run(fid, numero, proveedor_nombre, it.descripcion||'', it.unidad||'UND.',
+             it.cantidad||0, it.n_parte||'',
+             parseFloat(it.precio_final)||0,
+             it.producto_id, it.producto_codigo||'');
+    }
+  }
+}
 
 router.post('/form49', verificarToken, (req, res) => {
   if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
-  const { proveedor_id, proveedor_nombre, fecha, proyecto, autorizado_por, recibido_por, observaciones, items } = req.body;
+  const { proveedor_id, proveedor_nombre, proveedor_cuit, fecha, proyecto,
+          autorizado_por, recibido_por, elaborado_por, observaciones,
+          moneda, tasa_cambio, condicion_pago, lugar_entrega, presupuesto_n, items } = req.body;
   if (!proveedor_nombre?.trim()) return res.status(400).json({ error: 'Proveedor es obligatorio' });
   const numero = nextNumeroF49();
   const trx = db.transaction(() => {
-    const r = db.prepare(`INSERT INTO form49_ingresos (numero,fecha,proveedor_id,proveedor_nombre,proyecto,autorizado_por,recibido_por,observaciones,created_by) VALUES (?,?,?,?,?,?,?,?,?)`)
-      .run(numero, fecha||new Date().toISOString().slice(0,10), proveedor_id||null, proveedor_nombre,
-           proyecto||'', autorizado_por||'', recibido_por||'', observaciones||'', req.usuario.id);
+    const r = db.prepare(`INSERT INTO form49_ingresos
+      (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,proyecto,autorizado_por,recibido_por,
+       elaborado_por,observaciones,moneda,tasa_cambio,condicion_pago,lugar_entrega,presupuesto_n,created_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(numero, fecha||new Date().toISOString().slice(0,10),
+           proveedor_id||null, proveedor_nombre, proveedor_cuit||'',
+           proyecto||'', autorizado_por||'', recibido_por||'', elaborado_por||'', observaciones||'',
+           moneda||'PESOS', parseFloat(tasa_cambio)||0, condicion_pago||'', lugar_entrega||'', presupuesto_n||'',
+           req.usuario.id);
     const fid = r.lastInsertRowid;
-    if (items?.length) {
-      for (const it of items) {
-        db.prepare('INSERT INTO form49_items (form49_id,descripcion,cantidad,unidad,n_parte,n_serie,n_lote) VALUES (?,?,?,?,?,?,?)')
-          .run(fid, it.descripcion||'', it.cantidad||0, it.unidad||'UND.', it.n_parte||'', it.n_serie||'', it.n_lote||'');
-      }
-    }
+    if (items?.length) insertarItemsF49(fid, numero, proveedor_nombre, items);
     return fid;
   });
   const fid = trx();
@@ -504,18 +993,26 @@ router.put('/form49/:id', verificarToken, (req, res) => {
   if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const f = db.prepare('SELECT * FROM form49_ingresos WHERE id=?').get(req.params.id);
   if (!f) return res.status(404).json({ error: 'No encontrado' });
-  const { proveedor_id, proveedor_nombre, fecha, proyecto, autorizado_por, recibido_por, observaciones, items } = req.body;
+  const { proveedor_id, proveedor_nombre, proveedor_cuit, fecha, proyecto,
+          autorizado_por, recibido_por, elaborado_por, observaciones,
+          moneda, tasa_cambio, condicion_pago, lugar_entrega, presupuesto_n, items } = req.body;
   db.transaction(() => {
-    db.prepare(`UPDATE form49_ingresos SET proveedor_id=?,proveedor_nombre=?,fecha=?,proyecto=?,autorizado_por=?,recibido_por=?,observaciones=? WHERE id=?`)
-      .run(proveedor_id??f.proveedor_id, proveedor_nombre??f.proveedor_nombre, fecha??f.fecha,
-           proyecto??f.proyecto, autorizado_por??f.autorizado_por, recibido_por??f.recibido_por,
-           observaciones??f.observaciones, req.params.id);
+    db.prepare(`UPDATE form49_ingresos SET
+      proveedor_id=?,proveedor_nombre=?,proveedor_cuit=?,fecha=?,proyecto=?,
+      autorizado_por=?,recibido_por=?,elaborado_por=?,observaciones=?,
+      moneda=?,tasa_cambio=?,condicion_pago=?,lugar_entrega=?,presupuesto_n=?
+      WHERE id=?`)
+      .run(proveedor_id??f.proveedor_id, proveedor_nombre??f.proveedor_nombre, proveedor_cuit??f.proveedor_cuit??'',
+           fecha??f.fecha, proyecto??f.proyecto,
+           autorizado_por??f.autorizado_por, recibido_por??f.recibido_por, elaborado_por??f.elaborado_por??'',
+           observaciones??f.observaciones,
+           moneda??f.moneda??'PESOS', parseFloat(tasa_cambio??f.tasa_cambio)||0,
+           condicion_pago??f.condicion_pago??'', lugar_entrega??f.lugar_entrega??'', presupuesto_n??f.presupuesto_n??'',
+           req.params.id);
     if (items) {
       db.prepare('DELETE FROM form49_items WHERE form49_id=?').run(req.params.id);
-      for (const it of items) {
-        db.prepare('INSERT INTO form49_items (form49_id,descripcion,cantidad,unidad,n_parte,n_serie,n_lote) VALUES (?,?,?,?,?,?,?)')
-          .run(req.params.id, it.descripcion||'', it.cantidad||0, it.unidad||'UND.', it.n_parte||'', it.n_serie||'', it.n_lote||'');
-      }
+      db.prepare('DELETE FROM ingresos_sin_oc_pendientes WHERE form49_id=?').run(req.params.id);
+      insertarItemsF49(req.params.id, f.numero, proveedor_nombre||f.proveedor_nombre, items);
     }
   })();
   const updated = db.prepare('SELECT * FROM form49_ingresos WHERE id=?').get(req.params.id);
@@ -527,6 +1024,50 @@ router.delete('/form49/:id', verificarToken, (req, res) => {
   db.prepare('DELETE FROM form49_items WHERE form49_id=?').run(req.params.id);
   db.prepare('DELETE FROM form49_ingresos WHERE id=?').run(req.params.id);
   res.json({ ok: true });
+});
+
+router.post('/form49/:id/generar-oc', verificarToken, (req, res) => {
+  if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  const f = db.prepare('SELECT * FROM form49_ingresos WHERE id=?').get(req.params.id);
+  if (!f) return res.status(404).json({ error: 'No encontrado' });
+  if (f.oc_id) return res.status(400).json({ error: `Ya tiene OC generada: ${f.oc_numero}` });
+
+  const { fecha, moneda, tasa_cambio, condicion_pago, nro_factura, observaciones, items } = req.body;
+  if (!items?.length) return res.status(400).json({ error: 'Se requieren ítems con precios' });
+
+  const numero = nextNumeroOC();
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  const oc_id = db.transaction(() => {
+    const r = db.prepare(`INSERT INTO ordenes_compra
+      (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,moneda,tasa_cambio,
+       autorizado_por,elaborado_por,condicion_pago,lugar_entrega,presupuesto_n,
+       observaciones,estado,nro_factura,fecha_recepcion,created_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(numero, fecha||f.fecha, f.proveedor_id||null, f.proveedor_nombre, f.proveedor_cuit||'',
+           moneda||f.moneda||'PESOS', parseFloat(tasa_cambio)||f.tasa_cambio||0,
+           f.autorizado_por||'', f.elaborado_por||'',
+           condicion_pago||f.condicion_pago||'CTA. CTE.', f.lugar_entrega||'e-intra',
+           f.presupuesto_n||'',
+           observaciones||f.observaciones||`Generada desde ingreso ${f.numero}`,
+           'Recibida', nro_factura||'', f.fecha||hoy,
+           req.usuario.id);
+    const oc_id = r.lastInsertRowid;
+    for (const [i, it] of items.entries()) {
+      db.prepare(`INSERT INTO oc_items
+        (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,cant_recibida)
+        VALUES (?,?,?,?,?,?,?,0,0,0,0,?,?,?)`)
+        .run(oc_id, i+1, it.producto_id||null, it.cantidad||0, it.unidad||'UND.', it.descripcion||'',
+             parseFloat(it.precio_unitario)||0, parseFloat(it.precio_final)||0,
+             it.plazo||'INMEDIATO', it.cantidad||0);
+    }
+    db.prepare('UPDATE form49_ingresos SET oc_id=?, oc_numero=? WHERE id=?')
+      .run(oc_id, numero, f.id);
+    return oc_id;
+  })();
+
+  const oc = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(oc_id);
+  res.status(201).json({ oc_numero: numero, oc_id, oc });
 });
 
 module.exports = router;

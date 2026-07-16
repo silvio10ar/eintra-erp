@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useLocation } from 'react-router-dom'
 import api from '../../api/client'
 import { puedeEscribir, getUser } from '../../store/authStore'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
 import DateInput from '../../components/DateInput'
+import PlanGantt from './PlanGantt'
+import PlantillaGantt from './PlantillaGantt'
 
 const ESTADOS_P = [
   { v: 'Activo',     c: 'success' },
@@ -43,6 +46,9 @@ const parsearCodigo = (cod, nivel) => {
     b5: parts.slice(4).join('-') || '',
   }
 }
+
+// B2 = últimos 6 dígitos del N° OC
+const ultimos6DeOC = v => (v.match(/\d/g) || []).join('').slice(-6)
 const FORM_MAT_VACIO = { producto_id: '', codigo: '', descripcion: '', unidad: 'UND.', cantidad: 1, observaciones: '' }
 
 const fmtF     = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
@@ -66,11 +72,13 @@ const colorDoc = e => {
 export default function Proyectos() {
   const canWrite = puedeEscribir('proyectos')
   const isAdmin  = getUser()?.rol === 'admin'
+  const location  = useLocation()
 
   const [proyectos, setProyectos] = useState([])
   const [loading,   setLoading]   = useState(true)
   const [buscar,    setBuscar]    = useState('')
-  const [filtEst,   setFiltEst]   = useState('')
+  const [filtEst,   setFiltEst]   = useState(location.state?.filtEst || '')
+  const [vista,     setVista]     = useState('tarjetas') // 'tarjetas' | 'tabla'
 
   /* Detalle lateral */
   const [selP,     setSelP]     = useState(null)
@@ -79,6 +87,7 @@ export default function Proyectos() {
   const [loadDet,  setLoadDet]  = useState(false)
   const [tab,      setTab]      = useState('form30')
   const [savDoc,   setSavDoc]   = useState(null)  // id del doc en edición
+  const [ocCliente, setOcCliente] = useState(null)
 
   /* Modal nuevo / editar proyecto */
   const [modalP,  setModalP]  = useState(null)   // null | 'nuevo' | objeto
@@ -122,6 +131,9 @@ export default function Proyectos() {
   const [f56Sav,     setF56Sav]    = useState(false)
   const [f56Msg,     setF56Msg]    = useState('')
 
+  /* Editor plantilla global */
+  const [showPlantilla, setShowPlantilla] = useState(false)
+
   /* Modal normalizar responsables */
   const [modalNorm, setModalNorm] = useState(false)
   const [normData,  setNormData]  = useState([])
@@ -143,7 +155,7 @@ export default function Proyectos() {
   useEffect(() => { cargar() }, [cargar])
 
   const verDetalle = p => {
-    setSelP(p); setLoadDet(true); setDetalle(null); setDocs([]); setEntregas([]); setMateriales([]); setTab('form30')
+    setSelP(p); setLoadDet(true); setDetalle(null); setDocs([]); setEntregas([]); setMateriales([]); setTab('form30'); setOcCliente(null)
     Promise.all([
       api.get(`/proyectos/${p.id}`),
       api.get(`/proyectos/${p.id}/documentos`),
@@ -151,6 +163,9 @@ export default function Proyectos() {
       api.get(`/proyectos/${p.id}/materiales`),
     ]).then(([r1, r2, r3, r4]) => { setDetalle(r1.data); setDocs(r2.data); setEntregas(r3.data); setMateriales(r4.data) })
       .finally(() => setLoadDet(false))
+    api.get('/finanzas/oc-clientes', { params: { proyecto_id: p.id } })
+      .then(r => setOcCliente(r.data[0] || null))
+      .catch(() => setOcCliente(null))
   }
 
   const cargarEntregas = p => {
@@ -330,50 +345,107 @@ export default function Proyectos() {
   const estBadge = v => ESTADOS_P.find(e=>e.v===v)?.c || 'secondary'
 
   return (
-    <div style={{ display:'flex', gap:'1rem', height:'calc(100vh - 120px)', minHeight:0 }}>
+    <div style={{ display:'flex', flexDirection:'column', height:'calc(100vh - 120px)', minHeight:0 }}>
 
-      {/* ── Lista ──────────────────────────────────────────────────────── */}
-      <div style={{ width: selP ? 360 : '100%', flexShrink:0, display:'flex', flexDirection:'column', minWidth:0, transition:'width .2s' }}>
+      {/* ── Toolbar ──────────────────────────────────────────────────────── */}
+      <div className="d-flex align-items-center gap-2 mb-3 flex-wrap">
+        <h5 className="fw-bold mb-0">Proyectos</h5>
+        <input className="form-control form-control-sm" style={{width:200}} placeholder="Buscar..."
+          value={buscar} onChange={e=>setBuscar(e.target.value)}/>
+        <select className="form-select form-select-sm" style={{width:140}}
+          value={filtEst} onChange={e=>setFiltEst(e.target.value)}>
+          <option value="">Todos los estados</option>
+          {ESTADOS_P.map(e=><option key={e.v} value={e.v}>{e.v}</option>)}
+        </select>
+        <div className="btn-group btn-group-sm" role="group">
+          <button type="button" className={`btn ${vista==='tarjetas'?'btn-secondary':'btn-outline-secondary'}`}
+            title="Vista tarjetas" onClick={() => setVista('tarjetas')}>
+            <i className="bi bi-grid"/>
+          </button>
+          <button type="button" className={`btn ${vista==='tabla'?'btn-secondary':'btn-outline-secondary'}`}
+            title="Vista tabla" onClick={() => setVista('tabla')}>
+            <i className="bi bi-table"/>
+          </button>
+        </div>
+        <div className="ms-auto d-flex gap-2">
+          {canWrite && (
+            <button className="btn btn-sm btn-primary"
+              onClick={() => { setFormP(FORM_VACIO); setErrP(''); setModalP('nuevo') }}>
+              <i className="bi bi-plus-lg me-1"/>Nuevo
+            </button>
+          )}
+        </div>
+      </div>
 
-        <div className="d-flex align-items-center justify-content-between mb-3">
-          <h5 className="fw-bold mb-0">Proyectos</h5>
-          <div className="d-flex gap-2">
-            {isAdmin && (
-              <>
-                <button className="btn btn-sm btn-outline-secondary" title="Normalizar responsables" onClick={abrirNorm}>
-                  <i className="bi bi-people me-1"/>Responsables
-                </button>
-                <button className="btn btn-sm btn-outline-primary" title="Importar datos del Form 56" onClick={abrirImportF56}>
-                  <i className="bi bi-file-earmark-arrow-up me-1"/>Form 56
-                </button>
-              </>
-            )}
-            {canWrite && (
-              <button className="btn btn-sm btn-primary"
-                onClick={() => { setFormP(FORM_VACIO); setErrP(''); setModalP('nuevo') }}>
-                <i className="bi bi-plus-lg me-1"/>Nuevo
-              </button>
-            )}
+      {/* ── Modo plantilla (pantalla completa) ──────────────────────────── */}
+      {showPlantilla && (
+        <div style={{ flex:1, minHeight:0, display:'flex', flexDirection:'column', overflow:'auto', border:'1px solid #dee2e6', borderRadius:8, background:'#fff', padding:'1rem' }}>
+          <div className="d-flex align-items-center mb-3 border-bottom pb-2">
+            <button className="btn btn-sm btn-outline-secondary" onClick={() => setShowPlantilla(false)}>
+              <i className="bi bi-arrow-left me-1"/>Volver a proyectos
+            </button>
           </div>
+          <PlantillaGantt canWrite={canWrite} />
         </div>
+      )}
 
-        <div className="d-flex gap-2 mb-3">
-          <input className="form-control form-control-sm" placeholder="Buscar..."
-            value={buscar} onChange={e=>setBuscar(e.target.value)}/>
-          <select className="form-select form-select-sm" style={{width:130}}
-            value={filtEst} onChange={e=>setFiltEst(e.target.value)}>
-            <option value="">Todos</option>
-            {ESTADOS_P.map(e=><option key={e.v} value={e.v}>{e.v}</option>)}
-          </select>
-        </div>
+      {/* ── Modo proyectos: lista + detalle ─────────────────────────────── */}
+      {!showPlantilla && (
+      <div style={{ display:'flex', gap:'1rem', flex:1, minHeight:0 }}>
 
+      {/* Lista */}
+      <div style={{ width: selP ? 320 : '100%', flexShrink:0, display:'flex', flexDirection:'column', minWidth:0 }}>
         {loading ? (
           <div className="text-center py-4"><span className="spinner-border text-primary"/></div>
+        ) : proyectos.length === 0 ? (
+          <div className="text-center text-muted py-4">Sin proyectos</div>
+        ) : vista === 'tabla' ? (
+          <div style={{ overflow:'auto', flex:1 }}>
+            <table className="table table-sm table-hover align-middle" style={{ fontSize:'0.8rem' }}>
+              <thead className="table-light sticky-top">
+                <tr>
+                  <th>Código</th>
+                  <th>Nombre</th>
+                  {!selP && <th>Cliente</th>}
+                  <th>Estado</th>
+                  {!selP && <th>F. Inicio</th>}
+                  {!selP && <th>F. Fin Est.</th>}
+                  <th style={{ minWidth: 140 }}>Avance (Plan)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {proyectos.map(p => {
+                  const pct = p.plan_tareas > 0 ? p.plan_avance : null
+                  const activo = selP?.id === p.id
+                  return (
+                    <tr key={p.id} className={activo ? 'table-primary' : ''}
+                      style={{ cursor:'pointer' }} onClick={() => verDetalle(p)}>
+                      <td style={{fontFamily:'monospace',fontSize:'0.75rem'}}>{fmtCod(p.codigo)}</td>
+                      <td className="fw-medium">{p.nombre}</td>
+                      {!selP && <td className="text-muted">{p.cliente_nombre || '—'}</td>}
+                      <td><span className={`badge bg-${estBadge(p.estado)}`} style={{fontSize:'0.68rem'}}>{p.estado}</span></td>
+                      {!selP && <td className="text-muted">{fmtF(p.fecha_inicio) || '—'}</td>}
+                      {!selP && <td className="text-muted">{fmtF(p.fecha_fin_est) || '—'}</td>}
+                      <td>
+                        {pct !== null ? (
+                          <div className="d-flex align-items-center gap-2">
+                            <div className="progress flex-grow-1" style={{height:6,minWidth:60}}>
+                              <div className={`progress-bar bg-${pct===100?'success':'primary'}`} style={{width:`${pct}%`}}/>
+                            </div>
+                            <span style={{fontSize:'0.72rem',color:'#777',whiteSpace:'nowrap'}}>{p.plan_tareas} tareas ({pct}%)</span>
+                          </div>
+                        ) : <span className="text-muted">—</span>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <div style={{ overflowY:'auto', flex:1 }}>
-            {proyectos.length === 0 && <div className="text-center text-muted py-4">Sin proyectos</div>}
             {proyectos.map(p => {
-              const pct = p.docs_aplican > 0 ? Math.round(p.docs_realizados / p.docs_aplican * 100) : null
+              const pct = p.plan_tareas > 0 ? p.plan_avance : null
               const activo = selP?.id === p.id
               return (
                 <div key={p.id}
@@ -402,8 +474,8 @@ export default function Proyectos() {
                     {pct !== null && (
                       <div className="mt-1">
                         <div className="d-flex justify-content-between" style={{fontSize:'0.67rem',color:'#aaa'}}>
-                          <span>Form 30</span>
-                          <span>{p.docs_realizados}/{p.docs_aplican} ({pct}%)</span>
+                          <span>Plan</span>
+                          <span>{p.plan_tareas} tareas ({pct}%)</span>
                         </div>
                         <div className="progress" style={{height:3}}>
                           <div className={`progress-bar bg-${pct===100?'success':'primary'}`} style={{width:`${pct}%`}}/>
@@ -449,6 +521,18 @@ export default function Proyectos() {
                 {selP.docs_realizados}/{selP.docs_aplican} docs
               </span>
             )}
+            {ocCliente ? (
+              <span className="fw-semibold text-primary">
+                <i className="bi bi-file-earmark-text me-1"/>
+                OC {ocCliente.numero_oc || '—'}
+                {ocCliente.monto_oc != null && ocCliente.monto_oc !== '' &&
+                  ` — USD ${new Intl.NumberFormat('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(ocCliente.monto_oc)}`}
+              </span>
+            ) : (
+              <span className="text-muted fst-italic">
+                <i className="bi bi-file-earmark-text me-1"/>Sin OC vinculada
+              </span>
+            )}
           </div>
 
           {/* Tabs */}
@@ -473,6 +557,11 @@ export default function Proyectos() {
               <button className={`nav-link py-1 ${tab==='entregas'?'active':''}`} onClick={()=>setTab('entregas')}>
                 <i className="bi bi-file-arrow-up me-1"/>Entrega Doc.
                 {entregas.length > 0 && <span className="badge bg-secondary ms-1" style={{fontSize:'0.65rem'}}>{entregas.length}</span>}
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link py-1 ${tab==='plan'?'active':''}`} onClick={()=>setTab('plan')}>
+                <i className="bi bi-bar-chart-steps me-1"/>Plan
               </button>
             </li>
           </ul>
@@ -730,7 +819,14 @@ export default function Proyectos() {
                     </span>
                     {canWrite && (
                       <button className="btn btn-sm btn-primary py-0 px-2" style={{fontSize:'0.78rem'}}
-                        onClick={() => { setFormEnt({...FORM_ENT_VACIO, fecha: hoyStr()}); setCodBuilder(COD_BUILDER_VACIO); setErrEnt(''); setModalEnt('nuevo') }}>
+                        onClick={() => {
+                          const b1 = (selP?.codigo || '').slice(0, 5).toUpperCase()
+                          const nroOc = ocCliente?.numero_oc || ''
+                          const b2 = ultimos6DeOC(nroOc)
+                          setFormEnt({...FORM_ENT_VACIO, fecha: hoyStr(), nro_oc: nroOc, codigo_plano: ensamblarCodigo(b1,b2,'','','')})
+                          setCodBuilder({...COD_BUILDER_VACIO, b1, b2})
+                          setErrEnt(''); setModalEnt('nuevo')
+                        }}>
                         <i className="bi bi-plus-lg me-1"/>Agregar
                       </button>
                     )}
@@ -807,9 +903,25 @@ export default function Proyectos() {
                 </>
               )}
 
+              {/* ── Plan / Gantt ── */}
+              {tab === 'plan' && (
+                <>
+                  {canWrite && (
+                    <div className="d-flex justify-content-start mb-2">
+                      <button className="btn btn-sm btn-outline-warning" onClick={() => setShowPlantilla(true)}>
+                        <i className="bi bi-layout-text-sidebar-reverse me-1"/>Editor de plantillas
+                      </button>
+                    </div>
+                  )}
+                  <PlanGantt proyecto={detalle || selP} canWrite={canWrite} />
+                </>
+              )}
+
             </div>
           )}
         </div>
+      )}
+      </div>
       )}
 
       {/* ── Modal nuevo / editar proyecto ──────────────────────────────── */}
@@ -873,6 +985,22 @@ export default function Proyectos() {
                       value={formP.fecha_fin_est} onChange={v=>setFormP(p=>({...p,fecha_fin_est:v}))}/>
                   </div>
                 </div>
+                {modalP !== 'nuevo' && (
+                  <div className="mt-3 p-2 rounded" style={{background:'#f8f9fa', fontSize:'0.8rem'}}>
+                    <div className="fw-semibold text-muted mb-1">
+                      <i className="bi bi-file-earmark-text me-1"/>OC de Cliente vinculada
+                    </div>
+                    {ocCliente ? (
+                      <div className="d-flex flex-wrap gap-3">
+                        <span><strong>N°:</strong> {ocCliente.numero_oc || '—'}</span>
+                        <span><strong>Monto:</strong> {ocCliente.monto_oc != null && ocCliente.monto_oc !== '' ? `USD ${fmtN(ocCliente.monto_oc)}` : '—'}</span>
+                        <span><strong>Fecha:</strong> {fmtF(ocCliente.fecha_oc)}</span>
+                      </div>
+                    ) : (
+                      <span className="text-muted fst-italic">Sin OC vinculada. Se vincula desde Finanzas → OC Clientes.</span>
+                    )}
+                  </div>
+                )}
                 {errP && <div className="alert alert-danger mt-2 py-1 small mb-0">{errP}</div>}
               </div>
               <div className="modal-footer py-2">
@@ -991,7 +1119,11 @@ export default function Proyectos() {
                     <label className="form-label small fw-medium">Nº OC</label>
                     <input className="form-control form-control-sm" placeholder="Ej: OC 4500000517"
                       value={formEnt.nro_oc}
-                      onChange={e => setFormEnt(p => ({...p, nro_oc: e.target.value}))}/>
+                      onChange={e => {
+                        const v = e.target.value
+                        setFormEnt(p => ({...p, nro_oc: v}))
+                        updBuilder('b2', ultimos6DeOC(v))
+                      }}/>
                   </div>
                   <div className="col-md-3">
                     <label className="form-label small fw-medium">Tipo *</label>
@@ -1026,15 +1158,24 @@ export default function Proyectos() {
                     <label className="form-label small fw-medium">
                       Código de plano
                       <span className="text-muted fw-normal ms-2" style={{fontSize:'0.7rem'}}>
-                        B1·Cliente — B2·Proyecto — B3·Destino — B4·Nivel — B5·Hoja (PE-08)
+                        B1·Proyecto — B2·OC (6 díg.) — B3·Destino — B4·Nivel — B5·Hoja (PE-08)
                       </span>
+                      {!isAdmin && (
+                        <span className="text-muted fw-normal ms-2" style={{fontSize:'0.68rem'}}>
+                          <i className="bi bi-lock-fill me-1"/>B1 y B2 se completan automáticamente
+                        </span>
+                      )}
                     </label>
                     <div className="d-flex gap-1 align-items-center mb-1 flex-wrap">
-                      <input className="form-control form-control-sm" style={{width:72}} placeholder="B1 cliente"
-                        value={codBuilder.b1} onChange={e => updBuilder('b1', e.target.value.toUpperCase())} maxLength={6}/>
+                      <input className="form-control form-control-sm" style={{width:72}} placeholder="B1 proyecto"
+                        title="Código del proyecto — solo el administrador puede editarlo manualmente"
+                        value={codBuilder.b1} onChange={e => updBuilder('b1', e.target.value.toUpperCase())}
+                        disabled={!isAdmin} maxLength={6}/>
                       <span className="text-muted">-</span>
-                      <input className="form-control form-control-sm" style={{width:90}} placeholder="B2 proyecto"
-                        value={codBuilder.b2} onChange={e => updBuilder('b2', e.target.value.toUpperCase())} maxLength={10}/>
+                      <input className="form-control form-control-sm" style={{width:90}} placeholder="B2 OC"
+                        title="Últimos 6 dígitos del Nº OC — solo el administrador puede editarlo manualmente"
+                        value={codBuilder.b2} onChange={e => updBuilder('b2', e.target.value.toUpperCase())}
+                        disabled={!isAdmin} maxLength={10}/>
                       <span className="text-muted">-</span>
                       <select className="form-select form-select-sm" style={{width:82}}
                         value={codBuilder.b3} onChange={e => updBuilder('b3', e.target.value)}>
@@ -1058,7 +1199,7 @@ export default function Proyectos() {
                     {(codBuilder.b1 || codBuilder.b2) && (
                       <div className="text-muted mt-1" style={{fontSize:'0.68rem'}}>
                         <i className="bi bi-file-earmark me-1"/>
-                        Archivo (A): {[codBuilder.b1, codBuilder.b2.slice(0,6), (codBuilder.b3||'XX')+(formEnt.plano_nivel||'XX'), 'REVA', 'XX', formEnt.fecha?.replace(/-/g,'')||'XXXXXXXX'].join('-')}
+                        Archivo (A): {[codBuilder.b1||'XXXXX', codBuilder.b2.slice(0,6)||'XXXXXX', (codBuilder.b3||'XX')+(formEnt.plano_nivel||'XX'), 'REVA', 'XX', formEnt.fecha?.replace(/-/g,'')||'XXXXXXXX'].join('-')}
                       </div>
                     )}
                   </div>

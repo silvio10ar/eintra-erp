@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
+import DateInput from '../../components/DateInput'
 
 const fmtN = n => n != null ? new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n) : '—'
 const fmtF = s => s ? s.slice(0,10).split('-').reverse().join('/') : '—'
@@ -353,8 +354,8 @@ export default function Ventas() {
               <div className="row g-2">
                 <div className="col-6 col-md-2">
                   <label className="form-label mb-1">Fecha</label>
-                  <input type="date" className="form-control form-control-sm" value={form.fecha}
-                    onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))} />
+                  <DateInput className="form-control form-control-sm" value={form.fecha}
+                    onChange={v => setForm(f => ({ ...f, fecha: v }))} />
                 </div>
                 <div className="col-6 col-md-2">
                   <label className="form-label mb-1">Validez</label>
@@ -749,6 +750,7 @@ export default function Ventas() {
           </div>
         </div>
       )}
+
     </div>
   )
 }

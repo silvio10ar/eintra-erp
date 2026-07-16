@@ -2,24 +2,27 @@ import { useState, useEffect, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { getUser, clearAuth, getPermisos, getToken } from '../store/authStore'
 import MiParte from './MiParte'
+import logo from '../assets/logo.avif'
 
 const TODOS_LOS_ITEMS = [
-  { to: '/dashboard',      label: 'Dashboard',      icon: 'speedometer2',      modulo: null              },
-  { to: '/stock',          label: 'Stock',           icon: 'box-seam',          modulo: 'stock'           },
+  // ── Dashboard (siempre primero) ────────────────────
+  { to: '/dashboard',      label: 'Dashboard',       icon: 'speedometer2',      modulo: null              },
+  // ── Módulos principales (orden alfabético) ─────────
+  { to: '/administracion', label: 'Administración',  icon: 'building-gear',     modulo: 'administracion'  },
+  { to: '/calidad',        label: 'Calidad',         icon: 'clipboard2-check',  modulo: 'calidad'         },
   { to: '/compras',        label: 'Compras',         icon: 'cart3',             modulo: 'compras'         },
-  { to: '/ventas',         label: 'Ventas',          icon: 'briefcase',         modulo: 'ventas'          },
+  { to: '/materiales',     label: 'Materiales',      icon: 'boxes',             modulo: 'materiales',     padre: 'compras' },
   { to: '/crm',            label: 'CRM',             icon: 'people',            modulo: 'ventas'          },
-  { to: '/proyectos',      label: 'Proyectos',       icon: 'kanban',            modulo: 'proyectos'       },
-  { to: '/produccion',     label: 'Producción',      icon: 'tools',             modulo: 'produccion'      },
   { to: '/finanzas',       label: 'Finanzas',        icon: 'cash-stack',        modulo: 'finanzas'        },
   { to: '/mantenimiento',  label: 'Mantenimiento',   icon: 'wrench-adjustable', modulo: 'mantenimiento'   },
+  { to: '/mensajes',       label: 'Mensajes',        icon: 'envelope',          modulo: null              },
+  { to: '/produccion',     label: 'Producción',      icon: 'tools',             modulo: 'produccion'      },
+  { to: '/proyectos',      label: 'Proyectos',       icon: 'kanban',            modulo: 'proyectos'       },
   { to: '/rrhh',           label: 'RRHH',            icon: 'people-fill',       modulo: 'rrhh'            },
-  { to: '/partes',         label: 'Partes',          icon: 'file-earmark-text', modulo: 'partes',  padre: 'rrhh' },
-  { to: '/codificacion',   label: 'Codificación',    icon: 'tag',               modulo: 'codificacion', padre: 'compras' },
-  { to: '/materiales',     label: 'Materiales',      icon: 'boxes',             modulo: 'materiales',   padre: 'compras' },
-  { to: '/compras/stock',  label: 'Stock',           icon: 'box-seam',          modulo: 'stock',        padre: 'compras' },
-  { to: '/mensajes',        label: 'Mensajes',         icon: 'envelope',          modulo: null              },
-  { to: '/administracion', label: 'Administración',  icon: 'building-gear',     modulo: 'administracion'  },
+  { to: '/partes',         label: 'Partes',          icon: 'file-earmark-text', modulo: 'partes',         padre: 'rrhh'  },
+  { to: '/stock',          label: 'Stock',           icon: 'box-seam',          modulo: 'stock'           },
+  { to: '/ventas',         label: 'Ventas',          icon: 'briefcase',         modulo: 'ventas'          },
+  // ── Sistema (solo admin) ───────────────────────────
   { to: '/configuracion',  label: 'Configuración',   icon: 'gear',              modulo: '__admin__'       },
   { to: '/usuarios',       label: 'Usuarios',        icon: 'people-gear',       modulo: '__admin__'       },
 ]
@@ -81,7 +84,7 @@ export default function Layout() {
   })
   const visibles = new Set(NAV_ITEMS.map(i => i.modulo))
   // Items de primer nivel: sin padre, o cuyo padre no está visible
-  const topLevel = NAV_ITEMS.filter(i => !i.padre || !visibles.has(i.padre))
+  const topLevel = NAV_ITEMS.filter(i => !i.padre)
 
   const handleLogout = () => {
     clearAuth()
@@ -93,8 +96,10 @@ export default function Layout() {
       {/* ── Sidebar ─────────────────────────────────── */}
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <div className="brand-title">E-INTRA</div>
-          <div className="brand-sub">Sistema ERP</div>
+          <div style={{ background: 'rgba(255,255,255,0.96)', borderRadius: 8, padding: '5px 10px', display: 'inline-flex', alignItems: 'center' }}>
+            <img src={logo} alt="E-INTRA" style={{ height: 34 }} />
+          </div>
+          <div className="brand-sub" style={{ marginTop: 6 }}>Sistema ERP</div>
         </div>
 
         <nav>
@@ -171,9 +176,7 @@ export default function Layout() {
       <div className="main-content">
         {/* Topbar */}
         <header className="topbar">
-          <span className="fw-semibold text-secondary" style={{ fontSize: '0.85rem' }}>
-            E-INTRA ERP
-          </span>
+          <img src={logo} alt="E-INTRA" style={{ height: 28 }} />
           <div className="d-flex align-items-center gap-3">
             <button className="btn btn-sm btn-primary" onClick={() => setShowMiParte(true)}>
               <i className="bi bi-file-earmark-text me-1" />Mi Parte

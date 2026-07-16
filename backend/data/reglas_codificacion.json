@@ -3225,7 +3225,7 @@
         },
         {
           "codigo": "Z0",
-          "descripcion": "ROCKER"
+          "descripcion": "ROKER"
         },
         {
           "codigo": "Z1",
@@ -3489,6 +3489,24 @@
       ]
     },
     {
+      "posicion": "SEXTO DIGITO\nGABINETE\nMATERIAL",
+      "valores": [
+        { "codigo": "0", "descripcion": "METALICO" },
+        { "codigo": "1", "descripcion": "PLASTICO" },
+        { "codigo": "2", "descripcion": "INOXIDABLE" },
+        { "codigo": "3", "descripcion": "PRFV" },
+        { "codigo": "4", "descripcion": "ANTIEXPLOSIVO" }
+      ]
+    },
+    {
+      "posicion": "SEPTIMO DIGITO\nGABINETE\nTAPA",
+      "valores": [
+        { "codigo": "0", "descripcion": "CIEGA" },
+        { "codigo": "1", "descripcion": "TRANSPARENTE" },
+        { "codigo": "2", "descripcion": "CALADA" }
+      ]
+    },
+    {
       "posicion": "SEPTIMO DIGITO\nCONECTOR METAL\nANGULO",
       "valores": [
         {
@@ -3555,34 +3573,20 @@
     {
       "posicion": "OCTAVO DIGITO\nGABINETE\nALTO",
       "valores": [
-        {
-          "codigo": "2",
-          "descripcion": "200"
-        },
-        {
-          "codigo": "3",
-          "descripcion": "300"
-        },
-        {
-          "codigo": "4",
-          "descripcion": "400"
-        },
-        {
-          "codigo": "5",
-          "descripcion": "500"
-        },
-        {
-          "codigo": "6",
-          "descripcion": "600"
-        },
-        {
-          "codigo": "9",
-          "descripcion": "900"
-        },
-        {
-          "codigo": "A",
-          "descripcion": "1200"
-        }
+        { "codigo": "0", "descripcion": "250" },
+        { "codigo": "1", "descripcion": "350" },
+        { "codigo": "2", "descripcion": "450" },
+        { "codigo": "3", "descripcion": "300" },
+        { "codigo": "4", "descripcion": "400" },
+        { "codigo": "5", "descripcion": "500" },
+        { "codigo": "6", "descripcion": "600" },
+        { "codigo": "7", "descripcion": "550" },
+        { "codigo": "8", "descripcion": "650" },
+        { "codigo": "9", "descripcion": "900" },
+        { "codigo": "A", "descripcion": "1200" },
+        { "codigo": "B", "descripcion": "750" },
+        { "codigo": "C", "descripcion": "1050" },
+        { "codigo": "D", "descripcion": "1000" }
       ]
     },
     {
@@ -3651,30 +3655,20 @@
     {
       "posicion": "NOVENO DIGITO\nGABINETE\nANCHO",
       "valores": [
-        {
-          "codigo": "3",
-          "descripcion": "300"
-        },
-        {
-          "codigo": "4",
-          "descripcion": "400"
-        },
-        {
-          "codigo": "5",
-          "descripcion": "500"
-        },
-        {
-          "codigo": "6",
-          "descripcion": "600"
-        },
-        {
-          "codigo": "9",
-          "descripcion": "900"
-        },
-        {
-          "codigo": "A",
-          "descripcion": "1200"
-        }
+        { "codigo": "0", "descripcion": "250" },
+        { "codigo": "1", "descripcion": "350" },
+        { "codigo": "2", "descripcion": "450" },
+        { "codigo": "3", "descripcion": "300" },
+        { "codigo": "4", "descripcion": "400" },
+        { "codigo": "5", "descripcion": "500" },
+        { "codigo": "6", "descripcion": "600" },
+        { "codigo": "7", "descripcion": "550" },
+        { "codigo": "8", "descripcion": "650" },
+        { "codigo": "9", "descripcion": "900" },
+        { "codigo": "A", "descripcion": "1200" },
+        { "codigo": "B", "descripcion": "750" },
+        { "codigo": "C", "descripcion": "1050" },
+        { "codigo": "D", "descripcion": "1000" }
       ]
     },
     {
@@ -3759,26 +3753,15 @@
     {
       "posicion": "DECIMO DIGITO\nGABINETE\nPROFUNDIDAD",
       "valores": [
-        {
-          "codigo": "A",
-          "descripcion": "160"
-        },
-        {
-          "codigo": "B",
-          "descripcion": "210"
-        },
-        {
-          "codigo": "C",
-          "descripcion": "225"
-        },
-        {
-          "codigo": "D",
-          "descripcion": "260"
-        },
-        {
-          "codigo": "E",
-          "descripcion": "450"
-        }
+        { "codigo": "A", "descripcion": "160" },
+        { "codigo": "B", "descripcion": "210" },
+        { "codigo": "C", "descripcion": "225" },
+        { "codigo": "D", "descripcion": "260" },
+        { "codigo": "E", "descripcion": "450" },
+        { "codigo": "0", "descripcion": "100" },
+        { "codigo": "1", "descripcion": "150" },
+        { "codigo": "2", "descripcion": "225" },
+        { "codigo": "3", "descripcion": "300" }
       ]
     },
     {

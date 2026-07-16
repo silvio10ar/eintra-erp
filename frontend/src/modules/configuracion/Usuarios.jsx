@@ -33,6 +33,11 @@ export default function Usuarios() {
   const [permisosForm, setPermisosForm]       = useState({})
   const [savingPermisos, setSavingPermisos]   = useState(false)
 
+  // Modal historial de conexiones
+  const [userHistorial, setUserHistorial]     = useState(null)
+  const [historial, setHistorial]             = useState([])
+  const [loadingHistorial, setLoadingHistorial] = useState(false)
+
   const cargar = useCallback(() => {
     setLoading(true)
     Promise.all([
@@ -105,6 +110,18 @@ export default function Usuarios() {
     }
   }
 
+  /* ── Impersonar usuario ─────────────────────────────────────────── */
+  const impersonar = async u => {
+    try {
+      const r = await api.post(`/auth/impersonate/${u.id}`)
+      const key = `_imp_${Date.now()}`
+      localStorage.setItem(key, JSON.stringify(r.data))
+      window.open(`${window.location.origin}/?_imp=${key}`, '_blank')
+    } catch (err) {
+      alert(err.response?.data?.error ?? 'Error al impersonar')
+    }
+  }
+
   /* ── Activar / desactivar ──────────────────────────────────────── */
   const handleActivo = async u => {
     try {
@@ -146,6 +163,22 @@ export default function Usuarios() {
   const setPerm = (m, field, val) =>
     setPermisosForm(p => ({ ...p, [m]: { ...p[m], [field]: val } }))
 
+  /* ── Historial de conexiones ─────────────────────────────────────── */
+  const abrirHistorial = async u => {
+    setUserHistorial(u)
+    setLoadingHistorial(true)
+    try {
+      const { data } = await api.get(`/auth/usuarios/${u.id}/login-log`)
+      setHistorial(data)
+    } catch {
+      setHistorial([])
+    } finally {
+      setLoadingHistorial(false)
+    }
+  }
+
+  const formatFecha = f => f ? new Date(f.replace(' ', 'T')).toLocaleString('es-AR') : '—'
+
   if (loading) return (
     <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '50vh' }}>
       <div className="spinner-border text-secondary" />
@@ -175,6 +208,7 @@ export default function Usuarios() {
                 <th>Empleado RRHH</th>
                 <th>Email</th>
                 <th>Estado</th>
+                <th>Última conexión</th>
                 <th className="text-end">Acciones</th>
               </tr>
             </thead>
@@ -197,8 +231,19 @@ export default function Usuarios() {
                       {u.activo ? 'Activo' : 'Inactivo'}
                     </span>
                   </td>
+                  <td className="text-muted small">{formatFecha(u.ultimo_login)}</td>
                   <td className="text-end">
                     <div className="d-flex gap-2 justify-content-end">
+                      <button className="btn btn-sm btn-outline-secondary" title="Historial de conexiones"
+                        onClick={() => abrirHistorial(u)}>
+                        <i className="bi bi-clock-history" />
+                      </button>
+                      {u.activo && (
+                        <button className="btn btn-sm btn-outline-info" title={`Operar como ${u.username}`}
+                          onClick={() => impersonar(u)}>
+                          <i className="bi bi-box-arrow-in-right" />
+                        </button>
+                      )}
                       {u.rol !== 'admin' && (
                         <button className="btn btn-sm btn-outline-primary" title="Permisos"
                           onClick={() => abrirPermisos(u)}>
@@ -331,6 +376,52 @@ export default function Usuarios() {
                   {savingPermisos && <span className="spinner-border spinner-border-sm me-2" />}
                   Guardar permisos
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Historial de conexiones ─────────────────────────── */}
+      {userHistorial && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,.4)' }}>
+          <div className="modal-dialog modal-md">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <i className="bi bi-clock-history me-2 text-primary" />
+                  Conexiones de <strong>{userHistorial.username}</strong>
+                </h5>
+                <button type="button" className="btn-close" onClick={() => setUserHistorial(null)} />
+              </div>
+              <div className="modal-body p-0" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                {loadingHistorial ? (
+                  <div className="d-flex justify-content-center py-4">
+                    <span className="spinner-border spinner-border-sm" />
+                  </div>
+                ) : historial.length === 0 ? (
+                  <p className="text-muted text-center py-4 mb-0">Sin conexiones registradas</p>
+                ) : (
+                  <table className="table table-sm align-middle mb-0">
+                    <thead className="table-light">
+                      <tr>
+                        <th className="ps-3">Fecha y hora</th>
+                        <th>IP</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historial.map(h => (
+                        <tr key={h.id}>
+                          <td className="ps-3">{formatFecha(h.fecha)}</td>
+                          <td className="text-muted small">{h.ip || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary btn-sm" onClick={() => setUserHistorial(null)}>Cerrar</button>
               </div>
             </div>
           </div>

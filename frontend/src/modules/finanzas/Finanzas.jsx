@@ -22,13 +22,136 @@ const MONEDAS = ['PESO', 'DÓLAR', 'EURO']
 
 const esNC = tipo => typeof tipo === 'string' && tipo.startsWith('NC')
 
-const FORM_PAGO = { tipo: 'parcial', forma_pago: 'transferencia', entidad: '', importe: '', moneda: 'PESO', fecha: new Date().toISOString().slice(0,10), fecha_acreditacion: '', observaciones: '' }
+const FORM_PAGO = { tipo: 'parcial', forma_pago: 'transferencia', entidad: '', importe: '', moneda: 'PESO', fecha: new Date().toISOString().slice(0,10), fecha_acreditacion: '', observaciones: '', ret_iibb: '', ret_iva: '', ret_gcia: '', ret_contratista: '', ret_ss: '' }
 
 const FORMAS_PAGO = ['transferencia','cheque','cheque_diferido','e-cheq','efectivo','deposito']
 const TIPOS_PAGO  = ['anticipo','parcial','final']
 
 const FORM_C = { tipo_factura: 'A', numero: '', fecha: '', proveedor_id: '', proveedor_nombre: '', cuit: '', oc_id: '', oc_numero: '', neto_gravado: '', no_grav_exento: '', iva_21: '', iva_10_5: '', iva_27: '', otros_imp: '', perc_iva: '', perc_iibb: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha_vencimiento: '', observaciones: '' }
-const FORM_V = { tipo_factura: 'A', numero: '', fecha: '', cliente_id: '', cliente_nombre: '', presupuesto_id: '', presupuesto_ref: '', concepto: '', oc: '', neto_gravado: '', iva_21: '', ret_iibb: '', ret_iva: '', ret_gcia: '', ret_contratista: '', ret_ss: '', dif_cambio: '', total_cobrado: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha_vencimiento: '', fecha_pago: '', observaciones: '' }
+const FORM_V = { tipo_factura: 'A', numero: '', fecha: '', cliente_id: '', cliente_nombre: '', presupuesto_id: '', presupuesto_ref: '', concepto: '', oc: '', oc_pct: '', proyecto_id: '', proyecto: '', neto_gravado: '', iva_21: '', ret_iibb: '', ret_iva: '', ret_gcia: '', ret_contratista: '', ret_ss: '', dif_cambio: '', total_cobrado: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha_vencimiento: '', fecha_pago: '', observaciones: '' }
+
+function ProyectoSelector({ value, onChange }) {
+  const [query,   setQuery]   = useState(value || '')
+  const [opciones, setOpc]    = useState([])
+  const [abierto, setAbierto] = useState(false)
+
+  useEffect(() => { setQuery(value || '') }, [value])
+
+  const buscar = async q => {
+    setQuery(q)
+    if (q.length < 1) { setOpc([]); setAbierto(false); return }
+    try {
+      const r = await api.get('/proyectos', { params: { buscar: q } })
+      setOpc(r.data.slice(0, 10))
+      setAbierto(true)
+    } catch { setOpc([]) }
+  }
+
+  const seleccionar = p => {
+    setQuery(`${p.codigo} — ${p.nombre}`)
+    setAbierto(false)
+    onChange(p)
+  }
+
+  return (
+    <div className="position-relative">
+      <input className="form-control form-control-sm" value={query}
+        placeholder="Buscar por código o nombre de proyecto..."
+        onChange={e => buscar(e.target.value)}
+        onBlur={() => setTimeout(() => setAbierto(false), 180)}
+        autoComplete="off" />
+      {abierto && opciones.length > 0 && (
+        <div className="border rounded bg-white shadow-sm position-absolute w-100" style={{ zIndex: 1080, top: '100%', maxHeight: 220, overflowY: 'auto' }}>
+          {opciones.map(p => (
+            <div key={p.id} className="px-2 py-1 border-bottom" style={{ cursor: 'pointer', fontSize: '0.83rem' }}
+              onMouseDown={() => seleccionar(p)}>
+              <span className="badge bg-secondary me-1" style={{ fontSize: '0.7rem', fontFamily: 'monospace' }}>{p.codigo}</span>
+              <span className="fw-semibold">{p.nombre}</span>
+              {p.cliente_nombre && (
+                <span className="text-muted ms-2" style={{ fontSize: '0.75rem' }}>{p.cliente_nombre}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const OC_PENDIENTE = { id: null, numero_oc: 'PENDIENTE' }
+
+function OcClienteSelector({ value, onChange }) {
+  const [query,   setQuery]   = useState(value || '')
+  const [opciones, setOpc]    = useState([])
+  const [abierto, setAbierto] = useState(false)
+
+  useEffect(() => { setQuery(value || '') }, [value])
+
+  const buscar = async q => {
+    setQuery(q)
+    try {
+      const r = await api.get('/finanzas/oc-clientes', { params: q ? { buscar: q } : {} })
+      // Abierta = todavía falta facturar un % del monto de la OC (independiente del cierre administrativo)
+      const abiertas = r.data.filter(oc => {
+        const monto     = parseFloat(oc.monto_oc) || 0
+        const facturado = (parseFloat(oc.monto_anticipo_usd) || 0) + (parseFloat(oc.monto_final_usd) || 0)
+        return monto <= 0 || facturado < monto
+      })
+      setOpc(abiertas.slice(0, 12))
+      setAbierto(true)
+    } catch { setOpc([]) }
+  }
+
+  const seleccionar = oc => {
+    setQuery(oc.numero_oc)
+    setAbierto(false)
+    onChange(oc)
+  }
+
+  // Si se tipeó algo sin elegir una opción de la lista, se descarta al salir del campo
+  const cancelarTexto = () => setTimeout(() => { setAbierto(false); setQuery(value || '') }, 180)
+
+  return (
+    <div className="position-relative">
+      <input className="form-control form-control-sm" value={query}
+        placeholder="Buscar OC abierta por número o cliente..."
+        onChange={e => buscar(e.target.value)}
+        onFocus={() => buscar(query)}
+        onBlur={cancelarTexto}
+        autoComplete="off" />
+      {abierto && (
+        <div className="border rounded bg-white shadow-sm position-absolute w-100" style={{ zIndex: 1080, top: '100%', maxHeight: 260, overflowY: 'auto' }}>
+          <div className="px-2 py-1 border-bottom" style={{ cursor: 'pointer', fontSize: '0.83rem', background: '#fff8e6' }}
+            onMouseDown={() => seleccionar(OC_PENDIENTE)}>
+            <i className="bi bi-exclamation-circle me-1 text-warning" />
+            <span className="fw-semibold">PENDIENTE</span>
+            <span className="text-muted ms-2" style={{ fontSize: '0.72rem' }}>— completar después</span>
+          </div>
+          {opciones.length === 0 ? (
+            <div className="text-muted text-center py-2" style={{ fontSize: '0.75rem' }}>Sin OC abiertas que coincidan</div>
+          ) : opciones.map(oc => {
+            const monto     = parseFloat(oc.monto_oc) || 0
+            const facturado = (parseFloat(oc.monto_anticipo_usd) || 0) + (parseFloat(oc.monto_final_usd) || 0)
+            const pct       = monto > 0 ? Math.round(facturado / monto * 100) : null
+            return (
+              <div key={oc.id} className="px-2 py-1 border-bottom" style={{ cursor: 'pointer', fontSize: '0.83rem' }}
+                onMouseDown={() => seleccionar(oc)}>
+                <span className="fw-semibold text-primary">{oc.numero_oc}</span>
+                <span className="text-muted ms-2" style={{ fontSize: '0.75rem' }}>{oc.cliente}</span>
+                {oc.proy_codigo && (
+                  <span className="badge bg-secondary ms-2" style={{ fontSize: '0.65rem', fontFamily: 'monospace' }}>{oc.proy_codigo}</span>
+                )}
+                {pct !== null && (
+                  <span className="text-muted ms-2" style={{ fontSize: '0.68rem' }}>{pct}% facturado</span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function FiltroBarra({ filt, setFilt }) {
   const activo = filt.buscar || filt.desde || filt.hasta || filt.moneda || filt.pago !== ''
@@ -97,10 +220,11 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
   const [loadV, setLoadV] = useState(false)
   const [modalV, setModalV] = useState(null)
   const [formV, setFormV] = useState(FORM_V)
+  const [ocSel, setOcSel] = useState(null)  // fila completa de la OC elegida (null si es PENDIENTE o no hay OC)
   const [savV, setSavV] = useState(false)
 
   // ── Saldo bancario ───────────────────────────────────────────────────────────
-  const BANCOS = ['Banco ICBC', 'Banco Galicia']
+  const BANCOS = ['Banco ICBC', 'Banco Galicia', 'Banco Santander Río']
   const FORM_SALDO = { entidad: 'Banco ICBC', monto: '', moneda: 'PESO' }
   const [saldos,     setSaldos]     = useState([])
   const [loadSaldos, setLoadSaldos] = useState(false)
@@ -422,8 +546,45 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
   }
 
   // ── Ventas ─────────────────────────────────────────────────────────────────
-  const abrirNuevaV = () => { setFormV(FORM_V); setModalV('new') }
-  const abrirEditV  = f => { setFormV({ ...FORM_V, ...f, importe: f.importe ?? '', tasa_cambio: f.tasa_cambio ?? 1 }); setModalV(f) }
+  const abrirNuevaV = () => { setFormV(FORM_V); setOcSel(null); setModalV('new') }
+  const abrirEditV  = f => {
+    setFormV({
+      ...FORM_V, ...f, importe: f.importe ?? '', tasa_cambio: f.tasa_cambio ?? 1,
+      proyecto: f.proyecto_id ? `${f.proy_codigo} — ${f.proy_nombre}` : '',
+    })
+    setOcSel(null)
+    setModalV(f)
+  }
+
+  const ocElegida = !!formV.oc
+
+  // Muestra el equivalente en la otra moneda cuando se factura distinto a como está la OC (siempre en USD)
+  const otraMoneda = valor => {
+    const v = parseFloat(valor) || 0
+    const tc = parseFloat(formV.tasa_cambio) || 0
+    if (!ocSel || !tc || !v || formV.moneda === 'DÓLAR') return null
+    return `USD ${(v / tc).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+
+  // Autocompletar concepto, neto, IVA y total a partir del % de la OC elegido
+  useEffect(() => {
+    if (!ocSel) return
+    const pct = parseFloat(formV.oc_pct) || 0
+    const montoUSD = (parseFloat(ocSel.monto_oc) || 0) * pct / 100
+    const facturadoPrevio = (parseFloat(ocSel.monto_anticipo_usd) || 0) + (parseFloat(ocSel.monto_final_usd) || 0)
+    const tipoConcepto = facturadoPrevio > 0 ? 'SALDO FINAL' : 'ANTICIPO'
+    // monto_oc es NETO (sin IVA) — el IVA se suma arriba, no se descuenta de un total
+    const neto  = formV.moneda === 'DÓLAR' ? montoUSD : montoUSD * (parseFloat(formV.tasa_cambio) || 0)
+    const iva   = neto * 0.21
+    const total = neto + iva
+    setFormV(p => ({
+      ...p,
+      concepto: pct > 0 ? `${pct}% ${tipoConcepto}` : p.concepto,
+      importe: montoUSD > 0 ? Math.round(total * 100) / 100 : p.importe,
+      neto_gravado: montoUSD > 0 ? Math.round(neto * 100) / 100 : p.neto_gravado,
+      iva_21: montoUSD > 0 ? Math.round(iva * 100) / 100 : p.iva_21,
+    }))
+  }, [ocSel, formV.oc_pct, formV.moneda, formV.tasa_cambio])
 
   const guardarV = async () => {
     if (!formV.numero.trim()) return alert('El número de factura es requerido')
@@ -469,6 +630,9 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     finally { setPagosLoad(false) }
   }
 
+  // Importe + retenciones que el cliente aplicó al pagar (cuentan como saldado)
+  const totalPago = p => (p.importe||0) + (p.ret_iibb||0) + (p.ret_iva||0) + (p.ret_gcia||0) + (p.ret_contratista||0) + (p.ret_ss||0)
+
   const agregarPago = async () => {
     if (!pagoForm.importe || parseFloat(pagoForm.importe) <= 0) return alert('Importe requerido')
     if (!pagoForm.fecha) return alert('Fecha requerida')
@@ -479,7 +643,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
       setPagoForm({ ...FORM_PAGO, moneda: pagosModal.moneda || 'PESO' })
       setMostrarForm(false)
       // Actualizar saldo en la lista
-      const totalPagado = [...pagos, r.data].filter(p => p.estado === 'confirmado').reduce((s, p) => s + p.importe, 0)
+      const totalPagado = [...pagos, r.data].filter(p => p.estado === 'confirmado').reduce((s, p) => s + totalPago(p), 0)
       const saldo = Math.max(0, (pagosModal.importe * (pagosModal.tasa_cambio || 1)) - totalPagado)
       const cobrada = saldo <= 0.01 ? 1 : 0
       setFactV(prev => prev.map(x => x.id === pagosModal.id
@@ -494,7 +658,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     const r = await api.patch(`/finanzas/facturas-venta/${pagosModal.id}/pagos/${pago.id}`, { estado: 'confirmado' })
     const nuevos = pagos.map(p => p.id === pago.id ? r.data : p)
     setPagos(nuevos)
-    const totalPagado = nuevos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + p.importe, 0)
+    const totalPagado = nuevos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + totalPago(p), 0)
     const saldo = Math.max(0, (pagosModal.importe * (pagosModal.tasa_cambio || 1)) - totalPagado)
     const cobrada = saldo <= 0.01 ? 1 : 0
     setFactV(prev => prev.map(x => x.id === pagosModal.id
@@ -508,7 +672,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     await api.delete(`/finanzas/facturas-venta/${pagosModal.id}/pagos/${pago.id}`)
     const nuevos = pagos.filter(p => p.id !== pago.id)
     setPagos(nuevos)
-    const totalPagado = nuevos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + p.importe, 0)
+    const totalPagado = nuevos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + totalPago(p), 0)
     const saldo = Math.max(0, (pagosModal.importe * (pagosModal.tasa_cambio || 1)) - totalPagado)
     setFactV(prev => prev.map(x => x.id === pagosModal.id
       ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }
@@ -712,14 +876,12 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     <th style={{ width: 55 }}>Tipo</th>
                     <th>N° Factura</th>
                     <th>Cliente</th>
+                    <th>CUIT</th>
                     <th>Concepto</th>
                     <th>OC</th>
                     <th className="text-end">Neto Grav.</th>
                     <th className="text-end">IVA 21%</th>
                     <th className="text-end">Total Fact.</th>
-                    <th className="text-end">Ret. IIBB</th>
-                    <th className="text-end">Ret. IVA</th>
-                    <th className="text-end">Ret. Gcía.</th>
                     <th className="text-end">Total Cobrado</th>
                     <th>F. Pago</th>
                     <th>Cobro</th>
@@ -733,14 +895,19 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                       <td><span className={`badge bg-${esNC(f.tipo_factura) ? 'danger' : 'secondary'}`} style={{ fontSize: '0.65rem' }}>{f.tipo_factura || 'A'}</span></td>
                       <td className="fw-semibold" style={{ whiteSpace: 'nowrap' }}>{f.numero}</td>
                       <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.cliente_nombre}>{f.cliente_nombre || '—'}</td>
+                      <td className="text-muted font-monospace" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{f.cliente_cuit || '—'}</td>
                       <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.concepto}>{f.concepto || '—'}</td>
-                      <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>{f.oc || '—'}</td>
+                      <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>
+                        {f.oc || '—'}
+                        {f.proy_codigo && (
+                          <span className="badge bg-secondary ms-1" style={{ fontSize: '0.62rem', fontFamily: 'monospace' }} title={f.proy_nombre}>
+                            {f.proy_codigo}
+                          </span>
+                        )}
+                      </td>
                       <td className="text-end">{f.neto_gravado ? fmtM(f.neto_gravado, f.moneda) : '—'}</td>
                       <td className="text-end">{f.iva_21 ? fmtM(f.iva_21, f.moneda) : '—'}</td>
                       <td className="text-end fw-semibold">{fmtM(f.importe, f.moneda)}</td>
-                      <td className="text-end">{f.ret_iibb ? fmtM(f.ret_iibb, f.moneda) : '—'}</td>
-                      <td className="text-end">{f.ret_iva ? fmtM(f.ret_iva, f.moneda) : '—'}</td>
-                      <td className="text-end">{f.ret_gcia ? fmtM(f.ret_gcia, f.moneda) : '—'}</td>
                       <td className="text-end fw-semibold text-success">{f.total_pagado > 0 ? fmtM(f.total_pagado, f.moneda) : '—'}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtF(f.fecha_pago)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>
@@ -1217,173 +1384,225 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
               </div>
               <div className="modal-body" style={{ fontSize: '0.87rem' }}>
 
-                {/* ── Comprobante ── */}
-                <div className="row g-2 mb-3">
-                  <div className="col-md-2">
-                    <label className="form-label small fw-semibold">Tipo</label>
-                    <input className="form-control form-control-sm" value={formV.tipo_factura}
-                      onChange={e => setFormV(p => ({ ...p, tipo_factura: e.target.value }))}
-                      placeholder="FA, NC, FCEA..." />
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-semibold">N° Factura *</label>
-                    <input className="form-control form-control-sm" value={formV.numero}
-                      onChange={e => setFormV(p => ({ ...p, numero: e.target.value }))}
-                      placeholder="Ej: 3-926" />
-                  </div>
-                  <div className="col-md-2">
-                    <label className="form-label small fw-semibold">Fecha *</label>
-                    <DateInput className="form-control form-control-sm" value={formV.fecha}
-                      onChange={v => setFormV(p => ({ ...p, fecha: v }))} />
-                  </div>
-                  <div className="col-md-2">
-                    <label className="form-label small fw-semibold">F. Vencimiento</label>
-                    <DateInput className="form-control form-control-sm" value={formV.fecha_vencimiento}
-                      onChange={v => setFormV(p => ({ ...p, fecha_vencimiento: v }))} />
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-semibold">F. Pago / Cobro</label>
-                    <DateInput className="form-control form-control-sm" value={formV.fecha_pago}
-                      onChange={v => setFormV(p => ({ ...p, fecha_pago: v }))} />
-                  </div>
-                </div>
-
-                {/* ── Cliente + OC ── */}
-                <div className="row g-2 mb-3">
-                  <div className="col-md-4">
-                    <label className="form-label small fw-semibold">Cliente</label>
-                    <select className="form-select form-select-sm" value={formV.cliente_id}
-                      onChange={e => {
-                        const cl = clientes.find(c => String(c.id) === e.target.value)
-                        setFormV(prev => ({ ...prev, cliente_id: e.target.value, cliente_nombre: cl?.nombre || '' }))
-                      }}>
-                      <option value="">— Seleccionar —</option>
-                      {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-                    </select>
-                    {!formV.cliente_id && (
-                      <input className="form-control form-control-sm mt-1"
-                        placeholder="O escribir nombre manualmente"
-                        value={formV.cliente_nombre}
-                        onChange={e => setFormV(p => ({ ...p, cliente_nombre: e.target.value }))} />
-                    )}
-                  </div>
-                  <div className="col-md-5">
-                    <label className="form-label small fw-semibold">Concepto</label>
-                    <input className="form-control form-control-sm" value={formV.concepto}
-                      onChange={e => setFormV(p => ({ ...p, concepto: e.target.value }))}
-                      placeholder="Descripción del servicio / producto" />
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-semibold">OC / Referencia</label>
-                    <input className="form-control form-control-sm" value={formV.oc}
-                      onChange={e => setFormV(p => ({ ...p, oc: e.target.value }))}
-                      placeholder="Nro. orden de compra" />
-                  </div>
-                </div>
-
-                <hr className="my-2" />
-                <p className="small fw-semibold text-muted mb-2" style={{ letterSpacing: '0.05em' }}>IMPORTES</p>
-
-                {/* Neto + IVA + Moneda */}
+                {/* ── OC (habilita el resto del formulario) ── */}
                 <div className="row g-2 mb-2">
                   <div className="col-md-3">
-                    <label className="form-label small fw-semibold">Neto Gravado</label>
-                    <input type="number" className="form-control form-control-sm" value={formV.neto_gravado}
-                      onChange={e => setFormV(p => ({ ...p, neto_gravado: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
+                    <label className="form-label small fw-semibold">OC / Referencia *</label>
+                    <OcClienteSelector
+                      value={formV.oc}
+                      onChange={oc => {
+                        setOcSel(oc.id ? oc : null)
+                        setFormV(p => ({
+                          ...p,
+                          oc: oc.numero_oc,
+                          oc_pct: '',
+                          ...(oc.id ? { cliente_id: oc.cliente_id || '', cliente_nombre: oc.cli_nombre_cat || oc.cliente || '' } : {}),
+                          ...(oc.proyecto_id ? { proyecto_id: oc.proyecto_id, proyecto: `${oc.proy_codigo} — ${oc.proy_nombre}` } : {}),
+                        }))
+                      }}
+                    />
                   </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-semibold">IVA 21%</label>
-                    <div className="input-group input-group-sm">
-                      <input type="number" className="form-control form-control-sm" value={formV.iva_21}
-                        onChange={e => setFormV(p => ({ ...p, iva_21: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
-                      <button type="button" className="btn btn-outline-secondary px-2"
-                        title="Calcular IVA 21% desde Neto"
-                        onClick={() => setFormV(p => ({ ...p, iva_21: Math.round((parseFloat(p.neto_gravado)||0) * 0.21 * 100) / 100 }))}>
-                        <i className="bi bi-calculator" style={{ fontSize: '0.72rem' }} />
-                      </button>
+                  {ocSel && (
+                    <div className="col-md-2">
+                      <label className="form-label small fw-semibold">% de la OC a facturar</label>
+                      <input type="number" className="form-control form-control-sm" value={formV.oc_pct}
+                        onChange={e => setFormV(p => ({ ...p, oc_pct: e.target.value }))}
+                        min="0" max="100" step="1" placeholder="Ej: 50" />
+                    </div>
+                  )}
+                  {ocSel && (() => {
+                    const monto      = parseFloat(ocSel.monto_oc) || 0
+                    const facturado  = (parseFloat(ocSel.monto_anticipo_usd) || 0) + (parseFloat(ocSel.monto_final_usd) || 0)
+                    return (
+                      <div className="col-md-4">
+                        <label className="form-label small fw-semibold">Total de la OC</label>
+                        <div className="form-control form-control-sm bg-light text-muted" style={{ fontSize: '0.76rem' }}>
+                          USD {monto.toLocaleString('es-AR',{minimumFractionDigits:2})}
+                          {' · Facturado: '}USD {facturado.toLocaleString('es-AR',{minimumFractionDigits:2})}
+                          {' · Resta: '}USD {(monto-facturado).toLocaleString('es-AR',{minimumFractionDigits:2})}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+                {!ocElegida && (
+                  <div className="alert alert-warning py-2 small mb-2">
+                    <i className="bi bi-lock-fill me-1" />
+                    Elegí una OC (o marcá "PENDIENTE") para habilitar el resto de la factura.
+                  </div>
+                )}
+
+                <fieldset disabled={!ocElegida} style={{ border: 0, padding: 0, margin: 0 }}>
+
+                  {/* ── Comprobante ── */}
+                  <div className="row g-2 mb-3">
+                    <div className="col-md-2">
+                      <label className="form-label small fw-semibold">Tipo</label>
+                      <input className="form-control form-control-sm" value={formV.tipo_factura}
+                        onChange={e => setFormV(p => ({ ...p, tipo_factura: e.target.value }))}
+                        placeholder="FA, NC, FCEA..." />
+                    </div>
+                    <div className="col-md-3">
+                      <label className="form-label small fw-semibold">N° Factura *</label>
+                      <input className="form-control form-control-sm" value={formV.numero}
+                        onChange={e => setFormV(p => ({ ...p, numero: e.target.value }))}
+                        placeholder="Ej: 3-926" />
+                    </div>
+                    <div className="col-md-2">
+                      <label className="form-label small fw-semibold">Fecha *</label>
+                      <DateInput className="form-control form-control-sm" value={formV.fecha}
+                        onChange={v => setFormV(p => ({ ...p, fecha: v }))} />
+                    </div>
+                    <div className="col-md-2">
+                      <label className="form-label small fw-semibold">F. Vencimiento</label>
+                      <DateInput className="form-control form-control-sm" value={formV.fecha_vencimiento}
+                        onChange={v => setFormV(p => ({ ...p, fecha_vencimiento: v }))} />
+                    </div>
+                    <div className="col-md-3">
+                      <label className="form-label small fw-semibold">F. Pago / Cobro</label>
+                      <DateInput className="form-control form-control-sm" value={formV.fecha_pago}
+                        onChange={v => setFormV(p => ({ ...p, fecha_pago: v }))} />
                     </div>
                   </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-semibold">Total Factura</label>
-                    <input type="number" className="form-control form-control-sm" value={formV.importe}
-                      onChange={e => setFormV(p => ({ ...p, importe: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
+
+                  <div className="row g-2 mb-3">
+                    <div className={ocSel ? 'col-md-5' : 'col-md-7'}>
+                      <label className="form-label small fw-semibold">
+                        Cliente {ocSel && <span className="text-muted fw-normal">(desde la OC)</span>}
+                      </label>
+                      {ocSel ? (
+                        <input className="form-control form-control-sm" value={formV.cliente_nombre} disabled />
+                      ) : (
+                        <>
+                          <select className="form-select form-select-sm" value={formV.cliente_id}
+                            onChange={e => {
+                              const cl = clientes.find(c => String(c.id) === e.target.value)
+                              setFormV(prev => ({ ...prev, cliente_id: e.target.value, cliente_nombre: cl?.nombre || '' }))
+                            }}>
+                            <option value="">— Seleccionar —</option>
+                            {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                          </select>
+                          {!formV.cliente_id && (
+                            <input className="form-control form-control-sm mt-1"
+                              placeholder="O escribir nombre manualmente"
+                              value={formV.cliente_nombre}
+                              onChange={e => setFormV(p => ({ ...p, cliente_nombre: e.target.value }))} />
+                          )}
+                        </>
+                      )}
+                    </div>
+                    <div className={ocSel ? 'col-md-7' : 'col-md-5'}>
+                      <label className="form-label small fw-semibold">
+                        Concepto {ocSel && <span className="text-muted fw-normal">(desde % de OC)</span>}
+                      </label>
+                      <input className="form-control form-control-sm" value={formV.concepto} disabled={!!ocSel}
+                        onChange={e => setFormV(p => ({ ...p, concepto: e.target.value }))}
+                        placeholder="Descripción del servicio / producto" />
+                    </div>
                   </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-semibold">Moneda</label>
-                    <select className="form-select form-select-sm" value={formV.moneda}
-                      onChange={e => setFormV(p => ({ ...p, moneda: e.target.value }))}>
-                      {MONEDAS.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                    {formV.moneda !== 'PESO' && (
-                      <input type="number" className="form-control form-control-sm mt-1" value={formV.tasa_cambio}
-                        onChange={e => setFormV(p => ({ ...p, tasa_cambio: e.target.value }))}
-                        min="0" step="0.01" placeholder="Tasa de cambio" />
+                  <div className="row g-2 mb-3">
+                    <div className="col-md-4">
+                      <label className="form-label small fw-semibold">
+                        Proyecto <span className="text-muted fw-normal">(para cruzar con OC Clientes)</span>
+                      </label>
+                      <ProyectoSelector
+                        value={formV.proyecto}
+                        onChange={p => setFormV(prev => ({ ...prev, proyecto_id: p.id, proyecto: `${p.codigo} — ${p.nombre}` }))}
+                      />
+                    </div>
+                  </div>
+
+                  <hr className="my-2" />
+                  <p className="small fw-semibold text-muted mb-2" style={{ letterSpacing: '0.05em' }}>IMPORTES</p>
+
+                  {/* Moneda primero: define cómo se calculan Neto/IVA/Total */}
+                  <div className="row g-2 mb-2">
+                    <div className="col-md-3">
+                      <label className="form-label small fw-semibold">¿Se factura en pesos o en dólares?</label>
+                      <select className="form-select form-select-sm" value={formV.moneda}
+                        onChange={e => setFormV(p => ({ ...p, moneda: e.target.value }))}>
+                        <option value="PESO">Pesos</option>
+                        <option value="DÓLAR">Dólares</option>
+                      </select>
+                    </div>
+                    {(formV.moneda !== 'PESO' || ocSel) && (
+                      <div className="col-md-3">
+                        <label className="form-label small fw-semibold">Tipo de cambio</label>
+                        <input type="number" className="form-control form-control-sm" value={formV.tasa_cambio}
+                          onChange={e => setFormV(p => ({ ...p, tasa_cambio: e.target.value }))}
+                          min="0" step="0.01" placeholder="Tipo de cambio" />
+                        {ocSel && formV.moneda === 'PESO' && (
+                          <div className="form-text" style={{ fontSize: '0.68rem' }}>
+                            La OC está en USD — hace falta para convertir a pesos.
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
-                </div>
 
-                <hr className="my-2" />
-                <p className="small fw-semibold text-muted mb-2" style={{ letterSpacing: '0.05em' }}>RETENCIONES</p>
-
-                <div className="row g-2 mb-2">
-                  {[
-                    { key: 'ret_iibb',       label: 'Ret. IIBB'       },
-                    { key: 'ret_iva',        label: 'Ret. IVA'        },
-                    { key: 'ret_gcia',       label: 'Ret. Gcía.'      },
-                    { key: 'ret_contratista',label: 'Ret. Contratista'},
-                    { key: 'ret_ss',         label: 'Ret. SS'         },
-                    { key: 'dif_cambio',     label: 'Dif. Cambio'     },
-                  ].map(({ key, label }) => (
-                    <div key={key} className="col-md-2">
-                      <label className="form-label small fw-semibold">{label}</label>
-                      <input type="number" className="form-control form-control-sm" value={formV[key]}
-                        onChange={e => setFormV(p => ({ ...p, [key]: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
+                  <div className="row g-2 mb-2">
+                    <div className="col-md-4">
+                      <label className="form-label small fw-semibold">Neto Gravado</label>
+                      <input type="number" className="form-control form-control-sm" value={formV.neto_gravado}
+                        onChange={e => setFormV(p => ({ ...p, neto_gravado: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
+                      {otraMoneda(formV.neto_gravado) && (
+                        <div className="form-text" style={{ fontSize: '0.68rem' }}>≈ {otraMoneda(formV.neto_gravado)}</div>
+                      )}
                     </div>
-                  ))}
-                </div>
-                <div className="row g-2 mb-3">
-                  <div className="col-md-3">
-                    <label className="form-label small fw-semibold">Total Cobrado</label>
-                    <input type="number" className="form-control form-control-sm" value={formV.total_cobrado}
-                      onChange={e => setFormV(p => ({ ...p, total_cobrado: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
+                    <div className="col-md-4">
+                      <label className="form-label small fw-semibold">IVA 21%</label>
+                      <div className="input-group input-group-sm">
+                        <input type="number" className="form-control form-control-sm" value={formV.iva_21}
+                          onChange={e => setFormV(p => ({ ...p, iva_21: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
+                        <button type="button" className="btn btn-outline-secondary px-2"
+                          title="Calcular IVA 21% desde Neto"
+                          onClick={() => setFormV(p => ({ ...p, iva_21: Math.round((parseFloat(p.neto_gravado)||0) * 0.21 * 100) / 100 }))}>
+                          <i className="bi bi-calculator" style={{ fontSize: '0.72rem' }} />
+                        </button>
+                      </div>
+                      {otraMoneda(formV.iva_21) && (
+                        <div className="form-text" style={{ fontSize: '0.68rem' }}>≈ {otraMoneda(formV.iva_21)}</div>
+                      )}
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label small fw-semibold">Total Factura</label>
+                      <input type="number" className="form-control form-control-sm" value={formV.importe}
+                        onChange={e => setFormV(p => ({ ...p, importe: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
+                      {otraMoneda(formV.importe) && (
+                        <div className="form-text" style={{ fontSize: '0.68rem' }}>≈ {otraMoneda(formV.importe)}</div>
+                      )}
+                    </div>
                   </div>
-                  <div className="col-md-9 d-flex align-items-end pb-1">
-                    {(() => {
-                      const rets = ['ret_iibb','ret_iva','ret_gcia','ret_contratista','ret_ss'].reduce((s, k) => s + (parseFloat(formV[k])||0), 0)
-                      const dif  = parseFloat(formV.dif_cambio) || 0
-                      const imp  = parseFloat(formV.importe) || 0
-                      if (rets || dif) return (
-                        <span className="small text-muted">
-                          Total retenciones: <strong>{fmtM(rets, formV.moneda)}</strong>
-                          {dif ? <> · Dif. cambio: <strong>{fmtM(dif, formV.moneda)}</strong></> : null}
-                          {imp ? <> · Neto estimado: <strong className="text-success">{fmtM(imp - rets - dif, formV.moneda)}</strong></> : null}
-                        </span>
-                      )
-                      return null
-                    })()}
-                  </div>
-                </div>
 
-                <hr className="my-2" />
-                <div className="row g-2">
-                  <div className="col-md-6">
-                    <label className="form-label small fw-semibold">Presupuesto <span className="text-muted fw-normal">(opcional)</span></label>
-                    <select className="form-select form-select-sm" value={formV.presupuesto_id}
-                      onChange={e => {
-                        const pp = presupuestos.find(p => String(p.id) === e.target.value)
-                        setFormV(prev => ({ ...prev, presupuesto_id: e.target.value, presupuesto_ref: pp?.numero || '' }))
-                      }}>
-                      <option value="">— Sin presupuesto —</option>
-                      {presupuestos.map(p => <option key={p.id} value={p.id}>{p.numero} — {p.cli_nombre}</option>)}
-                    </select>
+                  <div className="row g-2 mb-3">
+                    <div className="col-md-4">
+                      <label className="form-label small fw-semibold">Total Cobrado</label>
+                      <input type="number" className="form-control form-control-sm" value={formV.total_cobrado}
+                        onChange={e => setFormV(p => ({ ...p, total_cobrado: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
+                    </div>
                   </div>
-                  <div className="col-md-6">
-                    <label className="form-label small fw-semibold">Observaciones</label>
-                    <input className="form-control form-control-sm" value={formV.observaciones}
-                      onChange={e => setFormV(p => ({ ...p, observaciones: e.target.value }))} />
-                  </div>
-                </div>
 
+                  <hr className="my-2" />
+                  <div className="row g-2">
+                    <div className="col-md-6">
+                      <label className="form-label small fw-semibold">Presupuesto <span className="text-muted fw-normal">(opcional)</span></label>
+                      <select className="form-select form-select-sm" value={formV.presupuesto_id}
+                        onChange={e => {
+                          const pp = presupuestos.find(p => String(p.id) === e.target.value)
+                          setFormV(prev => ({ ...prev, presupuesto_id: e.target.value, presupuesto_ref: pp?.numero || '' }))
+                        }}>
+                        <option value="">— Sin presupuesto —</option>
+                        {presupuestos.map(p => <option key={p.id} value={p.id}>{p.numero} — {p.cli_nombre}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label small fw-semibold">Observaciones</label>
+                      <input className="form-control form-control-sm" value={formV.observaciones}
+                        onChange={e => setFormV(p => ({ ...p, observaciones: e.target.value }))} />
+                    </div>
+                  </div>
+
+                </fieldset>
               </div>
               <div className="modal-footer py-2">
                 <button className="btn btn-sm btn-secondary" onClick={() => setModalV(null)}>Cancelar</button>
@@ -1414,14 +1633,19 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
                 {/* Resumen financiero */}
                 {(() => {
-                  const cobrado = pagos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + p.importe, 0)
-                  const cheques = pagos.filter(p => p.estado === 'pendiente').reduce((s, p) => s + p.importe, 0)
-                  const total   = pagosModal.importe * (pagosModal.tasa_cambio || 1)
-                  const saldo   = Math.max(0, total - cobrado)
+                  const confirmados = pagos.filter(p => p.estado === 'confirmado')
+                  const cobrado  = confirmados.reduce((s, p) => s + (p.importe||0), 0)
+                  const retenido = confirmados.reduce((s, p) => s + totalPago(p) - (p.importe||0), 0)
+                  const cheques  = pagos.filter(p => p.estado === 'pendiente').reduce((s, p) => s + p.importe, 0)
+                  const total    = pagosModal.importe * (pagosModal.tasa_cambio || 1)
+                  const saldo    = Math.max(0, total - cobrado - retenido)
                   return (
-                    <div className="d-flex gap-4 mb-3 p-2 rounded" style={{ background: '#f8f9fa' }}>
+                    <div className="d-flex gap-4 mb-3 p-2 rounded flex-wrap" style={{ background: '#f8f9fa' }}>
                       <div><div className="small text-muted">Total factura</div><div className="fw-bold">{fmtM(total,'PESO')}</div></div>
                       <div><div className="small text-muted">Cobrado</div><div className="fw-bold text-success">{fmtM(cobrado,'PESO')}</div></div>
+                      {retenido > 0 && (
+                        <div><div className="small text-muted">Retenido por el cliente</div><div className="fw-bold text-info">{fmtM(retenido,'PESO')}</div></div>
+                      )}
                       <div><div className="small text-muted">Saldo pendiente</div>
                         <div className={`fw-bold ${saldo > 0 ? 'text-danger' : 'text-success'}`}>{fmtM(saldo,'PESO')}</div></div>
                       {cheques > 0 && (
@@ -1441,18 +1665,23 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     <thead className="table-light">
                       <tr>
                         <th>Tipo</th><th>Forma</th><th>Entidad</th>
-                        <th className="text-end">Importe</th><th>Fecha</th>
+                        <th className="text-end">Importe</th><th className="text-end">Retenido</th><th>Fecha</th>
                         <th>F. Acred.</th><th>Estado</th>
                         {canWrite && <th style={{ width: 70 }} />}
                       </tr>
                     </thead>
                     <tbody>
-                      {pagos.map(p => (
+                      {pagos.map(p => {
+                        const ret = totalPago(p) - (p.importe||0)
+                        return (
                         <tr key={p.id} style={p.estado === 'pendiente' ? { background: '#fffbea' } : {}}>
                           <td><span className="badge bg-secondary" style={{ fontSize: '0.65rem' }}>{p.tipo}</span></td>
                           <td>{p.forma_pago}</td>
                           <td className="text-muted">{p.entidad || '—'}</td>
                           <td className="text-end fw-semibold">{fmtM(p.importe, p.moneda)}</td>
+                          <td className="text-end text-info" title={`IIBB ${p.ret_iibb||0} · IVA ${p.ret_iva||0} · Gcía ${p.ret_gcia||0} · Contratista ${p.ret_contratista||0} · SS ${p.ret_ss||0}`}>
+                            {ret > 0 ? fmtM(ret, p.moneda) : '—'}
+                          </td>
                           <td style={{ whiteSpace: 'nowrap' }}>{fmtF(p.fecha)}</td>
                           <td style={{ whiteSpace: 'nowrap' }} className="text-muted">{p.fecha_acreditacion ? fmtF(p.fecha_acreditacion) : '—'}</td>
                           <td>
@@ -1475,7 +1704,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                             </td>
                           )}
                         </tr>
-                      ))}
+                      )})}
                     </tbody>
                   </table>
                 )}
@@ -1552,6 +1781,25 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                         <input className="form-control form-control-sm" value={pagoForm.observaciones}
                           onChange={e => setPagoForm(p => ({ ...p, observaciones: e.target.value }))} />
                       </div>
+                    </div>
+
+                    <p className="small fw-semibold text-muted mb-1">
+                      Retenciones que aplicó el cliente al pagar <span className="fw-normal">(opcional)</span>
+                    </p>
+                    <div className="row g-2 mb-2">
+                      {[
+                        { key: 'ret_iibb',        label: 'Ret. IIBB' },
+                        { key: 'ret_iva',         label: 'Ret. IVA' },
+                        { key: 'ret_gcia',        label: 'Ret. Gcía.' },
+                        { key: 'ret_contratista', label: 'Ret. Contratista' },
+                        { key: 'ret_ss',          label: 'Ret. SS' },
+                      ].map(({ key, label }) => (
+                        <div key={key} className="col-md-2">
+                          <label className="form-label small">{label}</label>
+                          <input type="number" className="form-control form-control-sm" value={pagoForm[key]}
+                            onChange={e => setPagoForm(p => ({ ...p, [key]: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
+                        </div>
+                      ))}
                     </div>
                     {pagoForm.forma_pago === 'cheque_diferido' && (
                       <p className="small text-warning mb-2">

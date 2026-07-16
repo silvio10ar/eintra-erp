@@ -2,6 +2,7 @@ const express = require('express')
 const router  = express.Router()
 const { db }  = require('../db/database')
 const { verificarToken } = require('../middleware/auth')
+const { buscarCondicion } = require('../helpers/buscar')
 
 const toNum = v => {
   if (v === null || v === undefined || v === '') return 0
@@ -43,8 +44,8 @@ router.get('/cotizaciones', verificarToken, (req, res) => {
   if (anio)   { where.push("SUBSTR(c.fecha,1,4)=?");   p.push(anio) }
   if (moneda) { where.push('c.moneda=?');              p.push(moneda) }
   if (buscar) {
-    where.push('(e.nombre LIKE ? OR c.equipo LIKE ? OR c.indirecto LIKE ?)')
-    const q = `%${buscar}%`; p.push(q, q, q)
+    const bc = buscarCondicion(buscar, ['e.nombre', 'c.equipo', 'c.indirecto'])
+    where.push(bc.cond); p.push(...bc.params)
   }
   const w = where.join(' AND ')
   const offset = (parseInt(page) - 1) * parseInt(limit)
@@ -112,7 +113,7 @@ router.delete('/cotizaciones/:id', verificarToken, (req, res) => {
 router.get('/empresas', verificarToken, (req, res) => {
   const { buscar = '', page = 1, limit = 100 } = req.query
   const where = ['e.activo=1'], p = []
-  if (buscar) { where.push('e.nombre LIKE ?'); p.push(`%${buscar}%`) }
+  if (buscar) { const bc = buscarCondicion(buscar, ['e.nombre']); where.push(bc.cond); p.push(...bc.params) }
   const w = where.join(' AND ')
   const offset = (parseInt(page) - 1) * parseInt(limit)
 
@@ -189,7 +190,7 @@ router.get('/contactos', verificarToken, (req, res) => {
   const { empresa_id, buscar = '' } = req.query
   const where = ['activo=1'], p = []
   if (empresa_id) { where.push('empresa_id=?'); p.push(empresa_id) }
-  if (buscar)     { where.push('nombre LIKE ?'); p.push(`%${buscar}%`) }
+  if (buscar)     { const bc = buscarCondicion(buscar, ['nombre']); where.push(bc.cond); p.push(...bc.params) }
   const datos = db.prepare(`SELECT * FROM crm_contactos WHERE ${where.join(' AND ')} ORDER BY nombre`).all(...p)
   res.json({ datos })
 })
