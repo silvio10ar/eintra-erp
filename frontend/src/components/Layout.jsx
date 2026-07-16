@@ -99,7 +99,7 @@ export default function Layout() {
           <div style={{ background: 'rgba(255,255,255,0.96)', borderRadius: 8, padding: '5px 10px', display: 'inline-flex', alignItems: 'center' }}>
             <img src={logo} alt="E-INTRA" style={{ height: 34 }} />
           </div>
-          <div className="brand-sub" style={{ marginTop: 6 }}>Sistema ERP</div>
+          <div className="brand-sub" style={{ marginTop: 6 }}>Sistema de Gestión E-INTRA</div>
         </div>
 
         <nav>
@@ -176,7 +176,10 @@ export default function Layout() {
       <div className="main-content">
         {/* Topbar */}
         <header className="topbar">
-          <img src={logo} alt="E-INTRA" style={{ height: 28 }} />
+          <div className="d-flex align-items-center gap-2">
+            <img src={logo} alt="E-INTRA" style={{ height: 28 }} />
+            <span style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1a3a5c' }}>Sistema de Gestión E-INTRA</span>
+          </div>
           <div className="d-flex align-items-center gap-3">
             <button className="btn btn-sm btn-primary" onClick={() => setShowMiParte(true)}>
               <i className="bi bi-file-earmark-text me-1" />Mi Parte
