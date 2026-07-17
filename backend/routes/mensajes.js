@@ -1,8 +1,31 @@
 'use strict'
-const express = require('express')
+const express    = require('express')
+const nodemailer = require('nodemailer')
 const router  = express.Router()
 const { db }  = require('../db/database')
 const { verificarToken } = require('../middleware/auth')
+const { getConfig } = require('../helpers/config')
+
+function notificarPorMail(para, de_nombre, asunto) {
+  const host = getConfig('smtp_host')
+  const user = getConfig('smtp_user')
+  if (!host || !user || !para.email) return
+  const transport = nodemailer.createTransport({
+    host,
+    port:   parseInt(getConfig('smtp_port', '587')),
+    secure: getConfig('smtp_secure', 'false') === 'true',
+    auth:   { user, pass: getConfig('smtp_pass') },
+    tls:    { rejectUnauthorized: false },
+  })
+  transport.sendMail({
+    from:    getConfig('smtp_from') || user,
+    to:      para.email,
+    subject: `[E-INTRA ERP] Nuevo mensaje de ${de_nombre}`,
+    text:    `Tenés un nuevo mensaje en el Sistema de Gestión E-INTRA.\n\nDe: ${de_nombre}\nAsunto: ${asunto}\n\nIngresá al sistema para leerlo.`,
+  }, err => {
+    if (err) console.error(`[mensajes] Error enviando notificación a ${para.email}: ${err.message}`)
+  })
+}
 
 router.use(verificarToken)
 
@@ -59,13 +82,15 @@ router.post('/', (req, res) => {
   const { para_id, asunto, cuerpo } = req.body
   if (!para_id || !String(cuerpo || '').trim())
     return res.status(400).json({ error: 'Destinatario y cuerpo son obligatorios' })
-  const para = db.prepare('SELECT id, nombre FROM usuarios WHERE id=? AND activo=1').get(para_id)
+  const para = db.prepare('SELECT id, nombre, email FROM usuarios WHERE id=? AND activo=1').get(para_id)
   if (!para) return res.status(404).json({ error: 'Destinatario no encontrado' })
+  const asuntoFinal = String(asunto || '').trim() || '(sin asunto)'
   db.prepare(`
     INSERT INTO mensajes (de_id, de_nombre, para_id, para_nombre, asunto, cuerpo)
     VALUES (?,?,?,?,?,?)
   `).run(req.usuario.id, req.usuario.nombre, para.id, para.nombre,
-    String(asunto || '').trim() || '(sin asunto)', String(cuerpo).trim())
+    asuntoFinal, String(cuerpo).trim())
+  notificarPorMail(para, req.usuario.nombre, asuntoFinal)
   res.status(201).json({ ok: true })
 })
 
