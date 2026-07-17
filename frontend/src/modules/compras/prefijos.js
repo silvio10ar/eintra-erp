@@ -134,6 +134,7 @@ export const PREFIJOS = [
   { p: 'EIX', d: 'Inoxidable' },
   { p: 'EPM', d: 'Perfiles / Ángulos / Vigas' },
   { p: 'EPC', d: 'Piezas cortadas' },
+  { p: 'ECA', d: 'Caños estructurales' },
   // F — Filtración
   { p: 'FBF', d: 'Bolsas filtrantes' },
   { p: 'FCF', d: 'Cartuchos filtrantes' },
