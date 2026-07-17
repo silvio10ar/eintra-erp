@@ -9,8 +9,17 @@ const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
 const fmtN = n => n != null ? new Intl.NumberFormat('es-AR').format(n) : '—'
 
-const BADGE_ALERTA  = { vencida: 'danger', proxima: 'warning', al_dia: 'success', nunca_ejecutada: 'secondary', manual: 'info' }
-const LABEL_ALERTA  = { vencida: 'Vencida', proxima: 'Próxima', al_dia: 'Al día', nunca_ejecutada: 'Sin ejecutar', manual: 'Luego de c/uso' }
+// Estados de alerta según días para vencer: vencida(rojo) <=0, critica(naranja) <=7, proxima(amarillo) <=14, atencion(azul) <=21, al_dia(verde) >21
+const BADGE_ALERTA  = { vencida: 'danger', critica: null, proxima: 'warning', atencion: 'primary', al_dia: 'success', nunca_ejecutada: 'secondary', manual: 'info' }
+const LABEL_ALERTA  = { vencida: 'Vencida', critica: 'Vence ≤ 7 días', proxima: 'Vence ≤ 14 días', atencion: 'Vence ≤ 21 días', al_dia: 'Al día', nunca_ejecutada: 'Sin ejecutar', manual: 'Luego de c/uso' }
+const BADGE_HEX     = { critica: '#fd7e14' } // naranja — Bootstrap no trae esta variante por defecto
+const fmtVence = a => {
+  if (a.dias_para_vencer == null) return '—'
+  const d = a.dias_para_vencer
+  if (d < 0)   return `Vencido hace ${Math.abs(d)}d`
+  if (d === 0) return 'Vence hoy'
+  return `en ${d}d`
+}
 const BADGE_ESTADO  = { activo: 'success', en_reparacion: 'warning', baja: 'secondary' }
 const BADGE_RESULTADO = { resuelto: 'success', pendiente: 'warning', derivado_baja: 'secondary' }
 
@@ -222,7 +231,7 @@ export default function Mantenimiento() {
     const selAlerts = alertas.filter(a => selectedEquipos.has(a.equipo_id))
 
     // Agrupar por equipo para formato de planilla por secciones
-    const PRIO = { vencida: 4, proxima: 3, nunca_ejecutada: 2, manual: 1, al_dia: 0 }
+    const PRIO = { vencida: 6, critica: 5, proxima: 4, atencion: 3, nunca_ejecutada: 2, manual: 1, al_dia: 0 }
     const mapaEq = {}
     selAlerts.forEach(a => {
       if (!mapaEq[a.equipo_id]) mapaEq[a.equipo_id] = { ...a, tareas: [] }
@@ -234,8 +243,8 @@ export default function Mantenimiento() {
     aoa.push([])
 
     for (const eq of Object.values(mapaEq)) {
-      aoa.push([`${eq.codigo}  ${eq.nombre}`, '', eq.ubicacion || '', '', '', '', '', '', '', ''])
-      aoa.push(['Componente', 'Acción', 'Tipo', 'Frecuencia', 'Última ejec.', 'Días', 'Estado', 'Resultado', 'Observaciones', 'Firma'])
+      aoa.push([`${eq.codigo}  ${eq.nombre}`, '', eq.ubicacion || '', '', '', '', '', '', '', '', ''])
+      aoa.push(['Componente', 'Acción', 'Tipo', 'Frecuencia', 'Última ejec.', 'Días', 'Vence en', 'Estado', 'Resultado', 'Observaciones', 'Firma'])
       for (const t of eq.tareas) {
         aoa.push([
           t.componente,
@@ -244,6 +253,7 @@ export default function Mantenimiento() {
           t.frecuencia,
           t.ultima_ejecucion ? t.ultima_ejecucion.slice(0, 10) : 'Sin ejecución',
           t.dias_desde_ultima != null ? t.dias_desde_ultima : '',
+          fmtVence(t),
           LABEL_ALERTA[t.estado_alerta] || t.estado_alerta,
           '',  // Resultado — para completar
           '',  // Observaciones
@@ -256,7 +266,7 @@ export default function Mantenimiento() {
     const ws = XLSX.utils.aoa_to_sheet(aoa)
     ws['!cols'] = [
       { wch: 20 }, { wch: 30 }, { wch: 10 }, { wch: 12 },
-      { wch: 14 }, { wch: 6  }, { wch: 12 }, { wch: 12 },
+      { wch: 14 }, { wch: 6  }, { wch: 14 }, { wch: 12 }, { wch: 12 },
       { wch: 25 }, { wch: 12 },
     ]
     const wb = XLSX.utils.book_new()
@@ -352,6 +362,7 @@ export default function Mantenimiento() {
   // ══════════════════════════════════════════════════════════════════════════
 
   function BadgeAlerta({ v }) {
+    if (BADGE_HEX[v]) return <span className="badge" style={{ backgroundColor: BADGE_HEX[v], color: '#fff' }}>{LABEL_ALERTA[v] || v}</span>
     return <span className={`badge bg-${BADGE_ALERTA[v] || 'secondary'}`}>{LABEL_ALERTA[v] || v}</span>
   }
   function BadgeEstado({ v }) {
@@ -715,10 +726,10 @@ export default function Mantenimiento() {
                           <h6 className="fw-bold">Plan preventivo</h6>
                           <div className="table-responsive mb-3">
                             <table className="table table-sm">
-                              <thead className="table-light"><tr><th>Componente</th><th>Acción</th><th>Frecuencia</th><th>Última ejec.</th><th>Estado</th></tr></thead>
+                              <thead className="table-light"><tr><th>Componente</th><th>Acción</th><th>Frecuencia</th><th>Última ejec.</th><th>Vence en</th><th>Estado</th></tr></thead>
                               <tbody>
                                 {equipoSel.tareas.map((t, i) => (
-                                  <tr key={i}><td>{t.componente}</td><td>{t.accion}</td><td>{t.frecuencia}</td><td>{fmtF(t.ultima_ejecucion)}</td><td><BadgeAlerta v={t.estado_alerta} /></td></tr>
+                                  <tr key={i}><td>{t.componente}</td><td>{t.accion}</td><td>{t.frecuencia}</td><td>{fmtF(t.ultima_ejecucion)}</td><td>{fmtVence(t)}</td><td><BadgeAlerta v={t.estado_alerta} /></td></tr>
                                 ))}
                               </tbody>
                             </table>
@@ -759,10 +770,10 @@ export default function Mantenimiento() {
   // ══════════════════════════════════════════════════════════════════════════
 
   function TabPlan() {
-    const conteo = { vencida: 0, proxima: 0, nunca_ejecutada: 0, al_dia: 0 }
+    const conteo = { vencida: 0, critica: 0, proxima: 0, atencion: 0, nunca_ejecutada: 0, al_dia: 0 }
     alertas.forEach(a => { if (conteo[a.estado_alerta] !== undefined) conteo[a.estado_alerta]++ })
 
-    const PRIO  = { vencida: 4, proxima: 3, nunca_ejecutada: 2, manual: 1, al_dia: 0 }
+    const PRIO  = { vencida: 6, critica: 5, proxima: 4, atencion: 3, nunca_ejecutada: 2, manual: 1, al_dia: 0 }
     const mapaEq = {}
     alertas.forEach(a => {
       if (!mapaEq[a.equipo_id]) mapaEq[a.equipo_id] = { equipo_id: a.equipo_id, codigo: a.codigo, nombre: a.nombre, categoria: a.categoria, ubicacion: a.ubicacion, tareas: [] }
@@ -783,8 +794,11 @@ export default function Mantenimiento() {
       <div>
         {/* Resumen estado */}
         <div className="d-flex gap-3 mb-3 flex-wrap">
-          {[['vencida','danger'],['proxima','warning'],['nunca_ejecutada','secondary'],['al_dia','success']].map(([e,c]) => (
-            <span key={e} className={`badge bg-${c} fs-6`}>{LABEL_ALERTA[e]}: {conteo[e]}</span>
+          {['vencida', 'critica', 'proxima', 'atencion', 'nunca_ejecutada', 'al_dia'].map(e => (
+            <span key={e} className={`badge fs-6 ${BADGE_HEX[e] ? '' : `bg-${BADGE_ALERTA[e]}`}`}
+              style={BADGE_HEX[e] ? { backgroundColor: BADGE_HEX[e], color: '#fff' } : undefined}>
+              {LABEL_ALERTA[e]}: {conteo[e]}
+            </span>
           ))}
         </div>
 
@@ -794,7 +808,9 @@ export default function Mantenimiento() {
             <select className="form-select" value={filtAl.estado} onChange={e => setFiltAl(f => ({ ...f, estado: e.target.value }))}>
               <option value="">Todos los estados</option>
               <option value="vencida">Vencida</option>
-              <option value="proxima">Próxima</option>
+              <option value="critica">Vence ≤ 7 días</option>
+              <option value="proxima">Vence ≤ 14 días</option>
+              <option value="atencion">Vence ≤ 21 días</option>
               <option value="nunca_ejecutada">Sin ejecutar</option>
               <option value="al_dia">Al día</option>
             </select>
@@ -854,14 +870,17 @@ export default function Mantenimiento() {
               const p       = peor(eq.tareas)
               const abierto = expandedEquipos.has(eq.equipo_id)
               const selec   = selectedEquipos.has(eq.equipo_id)
-              const bgCls   = p === 'vencida' ? 'border-danger bg-danger bg-opacity-10'
+              const bgCls   = p === 'vencida'  ? 'border-danger bg-danger bg-opacity-10'
+                            : p === 'critica' ? ''
                             : p === 'proxima' ? 'border-warning bg-warning bg-opacity-10'
+                            : p === 'atencion'? 'border-primary bg-primary bg-opacity-10'
                             : 'border-secondary bg-light'
+              const bgStyle = p === 'critica' ? { borderColor: BADGE_HEX.critica, backgroundColor: 'rgba(253,126,20,0.10)' } : undefined
               return (
                 <div key={eq.equipo_id} className={`mb-1 border rounded overflow-hidden ${selec ? 'border-primary' : ''}`}>
                   <div
                     className={`d-flex align-items-center justify-content-between px-3 py-2 ${bgCls}`}
-                    style={{ cursor: 'pointer' }}
+                    style={{ cursor: 'pointer', ...bgStyle }}
                     onClick={() => toggleEquipo(eq.equipo_id)}
                   >
                     <div className="d-flex align-items-center gap-2">
@@ -888,19 +907,26 @@ export default function Mantenimiento() {
                         <thead className="table-light">
                           <tr>
                             <th>Componente</th><th>Acción</th><th>Tipo</th><th>Frecuencia</th>
-                            <th>Última ejec.</th><th>Días</th><th>Estado</th>
+                            <th>Última ejec.</th><th>Días</th><th>Vence en</th><th>Estado</th>
                             {canWrite && <th></th>}
                           </tr>
                         </thead>
                         <tbody>
-                          {eq.tareas.map((a, i) => (
-                            <tr key={i} className={a.estado_alerta === 'vencida' ? 'table-danger' : a.estado_alerta === 'proxima' ? 'table-warning' : ''}>
+                          {eq.tareas.map((a, i) => {
+                            const trCls   = a.estado_alerta === 'vencida'  ? 'table-danger'
+                                          : a.estado_alerta === 'proxima' ? 'table-warning'
+                                          : a.estado_alerta === 'atencion' ? 'table-primary'
+                                          : ''
+                            const trStyle = a.estado_alerta === 'critica' ? { backgroundColor: 'rgba(253,126,20,0.15)' } : undefined
+                            return (
+                            <tr key={i} className={trCls} style={trStyle}>
                               <td>{a.componente}</td>
                               <td>{a.accion}</td>
                               <td><small className="text-muted">{a.tipo}</small></td>
                               <td>{a.frecuencia}</td>
                               <td>{fmtF(a.ultima_ejecucion)}</td>
                               <td>{a.dias_desde_ultima != null ? `${a.dias_desde_ultima}d` : '—'}</td>
+                              <td>{fmtVence(a)}</td>
                               <td><BadgeAlerta v={a.estado_alerta} /></td>
                               {canWrite && (
                                 <td>
@@ -911,7 +937,8 @@ export default function Mantenimiento() {
                                 </td>
                               )}
                             </tr>
-                          ))}
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>

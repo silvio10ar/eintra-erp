@@ -14,7 +14,7 @@ function logEstado(equipo_id, estado_anterior, estado_nuevo, motivo = '') {
   } catch(e) {}
 }
 
-const ALERTAS_SQL = `
+const ALERTAS_BASE_SQL = `
   SELECT
     tp.id              AS tarea_id,
     e.id               AS equipo_id,
@@ -28,13 +28,6 @@ const ALERTAS_SQL = `
     tp.frecuencia,
     tp.frecuencia_dias,
     COALESCE(MAX(ep.fecha), ins_max.ultima_inspeccion) AS ultima_ejecucion,
-    CASE
-      WHEN tp.frecuencia = 'Luego de c/uso' THEN 'manual'
-      WHEN COALESCE(MAX(ep.fecha), ins_max.ultima_inspeccion) IS NULL THEN 'nunca_ejecutada'
-      WHEN julianday('now') - julianday(COALESCE(MAX(ep.fecha), ins_max.ultima_inspeccion)) > tp.frecuencia_dias THEN 'vencida'
-      WHEN julianday('now') - julianday(COALESCE(MAX(ep.fecha), ins_max.ultima_inspeccion)) > tp.frecuencia_dias * 0.8 THEN 'proxima'
-      ELSE 'al_dia'
-    END AS estado_alerta,
     CAST(julianday('now') - julianday(COALESCE(MAX(ep.fecha), ins_max.ultima_inspeccion)) AS INTEGER) AS dias_desde_ultima
   FROM mant_tareas_preventivas tp
   JOIN mant_equipos e ON e.id = tp.equipo_id
@@ -46,6 +39,27 @@ const ALERTAS_SQL = `
   ) ins_max ON ins_max.equipo_id = e.id
   WHERE e.estado = 'activo' AND tp.activa = 1
   GROUP BY tp.id
+`;
+
+// estado_alerta por días restantes hasta el vencimiento (frecuencia_dias - dias_desde_ultima):
+//   vencida  (rojo)    <= 0 dias
+//   critica  (naranja) <= 7 dias  (falta 1 semana)
+//   proxima  (amarillo)<= 14 dias (faltan 2 semanas)
+//   atencion (azul)    <= 21 dias (faltan 3 semanas)
+//   al_dia   (verde)   > 21 dias
+const ALERTAS_SQL = `
+  SELECT *,
+    (frecuencia_dias - dias_desde_ultima) AS dias_para_vencer,
+    CASE
+      WHEN frecuencia = 'Luego de c/uso'          THEN 'manual'
+      WHEN ultima_ejecucion IS NULL                THEN 'nunca_ejecutada'
+      WHEN (frecuencia_dias - dias_desde_ultima) <= 0  THEN 'vencida'
+      WHEN (frecuencia_dias - dias_desde_ultima) <= 7  THEN 'critica'
+      WHEN (frecuencia_dias - dias_desde_ultima) <= 14 THEN 'proxima'
+      WHEN (frecuencia_dias - dias_desde_ultima) <= 21 THEN 'atencion'
+      ELSE 'al_dia'
+    END AS estado_alerta
+  FROM (${ALERTAS_BASE_SQL})
 `;
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
