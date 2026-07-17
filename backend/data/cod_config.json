@@ -1230,7 +1230,7 @@
       "opciones": [
         {
           "codigo": "00",
-          "descripcion": "CODO"
+          "descripcion": "CODO/CURVA"
         },
         {
           "codigo": "01",
@@ -1446,7 +1446,7 @@
         },
         {
           "codigo": "94",
-          "descripcion": ""
+          "descripcion": "CAÑO"
         },
         {
           "codigo": "95",
@@ -1529,7 +1529,7 @@
       "opciones": [
         {
           "codigo": "00",
-          "descripcion": "CODO"
+          "descripcion": "CODO/CURVA"
         },
         {
           "codigo": "01",
@@ -1745,7 +1745,7 @@
         },
         {
           "codigo": "94",
-          "descripcion": ""
+          "descripcion": "CAÑO"
         },
         {
           "codigo": "95",
@@ -1842,7 +1842,7 @@
       "opciones": [
         {
           "codigo": "00",
-          "descripcion": "CODO"
+          "descripcion": "CODO/CURVA"
         },
         {
           "codigo": "01",
@@ -2058,7 +2058,7 @@
         },
         {
           "codigo": "94",
-          "descripcion": ""
+          "descripcion": "CAÑO"
         },
         {
           "codigo": "95",
@@ -2853,7 +2853,7 @@
       "opciones": [
         {
           "codigo": "00",
-          "descripcion": "CODO"
+          "descripcion": "CODO/CURVA"
         },
         {
           "codigo": "01",
@@ -3069,7 +3069,7 @@
         },
         {
           "codigo": "94",
-          "descripcion": ""
+          "descripcion": "CAÑO"
         },
         {
           "codigo": "95",
@@ -3153,7 +3153,7 @@
       "opciones": [
         {
           "codigo": "00",
-          "descripcion": "CODO"
+          "descripcion": "CODO/CURVA"
         },
         {
           "codigo": "01",
@@ -3369,7 +3369,7 @@
         },
         {
           "codigo": "94",
-          "descripcion": ""
+          "descripcion": "CAÑO"
         },
         {
           "codigo": "95",
@@ -6717,7 +6717,7 @@
       "opciones": [
         {
           "codigo": "00",
-          "descripcion": "CODO"
+          "descripcion": "CODO/CURVA"
         },
         {
           "codigo": "01",
@@ -6933,7 +6933,7 @@
         },
         {
           "codigo": "94",
-          "descripcion": ""
+          "descripcion": "CAÑO"
         },
         {
           "codigo": "95",
@@ -7256,7 +7256,7 @@
       "opciones": [
         {
           "codigo": "00",
-          "descripcion": "CODO"
+          "descripcion": "CODO/CURVA"
         },
         {
           "codigo": "01",
@@ -7472,7 +7472,7 @@
         },
         {
           "codigo": "94",
-          "descripcion": ""
+          "descripcion": "CAÑO"
         },
         {
           "codigo": "95",
