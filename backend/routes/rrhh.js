@@ -773,6 +773,30 @@ router.get('/partes/proyectos', verificarToken, (req, res) => {
 
 // ── Informes ──────────────────────────────────────────────────────────────────
 
+// ── Feriados (para excluirlos del cálculo de inasistencias) ──────────────────
+router.get('/feriados', verificarToken, (req, res) => {
+  const { anio } = req.query;
+  const rows = anio
+    ? db.prepare("SELECT fecha, descripcion FROM rrhh_feriados WHERE fecha LIKE ? ORDER BY fecha").all(`${anio}-%`)
+    : db.prepare('SELECT fecha, descripcion FROM rrhh_feriados ORDER BY fecha').all();
+  res.json(rows);
+});
+
+router.post('/feriados', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  const { fecha, descripcion } = req.body;
+  if (!fecha) return res.status(400).json({ error: 'Requerido: fecha' });
+  db.prepare('INSERT OR REPLACE INTO rrhh_feriados (fecha, descripcion) VALUES (?,?)')
+    .run(fecha, String(descripcion || '').trim());
+  res.status(201).json({ ok: true });
+});
+
+router.delete('/feriados/:fecha', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  db.prepare('DELETE FROM rrhh_feriados WHERE fecha=?').run(req.params.fecha);
+  res.json({ ok: true });
+});
+
 // Tolerancia de llegada tarde (minutos) sobre el horario_entrada configurado por empleado
 const TOLERANCIA_TARDE_MIN = 5;
 const minutosDeHora = hhmm => {
@@ -825,11 +849,15 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
   `).all(...pParams);
   const pm = Object.fromEntries(partes.map(p => [`${p.empleado_id}_${p.fecha}`, p.horas_parte]));
 
-  // Días hábiles (lunes a viernes) del período, para poder marcar inasistencias
+  // Días hábiles (lunes a viernes, sin feriados) del período, para poder marcar inasistencias
+  const feriados = new Set(
+    db.prepare('SELECT fecha FROM rrhh_feriados WHERE fecha BETWEEN ? AND ?').all(desde, hasta).map(r => r.fecha)
+  );
   const dias = [];
   for (let d = new Date(desde + 'T00:00:00'); d <= new Date(hasta + 'T00:00:00'); d.setDate(d.getDate() + 1)) {
-    const dow = d.getDay(); // 0=domingo, 6=sábado
-    if (dow !== 0 && dow !== 6) dias.push(d.toISOString().slice(0, 10));
+    const dow   = d.getDay(); // 0=domingo, 6=sábado
+    const fecha = d.toISOString().slice(0, 10);
+    if (dow !== 0 && dow !== 6 && !feriados.has(fecha)) dias.push(fecha);
   }
 
   const out = [];

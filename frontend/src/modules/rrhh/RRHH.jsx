@@ -73,6 +73,8 @@ export default function RRHH() {
   const [infEmpleado,   setInfEmpleado]   = useState('')
   const [infData,       setInfData]       = useState(null)
   const [infLoading,    setInfLoading]    = useState(false)
+  const [feriados,      setFeriados]      = useState([])
+  const [nuevoFeriado,  setNuevoFeriado]  = useState({ fecha: '', descripcion: '' })
 
   // ── fusionador ─────────────────────────────────────────────────────────────
   const [legado,       setLegado]       = useState([])
@@ -140,6 +142,28 @@ export default function RRHH() {
   useEffect(() => { if (tab === 'dashboard')   cargarDash()      }, [tab, cargarDash])
   useEffect(() => { if (tab === 'registros')   cargarReg()       }, [tab, cargarReg])
   useEffect(() => { if (tab === 'asistencia')  cargarAsistencia() }, [tab, cargarAsistencia])
+
+  // ── feriados (para el informe de asistencia) ──────────────────────────────
+  const cargarFeriados = useCallback(() => {
+    const anio = (infDesde || hoy).slice(0, 4)
+    api.get('/rrhh/feriados', { params: { anio } }).then(r => setFeriados(r.data)).catch(() => {})
+  }, [infDesde])
+  useEffect(() => { if (tab === 'informes' && infTab === 'asistencia') cargarFeriados() }, [tab, infTab, cargarFeriados])
+
+  async function agregarFeriado() {
+    if (!nuevoFeriado.fecha) return
+    try {
+      await api.post('/rrhh/feriados', nuevoFeriado)
+      setNuevoFeriado({ fecha: '', descripcion: '' })
+      cargarFeriados()
+    } catch (e) { alert(e.response?.data?.error || 'Error al agregar feriado') }
+  }
+  async function eliminarFeriado(fecha) {
+    try {
+      await api.delete(`/rrhh/feriados/${fecha}`)
+      cargarFeriados()
+    } catch (e) { alert(e.response?.data?.error || 'Error al eliminar feriado') }
+  }
 
   const reloadEmpleados = () => api.get('/rrhh/empleados').then(r => setEmpleados(r.data))
   const reloadProyectos  = () => Promise.all([
@@ -1949,6 +1973,48 @@ export default function RRHH() {
             </div>
           </div>
         </div>
+
+        {infTab === 'asistencia' && (
+          <details className="mb-3">
+            <summary className="small fw-semibold text-muted" style={{ cursor: 'pointer' }}>
+              <i className="bi bi-calendar-x me-1" />Feriados ({(infDesde || hoy).slice(0,4)}) — no cuentan como inasistencia
+            </summary>
+            <div className="card mt-2">
+              <div className="card-body py-2">
+                <div className="d-flex gap-2 align-items-end flex-wrap mb-2">
+                  <div>
+                    <label className="form-label small mb-1">Fecha</label>
+                    <DateInput className="form-control form-control-sm" value={nuevoFeriado.fecha} onChange={v => setNuevoFeriado(f => ({ ...f, fecha: v }))} />
+                  </div>
+                  <div>
+                    <label className="form-label small mb-1">Descripción</label>
+                    <input className="form-control form-control-sm" style={{width:220}}
+                      value={nuevoFeriado.descripcion}
+                      onChange={e => setNuevoFeriado(f => ({ ...f, descripcion: e.target.value }))}
+                      placeholder="Ej: Día de la Independencia" />
+                  </div>
+                  <button className="btn btn-outline-primary btn-sm" onClick={agregarFeriado}>
+                    <i className="bi bi-plus-lg me-1" />Agregar
+                  </button>
+                </div>
+                {feriados.length === 0
+                  ? <p className="text-muted small mb-0">Sin feriados cargados para este año.</p>
+                  : (
+                    <ul className="list-group list-group-flush">
+                      {feriados.map(f => (
+                        <li key={f.fecha} className="list-group-item d-flex justify-content-between align-items-center px-0 py-1">
+                          <span className="small">{fmtF(f.fecha)} — {f.descripcion || 'Feriado'}</span>
+                          <button className="btn btn-sm btn-outline-danger" onClick={() => eliminarFeriado(f.fecha)}>
+                            <i className="bi bi-trash" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+              </div>
+            </div>
+          </details>
+        )}
 
         {infData === null && !infLoading && (
           <div className="text-center text-muted py-5">
