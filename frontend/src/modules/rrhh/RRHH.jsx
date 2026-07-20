@@ -48,17 +48,47 @@ async function descargarWorkbook(wb, nombreArchivo) {
   a.href = url; a.download = nombreArchivo; a.click()
   URL.revokeObjectURL(url)
 }
-// Reparte un ancho total de columnas (ancho) entre 3 segmentos proporcional a sus valores
-function distribuirBarra(valores, ancho) {
-  const total = valores.reduce((a,b) => a+b, 0)
-  if (total === 0) return valores.map(() => 0)
-  const crudos = valores.map(v => v / total * ancho)
-  const enteros = crudos.map(Math.floor)
-  let restante = ancho - enteros.reduce((a,b) => a+b, 0)
-  const orden = crudos.map((v,i) => [v - Math.floor(v), i]).sort((a,b) => b[0]-a[0])
-  for (let i = 0; i < restante; i++) enteros[orden[i][1]]++
-  // Asegura que un segmento con valor>0 tenga al menos 1 columna si hay lugar
-  return enteros
+// Dibuja el gráfico de barras de asistencia por empleado en un <canvas> y lo devuelve como PNG (base64)
+function dibujarGraficoAsistenciaPNG(resumen) {
+  const filas = resumen.slice().sort((a,b) => (b.inasistencia+b.tarde) - (a.inasistencia+a.tarde))
+  const W = 760, ROWH = 26, PADTOP = 34, PADBOTTOM = 34, LABELW = 150, INFOW = 150
+  const H = PADTOP + Math.max(filas.length, 1) * ROWH + PADBOTTOM
+  const canvas = document.createElement('canvas')
+  canvas.width = W; canvas.height = H
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H)
+  ctx.font = 'bold 14px Arial'; ctx.fillStyle = '#1a3a5c'
+  ctx.fillText('Asistencia por empleado', 0, 18)
+
+  const barX = LABELW, barW = W - LABELW - INFOW
+  filas.forEach((t, i) => {
+    const y = PADTOP + i * ROWH
+    const total = t.ok + t.tarde + t.inasistencia || 1
+    ctx.font = '11px Arial'; ctx.fillStyle = '#212529'; ctx.textAlign = 'left'
+    let nombre = t.empleado
+    while (ctx.measureText(nombre).width > LABELW - 8 && nombre.length > 3) nombre = nombre.slice(0, -1)
+    ctx.fillText(nombre, 0, y + 14)
+
+    let x = barX
+    const bh = 14
+    ;[[t.ok, '#198754'], [t.tarde, '#fd7e14'], [t.inasistencia, '#dc3545']].forEach(([v, color]) => {
+      const w = (v / total) * barW
+      if (w > 0) { ctx.fillStyle = color; ctx.fillRect(x, y + 3, w, bh) }
+      x += w
+    })
+    ctx.fillStyle = '#6c757d'; ctx.font = '10px Arial'
+    ctx.fillText(`${t.ok} OK · ${t.tarde} tarde · ${t.inasistencia} inasist.`, barX + barW + 8, y + 13)
+  })
+
+  const legY = H - 20
+  let lx = 0
+  ;[['Presente', '#198754'], ['Tarde', '#fd7e14'], ['Inasistencia', '#dc3545']].forEach(([label, color]) => {
+    ctx.fillStyle = color; ctx.fillRect(lx, legY, 10, 10)
+    ctx.fillStyle = '#212529'; ctx.font = '10px Arial'; ctx.fillText(label, lx + 14, legY + 9)
+    lx += ctx.measureText(label).width + 40
+  })
+
+  return { base64: canvas.toDataURL('image/png').split(',')[1], width: W, height: H }
 }
 
 const ANOS  = Array.from({ length: 9 }, (_, i) => 2020 + i)
@@ -2026,38 +2056,11 @@ export default function RRHH() {
         estiloCeldas(rowTot, CORP.totalBg)
         wsR.getRow(hR.number).alignment = { horizontal: 'center' }
 
-        // ── Gráfico de asistencia por empleado (barras con celdas) ───────────
-        let fila = wsR.rowCount + 2
-        estiloTitulo(wsR, fila, 'Asistencia por empleado', 1, 9)
-        fila++
-        const ANCHO_BARRA = 6 // columnas B..G usadas como barra proporcional
-        resumen
-          .slice()
-          .sort((a,b) => (b.inasistencia+b.tarde) - (a.inasistencia+a.tarde))
-          .forEach(t => {
-            wsR.getCell(fila, 1).value = t.empleado
-            wsR.getCell(fila, 1).font = { size: 9 }
-            const [okW, tardeW, inasistW] = distribuirBarra([t.ok, t.tarde, t.inasistencia], ANCHO_BARRA)
-            let col = 2
-            const pintar = (ancho, color) => {
-              for (let i = 0; i < ancho; i++) { wsR.getCell(fila, col).fill = { type:'pattern', pattern:'solid', fgColor:{argb:color} }; col++ }
-            }
-            pintar(okW, CORP.verde); pintar(tardeW, CORP.naranja); pintar(inasistW, CORP.rojo)
-            wsR.getCell(fila, 8).value = `${t.ok} OK · ${t.tarde} tarde · ${t.inasistencia} inasist.`
-            wsR.getCell(fila, 8).font = { size: 8, color: { argb: 'FF6C757D' } }
-            fila++
-          })
-        fila++
-        wsR.getCell(fila, 1).value = 'Referencias:'
-        wsR.getCell(fila, 1).font = { size: 8, italic: true }
-        const leyenda = [['Presente', CORP.verde], ['Tarde', CORP.naranja], ['Inasistencia', CORP.rojo]]
-        let colLey = 2
-        leyenda.forEach(([label, color]) => {
-          wsR.getCell(fila, colLey).fill = { type:'pattern', pattern:'solid', fgColor:{argb:color} }
-          wsR.getCell(fila, colLey+1).value = label
-          wsR.getCell(fila, colLey+1).font = { size: 8 }
-          colLey += 3
-        })
+        // ── Gráfico de asistencia por empleado (insertado como imagen) ───────
+        const fila = wsR.rowCount + 2
+        const { base64, width, height } = dibujarGraficoAsistenciaPNG(resumen)
+        const imgId = wb.addImage({ base64, extension: 'png' })
+        wsR.addImage(imgId, { tl: { col: 0, row: fila - 1 }, ext: { width, height } })
 
         // ── Una hoja por empleado ─────────────────────────────────────────────
         const usados = new Set(['Resumen'])
