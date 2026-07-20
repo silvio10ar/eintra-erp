@@ -6293,6 +6293,10 @@
         {
           "codigo": "6",
           "descripcion": "FILTRO BOLSA"
+        },
+        {
+          "codigo": "7",
+          "descripcion": "MEMBRANA OSMOSIS INVERSA"
         }
       ]
     },
