@@ -1,7 +1,65 @@
 import { useState, useEffect, useCallback } from 'react'
 import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import api from '../../api/client'
 import DateInput from '../../components/DateInput'
+
+// ── Estilo corporativo para exports .xlsx (ExcelJS) ───────────────────────────
+const CORP = {
+  navy:   'FF1A3A5C',
+  navyTx: 'FFFFFFFF',
+  gris:   'FFF2F2F2',
+  borde:  'FFD9D9D9',
+  verde:  'FF198754',
+  naranja:'FFFD7E14',
+  rojo:   'FFDC3545',
+  totalBg:'FFDCE6F1',
+}
+const bordeFino = { style: 'thin', color: { argb: CORP.borde } }
+function estiloTitulo(ws, fila, texto, colDesde, colHasta) {
+  ws.mergeCells(fila, colDesde, fila, colHasta)
+  const c = ws.getCell(fila, colDesde)
+  c.value = texto
+  c.font = { bold: true, color: { argb: CORP.navyTx }, size: 12 }
+  c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CORP.navy } }
+  c.alignment = { vertical: 'middle', horizontal: 'left' }
+  ws.getRow(fila).height = 22
+}
+function estiloHeader(row) {
+  row.eachCell(c => {
+    c.font = { bold: true, color: { argb: CORP.navyTx } }
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CORP.navy } }
+    c.alignment = { vertical: 'middle', horizontal: 'center' }
+    c.border = { top: bordeFino, bottom: bordeFino, left: bordeFino, right: bordeFino }
+  })
+  row.height = 18
+}
+function estiloCeldas(row, bg) {
+  row.eachCell(c => {
+    c.border = { top: bordeFino, bottom: bordeFino, left: bordeFino, right: bordeFino }
+    if (bg) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } }
+  })
+}
+async function descargarWorkbook(wb, nombreArchivo) {
+  const buf  = await wb.xlsx.writeBuffer()
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href = url; a.download = nombreArchivo; a.click()
+  URL.revokeObjectURL(url)
+}
+// Reparte un ancho total de columnas (ancho) entre 3 segmentos proporcional a sus valores
+function distribuirBarra(valores, ancho) {
+  const total = valores.reduce((a,b) => a+b, 0)
+  if (total === 0) return valores.map(() => 0)
+  const crudos = valores.map(v => v / total * ancho)
+  const enteros = crudos.map(Math.floor)
+  let restante = ancho - enteros.reduce((a,b) => a+b, 0)
+  const orden = crudos.map((v,i) => [v - Math.floor(v), i]).sort((a,b) => b[0]-a[0])
+  for (let i = 0; i < restante; i++) enteros[orden[i][1]]++
+  // Asegura que un segmento con valor>0 tenga al menos 1 columna si hay lugar
+  return enteros
+}
 
 const ANOS  = Array.from({ length: 9 }, (_, i) => 2020 + i)
 const MESES = [
@@ -1928,23 +1986,96 @@ export default function RRHH() {
           porEmpleado[row.empleado].push(row)
         })
 
-        const wb = XLSX.utils.book_new()
-        const usados = new Set()
+        // Totales por empleado (para el resumen y la barra)
+        const resumen = Object.entries(porEmpleado).map(([empleado, filas]) => {
+          const t = { empleado, ok: 0, tarde: 0, inasistencia: 0, fichada: 0, parte: 0, dif: 0, laboral: 0, difHorario: 0 }
+          filas.forEach(f => {
+            if (f.estado === 'inasistencia') t.inasistencia++
+            else if (f.estado === 'tarde')    t.tarde++
+            else if (f.estado === 'normal')   t.ok++
+            t.fichada    += +f.horas_fichada || 0
+            t.parte      += +f.horas_parte || 0
+            t.dif        += +f.diferencia || 0
+            t.laboral    += +f.horas_laborales || 0
+            t.difHorario += +f.diferencia_horario || 0
+          })
+          return t
+        })
+
+        const wb = new ExcelJS.Workbook()
+        wb.creator = 'Sistema de Gestión E-INTRA'
+
+        // ── Hoja 1: Resumen ──────────────────────────────────────────────────
+        const wsR = wb.addWorksheet('Resumen')
+        wsR.columns = [{width:22},{width:9},{width:9},{width:11},{width:10},{width:9},{width:10},{width:10},{width:11}]
+        estiloTitulo(wsR, 1, `INFORME DE ASISTENCIA — E-INTRA — ${infDesde} a ${infHasta}`, 1, 9)
+        wsR.addRow([])
+        const hR = wsR.addRow(['Empleado','Días OK','Tarde','Inasist.','Hs Fichada','Hs Parte','Diferencia','Hs Laboral','Dif. Horario'])
+        estiloHeader(hR)
+        let gFichada=0, gParte=0, gDif=0, gLaboral=0, gDifHorario=0, gOk=0, gTarde=0, gInasist=0
+        resumen.forEach(t => {
+          const row = wsR.addRow([t.empleado, t.ok, t.tarde, t.inasistencia,
+            +t.fichada.toFixed(2), +t.parte.toFixed(2), +t.dif.toFixed(2), +t.laboral.toFixed(2), +t.difHorario.toFixed(2)])
+          estiloCeldas(row)
+          gFichada+=t.fichada; gParte+=t.parte; gDif+=t.dif; gLaboral+=t.laboral; gDifHorario+=t.difHorario
+          gOk+=t.ok; gTarde+=t.tarde; gInasist+=t.inasistencia
+        })
+        const rowTot = wsR.addRow(['TOTAL GENERAL', gOk, gTarde, gInasist,
+          +gFichada.toFixed(2), +gParte.toFixed(2), +gDif.toFixed(2), +gLaboral.toFixed(2), +gDifHorario.toFixed(2)])
+        rowTot.font = { bold: true }
+        estiloCeldas(rowTot, CORP.totalBg)
+        wsR.getRow(hR.number).alignment = { horizontal: 'center' }
+
+        // ── Gráfico de asistencia por empleado (barras con celdas) ───────────
+        let fila = wsR.rowCount + 2
+        estiloTitulo(wsR, fila, 'Asistencia por empleado', 1, 9)
+        fila++
+        const ANCHO_BARRA = 6 // columnas B..G usadas como barra proporcional
+        resumen
+          .slice()
+          .sort((a,b) => (b.inasistencia+b.tarde) - (a.inasistencia+a.tarde))
+          .forEach(t => {
+            wsR.getCell(fila, 1).value = t.empleado
+            wsR.getCell(fila, 1).font = { size: 9 }
+            const [okW, tardeW, inasistW] = distribuirBarra([t.ok, t.tarde, t.inasistencia], ANCHO_BARRA)
+            let col = 2
+            const pintar = (ancho, color) => {
+              for (let i = 0; i < ancho; i++) { wsR.getCell(fila, col).fill = { type:'pattern', pattern:'solid', fgColor:{argb:color} }; col++ }
+            }
+            pintar(okW, CORP.verde); pintar(tardeW, CORP.naranja); pintar(inasistW, CORP.rojo)
+            wsR.getCell(fila, 8).value = `${t.ok} OK · ${t.tarde} tarde · ${t.inasistencia} inasist.`
+            wsR.getCell(fila, 8).font = { size: 8, color: { argb: 'FF6C757D' } }
+            fila++
+          })
+        fila++
+        wsR.getCell(fila, 1).value = 'Referencias:'
+        wsR.getCell(fila, 1).font = { size: 8, italic: true }
+        const leyenda = [['Presente', CORP.verde], ['Tarde', CORP.naranja], ['Inasistencia', CORP.rojo]]
+        let colLey = 2
+        leyenda.forEach(([label, color]) => {
+          wsR.getCell(fila, colLey).fill = { type:'pattern', pattern:'solid', fgColor:{argb:color} }
+          wsR.getCell(fila, colLey+1).value = label
+          wsR.getCell(fila, colLey+1).font = { size: 8 }
+          colLey += 3
+        })
+
+        // ── Una hoja por empleado ─────────────────────────────────────────────
+        const usados = new Set(['Resumen'])
         for (const [empleado, filas] of Object.entries(porEmpleado)) {
-          const aoa = [[empleado], []]
-          aoa.push(['Fecha','Entrada','Salida','Hs Fichada','Hs Parte','Diferencia','Hs Laboral','Dif. Horario','Novedad'])
-          let tFichada = 0, tParte = 0, tDif = 0, tLaboral = 0, tDifHorario = 0
+          const ws = wb.addWorksheet(nombreHoja(empleado, usados))
+          ws.columns = [{width:10},{width:8},{width:8},{width:10},{width:9},{width:10},{width:10},{width:11},{width:14}]
+          estiloTitulo(ws, 1, empleado, 1, 9)
+          const h = ws.addRow(['Fecha','Entrada','Salida','Hs Fichada','Hs Parte','Diferencia','Hs Laboral','Dif. Horario','Novedad'])
+          estiloHeader(h)
+          let tFichada=0, tParte=0, tDif=0, tLaboral=0, tDifHorario=0
           for (const f of filas) {
-            tFichada    += +f.horas_fichada || 0
-            tParte      += +f.horas_parte || 0
-            tDif        += +f.diferencia || 0
-            tLaboral    += +f.horas_laborales || 0
-            tDifHorario += +f.diferencia_horario || 0
+            tFichada += +f.horas_fichada || 0; tParte += +f.horas_parte || 0; tDif += +f.diferencia || 0
+            tLaboral += +f.horas_laborales || 0; tDifHorario += +f.diferencia_horario || 0
             const [yy,mm,dd] = f.fecha.split('-')
             const novedad = f.estado === 'inasistencia' ? 'Inasistencia'
                           : f.estado === 'tarde' ? `Tarde +${f.minutos_tarde}m`
                           : f.estado === 'normal' ? 'OK' : ''
-            aoa.push([
+            const row = ws.addRow([
               `${dd}/${mm}/${yy}`,
               f.entrada || '—', f.salida || '—',
               f.horas_fichada !== '' ? +f.horas_fichada : '',
@@ -1954,14 +2085,16 @@ export default function RRHH() {
               f.diferencia_horario !== '' ? +f.diferencia_horario : '',
               novedad,
             ])
+            const bg = f.estado === 'inasistencia' ? 'FFFBE1E3' : f.estado === 'tarde' ? 'FFFEE7D6' : undefined
+            estiloCeldas(row, bg)
           }
-          aoa.push(['TOTAL','','', +tFichada.toFixed(2), +tParte.toFixed(2), +tDif.toFixed(2), +tLaboral.toFixed(2), +tDifHorario.toFixed(2), ''])
-
-          const ws = XLSX.utils.aoa_to_sheet(aoa)
-          ws['!cols'] = [{wch:10},{wch:8},{wch:8},{wch:10},{wch:9},{wch:10},{wch:10},{wch:11},{wch:14}]
-          XLSX.utils.book_append_sheet(wb, ws, nombreHoja(empleado, usados))
+          const rowT = ws.addRow(['TOTAL','','', +tFichada.toFixed(2), +tParte.toFixed(2), +tDif.toFixed(2), +tLaboral.toFixed(2), +tDifHorario.toFixed(2), ''])
+          rowT.font = { bold: true }
+          estiloCeldas(rowT, CORP.totalBg)
+          ws.views = [{ state: 'frozen', ySplit: 2 }]
         }
-        XLSX.writeFile(wb, `asistencia_${infDesde}_${infHasta}.xlsx`)
+
+        await descargarWorkbook(wb, `asistencia_${infDesde}_${infHasta}.xlsx`)
       } catch (e) {
         alert(e.response?.data?.error || 'Error al exportar')
       } finally { setInfExportando(false) }
