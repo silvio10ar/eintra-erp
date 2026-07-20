@@ -803,6 +803,15 @@ const minutosDeHora = hhmm => {
   const [h, m] = hhmm.split(':').map(Number);
   return h * 60 + m;
 };
+// Horas entre dos horarios HH:MM, descontando 1h de almuerzo si el rango cruza 13:00-14:00
+const horasEntre = (inicio, fin) => {
+  if (!inicio || !fin) return null;
+  const ini = minutosDeHora(inicio), fn = minutosDeHora(fin);
+  if (fn <= ini) return null;
+  let mins = fn - ini;
+  if (inicio <= '13:00' && fin >= '14:00') mins -= 60;
+  return +(mins / 60).toFixed(2);
+};
 
 router.get('/informes/asistencia', verificarToken, (req, res) => {
   const { desde, hasta, empleado_id } = req.query;
@@ -813,7 +822,7 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
   const empParams = [];
   if (empleado_id) { empWhere.push('id = ?'); empParams.push(empleado_id); }
   const empleados = db.prepare(`
-    SELECT id, nombre, horario_entrada FROM rrhh_empleados WHERE ${empWhere.join(' AND ')}
+    SELECT id, nombre, horario_entrada, horario_salida FROM rrhh_empleados WHERE ${empWhere.join(' AND ')}
   `).all(...empParams);
 
   const where  = ['a.fecha BETWEEN ? AND ?', 'a.empleado_id IS NOT NULL']
@@ -867,12 +876,16 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
       const f   = fm.get(key);
       const horasParte = pm[key] ?? 0;
 
+      const horasLaborales = horasEntre(emp.horario_entrada, emp.horario_salida);
+
       if (!f) {
         out.push({
           empleado: emp.nombre, fecha,
           entrada: '', salida: '',
           horas_fichada: '', horas_parte: horasParte,
           diferencia: '', estado: 'inasistencia', minutos_tarde: 0,
+          horas_laborales: horasLaborales ?? '',
+          diferencia_horario: horasLaborales ?? '', // no fichó nada: perdió todo el horario laboral
         });
         continue;
       }
@@ -882,12 +895,26 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
         const diff = minutosDeHora(f.entrada) - minutosDeHora(emp.horario_entrada);
         if (diff > TOLERANCIA_TARDE_MIN) { estado = 'tarde'; minutosTarde = diff; }
       }
+
+      // Horas realmente trabajadas dentro del horario: si fichó antes de horario_entrada,
+      // ese tiempo no cuenta (no estaba trabajando todavía)
+      let horasFichadaEfectiva = null;
+      if (horasLaborales != null && f.entrada && f.salida) {
+        const entradaEfectiva = f.entrada < emp.horario_entrada ? emp.horario_entrada : f.entrada;
+        horasFichadaEfectiva = horasEntre(entradaEfectiva, f.salida);
+      }
+      const diferenciaHorario = (horasLaborales != null && horasFichadaEfectiva != null)
+        ? +(horasLaborales - horasFichadaEfectiva).toFixed(2)
+        : '';
+
       out.push({
         empleado: f.empleado, fecha,
         entrada: f.entrada || '', salida: f.salida || '',
         horas_fichada: f.horas_fichada ?? '', horas_parte: horasParte,
         diferencia: f.horas_fichada != null ? +(f.horas_fichada - horasParte).toFixed(2) : '',
         estado, minutos_tarde: minutosTarde,
+        horas_laborales: horasLaborales ?? '',
+        diferencia_horario: diferenciaHorario,
       });
     }
   }

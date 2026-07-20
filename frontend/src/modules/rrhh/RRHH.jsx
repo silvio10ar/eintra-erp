@@ -1911,6 +1911,8 @@ export default function RRHH() {
       { k:'horas_fichada', l:'Hs Fichada' },
       { k:'horas_parte',   l:'Hs Parte'   },
       { k:'diferencia',    l:'Diferencia' },
+      { k:'horas_laborales',    l:'Hs Laboral'   },
+      { k:'diferencia_horario', l:'Dif. Horario' },
       { k:'estado',        l:'Novedad'    },
     ]
     const COLS_TAREAS = [
@@ -2058,10 +2060,10 @@ export default function RRHH() {
                             const [yy,mm,dd] = v.split('-')
                             return <td key={c.k}>{dd}/{mm}/{yy}</td>
                           }
-                          if ((c.k==='horas_fichada'||c.k==='horas'||c.k==='horas_parte') && v !== '') {
+                          if ((c.k==='horas_fichada'||c.k==='horas'||c.k==='horas_parte'||c.k==='horas_laborales') && v !== '') {
                             return <td key={c.k}>{(+v).toFixed(1)}h</td>
                           }
-                          if (c.k === 'diferencia' && v !== '') {
+                          if ((c.k === 'diferencia' || c.k === 'diferencia_horario') && v !== '') {
                             const n = +v
                             return <td key={c.k} className={Math.abs(n)>1?'text-danger fw-semibold':'text-success'}>
                               {n>0?`+${n.toFixed(1)}h`:`${n.toFixed(1)}h`}
