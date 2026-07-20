@@ -140,6 +140,7 @@ export const PREFIJOS = [
   { p: 'FCF', d: 'Cartuchos filtrantes' },
   { p: 'FDF', d: 'Difusores' },
   { p: 'FCE', d: 'Filtros (varios)' },
+  { p: 'FMO', d: 'Membranas ósmosis inversa' },
   // G — Tanques
   { p: 'GPL', d: 'Tanques plásticos' },
   { p: 'GFV', d: 'Fibra de vidrio' },
