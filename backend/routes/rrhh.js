@@ -885,7 +885,7 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
           horas_fichada: '', horas_parte: horasParte,
           diferencia: '', estado: 'inasistencia', minutos_tarde: 0,
           horas_laborales: horasLaborales ?? '',
-          diferencia_horario: horasLaborales ?? '', // no fichó nada: perdió todo el horario laboral
+          diferencia_horario: horasLaborales != null ? -horasLaborales : '', // no fichó nada: negativo = trabajó de menos
         });
         continue;
       }
@@ -903,8 +903,9 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
         const entradaEfectiva = f.entrada < emp.horario_entrada ? emp.horario_entrada : f.entrada;
         horasFichadaEfectiva = horasEntre(entradaEfectiva, f.salida);
       }
+      // Negativo = trabajó menos que el horario laboral; positivo = trabajó de más
       const diferenciaHorario = (horasLaborales != null && horasFichadaEfectiva != null)
-        ? +(horasLaborales - horasFichadaEfectiva).toFixed(2)
+        ? +(horasFichadaEfectiva - horasLaborales).toFixed(2)
         : '';
 
       out.push({

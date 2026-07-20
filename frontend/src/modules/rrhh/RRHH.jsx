@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import * as XLSX from 'xlsx'
 import api from '../../api/client'
 import DateInput from '../../components/DateInput'
 
@@ -73,6 +74,7 @@ export default function RRHH() {
   const [infEmpleado,   setInfEmpleado]   = useState('')
   const [infData,       setInfData]       = useState(null)
   const [infLoading,    setInfLoading]    = useState(false)
+  const [infExportando, setInfExportando] = useState(false)
   const [feriados,      setFeriados]      = useState([])
   const [nuevoFeriado,  setNuevoFeriado]  = useState({ fecha: '', descripcion: '' })
 
@@ -1903,6 +1905,68 @@ export default function RRHH() {
       } finally { setInfLoading(false) }
     }
 
+    // Nombre de hoja válido para Excel: máx 31 caracteres, sin \ / ? * [ ]
+    function nombreHoja(nombre, usados) {
+      let base = String(nombre).replace(/[\\/?*[\]]/g, '').slice(0, 31) || 'Empleado'
+      let final = base, i = 2
+      while (usados.has(final)) { final = `${base.slice(0, 28)}~${i++}` }
+      usados.add(final)
+      return final
+    }
+
+    async function exportarTodosExcel() {
+      if (!infDesde || !infHasta) { alert('Seleccioná fechas'); return }
+      setInfExportando(true)
+      try {
+        const r = await api.get('/rrhh/informes/asistencia', { params: { desde: infDesde, hasta: infHasta } })
+        const data = r.data
+        if (!data || data.length === 0) { alert('Sin datos para el período seleccionado'); return }
+
+        const porEmpleado = {}
+        data.forEach(row => {
+          if (!porEmpleado[row.empleado]) porEmpleado[row.empleado] = []
+          porEmpleado[row.empleado].push(row)
+        })
+
+        const wb = XLSX.utils.book_new()
+        const usados = new Set()
+        for (const [empleado, filas] of Object.entries(porEmpleado)) {
+          const aoa = [[empleado], []]
+          aoa.push(['Fecha','Entrada','Salida','Hs Fichada','Hs Parte','Diferencia','Hs Laboral','Dif. Horario','Novedad'])
+          let tFichada = 0, tParte = 0, tDif = 0, tLaboral = 0, tDifHorario = 0
+          for (const f of filas) {
+            tFichada    += +f.horas_fichada || 0
+            tParte      += +f.horas_parte || 0
+            tDif        += +f.diferencia || 0
+            tLaboral    += +f.horas_laborales || 0
+            tDifHorario += +f.diferencia_horario || 0
+            const [yy,mm,dd] = f.fecha.split('-')
+            const novedad = f.estado === 'inasistencia' ? 'Inasistencia'
+                          : f.estado === 'tarde' ? `Tarde +${f.minutos_tarde}m`
+                          : f.estado === 'normal' ? 'OK' : ''
+            aoa.push([
+              `${dd}/${mm}/${yy}`,
+              f.entrada || '—', f.salida || '—',
+              f.horas_fichada !== '' ? +f.horas_fichada : '',
+              f.horas_parte !== '' ? +f.horas_parte : '',
+              f.diferencia !== '' ? +f.diferencia : '',
+              f.horas_laborales !== '' ? +f.horas_laborales : '',
+              f.diferencia_horario !== '' ? +f.diferencia_horario : '',
+              novedad,
+            ])
+          }
+          aoa.push(['TOTAL','','', +tFichada.toFixed(2), +tParte.toFixed(2), +tDif.toFixed(2), +tLaboral.toFixed(2), +tDifHorario.toFixed(2), ''])
+
+          const ws = XLSX.utils.aoa_to_sheet(aoa)
+          ws['!cols'] = [{wch:10},{wch:8},{wch:8},{wch:10},{wch:9},{wch:10},{wch:10},{wch:11},{wch:14}]
+          XLSX.utils.book_append_sheet(wb, ws, nombreHoja(empleado, usados))
+        }
+        XLSX.writeFile(wb, `asistencia_${infDesde}_${infHasta}.xlsx`)
+      } catch (e) {
+        alert(e.response?.data?.error || 'Error al exportar')
+      } finally { setInfExportando(false) }
+    }
+
     const COLS_ASIST = [
       { k:'empleado',      l:'Empleado'   },
       { k:'fecha',         l:'Fecha'      },
@@ -1970,6 +2034,15 @@ export default function RRHH() {
                 <button className="btn btn-success btn-sm align-self-end"
                   onClick={() => exportarCSV(infTab === 'asistencia' ? 'asistencia' : 'tareas')}>
                   <i className="bi bi-file-earmark-excel me-1"/>Exportar Excel
+                </button>
+              )}
+              {infTab === 'asistencia' && (
+                <button className="btn btn-outline-success btn-sm align-self-end"
+                  onClick={exportarTodosExcel} disabled={infExportando}
+                  title="Exporta todos los empleados del período, una hoja por empleado">
+                  {infExportando
+                    ? <><span className="spinner-border spinner-border-sm me-1"/>Exportando…</>
+                    : <><i className="bi bi-file-earmark-spreadsheet me-1"/>Exportar todos (.xlsx)</>}
                 </button>
               )}
             </div>
@@ -2081,6 +2154,19 @@ export default function RRHH() {
                     )
                   })}
                 </tbody>
+                {infTab === 'asistencia' && (
+                  <tfoot>
+                    <tr className="table-light fw-bold">
+                      <td colSpan={4}>TOTAL</td>
+                      <td>{infData.reduce((s,r)=>s+(+r.horas_fichada||0),0).toFixed(1)}h</td>
+                      <td>{infData.reduce((s,r)=>s+(+r.horas_parte||0),0).toFixed(1)}h</td>
+                      <td>{infData.reduce((s,r)=>s+(+r.diferencia||0),0).toFixed(1)}h</td>
+                      <td>{infData.reduce((s,r)=>s+(+r.horas_laborales||0),0).toFixed(1)}h</td>
+                      <td>{infData.reduce((s,r)=>s+(+r.diferencia_horario||0),0).toFixed(1)}h</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
