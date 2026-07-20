@@ -754,6 +754,11 @@ function inicializar() {
 
     CREATE INDEX IF NOT EXISTS idx_rrhh_asist_fecha ON rrhh_asistencia(fecha);
     CREATE INDEX IF NOT EXISTS idx_rrhh_asist_emp   ON rrhh_asistencia(empleado_id);
+
+    CREATE TABLE IF NOT EXISTS rrhh_feriados (
+      fecha       TEXT PRIMARY KEY,
+      descripcion TEXT DEFAULT ''
+    );
   `);
 
   // id_dispositivo en empleados (para vincular con el nro de empleado del terminal)
