@@ -773,9 +773,24 @@ router.get('/partes/proyectos', verificarToken, (req, res) => {
 
 // ── Informes ──────────────────────────────────────────────────────────────────
 
+// Tolerancia de llegada tarde (minutos) sobre el horario_entrada configurado por empleado
+const TOLERANCIA_TARDE_MIN = 5;
+const minutosDeHora = hhmm => {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+};
+
 router.get('/informes/asistencia', verificarToken, (req, res) => {
   const { desde, hasta, empleado_id } = req.query;
   if (!desde || !hasta) return res.status(400).json({ error: 'Requerido: desde, hasta' });
+
+  // Roster de empleados a evaluar (activos, obligados a fichar)
+  const empWhere  = ['activo = 1', "COALESCE(obliga_fichar,1) != 0"];
+  const empParams = [];
+  if (empleado_id) { empWhere.push('id = ?'); empParams.push(empleado_id); }
+  const empleados = db.prepare(`
+    SELECT id, nombre, horario_entrada FROM rrhh_empleados WHERE ${empWhere.join(' AND ')}
+  `).all(...empParams);
 
   const where  = ['a.fecha BETWEEN ? AND ?', 'a.empleado_id IS NOT NULL']
   const params = [desde, hasta]
@@ -797,6 +812,7 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
     GROUP BY a.empleado_id, a.fecha
     ORDER BY e.nombre, a.fecha
   `).all(...params);
+  const fm = new Map(fichadas.map(f => [`${f.empleado_id}_${f.fecha}`, f]));
 
   const pParams = [desde, hasta]
   if (empleado_id) pParams.push(empleado_id)
@@ -809,17 +825,46 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
   `).all(...pParams);
   const pm = Object.fromEntries(partes.map(p => [`${p.empleado_id}_${p.fecha}`, p.horas_parte]));
 
-  res.json(fichadas.map(f => ({
-    empleado:      f.empleado,
-    fecha:         f.fecha,
-    entrada:       f.entrada      || '',
-    salida:        f.salida       || '',
-    horas_fichada: f.horas_fichada ?? '',
-    horas_parte:   pm[`${f.empleado_id}_${f.fecha}`] ?? 0,
-    diferencia:    f.horas_fichada != null
-      ? +(f.horas_fichada - (pm[`${f.empleado_id}_${f.fecha}`] ?? 0)).toFixed(2)
-      : '',
-  })));
+  // Días hábiles (lunes a viernes) del período, para poder marcar inasistencias
+  const dias = [];
+  for (let d = new Date(desde + 'T00:00:00'); d <= new Date(hasta + 'T00:00:00'); d.setDate(d.getDate() + 1)) {
+    const dow = d.getDay(); // 0=domingo, 6=sábado
+    if (dow !== 0 && dow !== 6) dias.push(d.toISOString().slice(0, 10));
+  }
+
+  const out = [];
+  for (const emp of empleados) {
+    for (const fecha of dias) {
+      const key = `${emp.id}_${fecha}`;
+      const f   = fm.get(key);
+      const horasParte = pm[key] ?? 0;
+
+      if (!f) {
+        out.push({
+          empleado: emp.nombre, fecha,
+          entrada: '', salida: '',
+          horas_fichada: '', horas_parte: horasParte,
+          diferencia: '', estado: 'inasistencia', minutos_tarde: 0,
+        });
+        continue;
+      }
+
+      let estado = 'normal', minutosTarde = 0;
+      if (emp.horario_entrada && f.entrada) {
+        const diff = minutosDeHora(f.entrada) - minutosDeHora(emp.horario_entrada);
+        if (diff > TOLERANCIA_TARDE_MIN) { estado = 'tarde'; minutosTarde = diff; }
+      }
+      out.push({
+        empleado: f.empleado, fecha,
+        entrada: f.entrada || '', salida: f.salida || '',
+        horas_fichada: f.horas_fichada ?? '', horas_parte: horasParte,
+        diferencia: f.horas_fichada != null ? +(f.horas_fichada - horasParte).toFixed(2) : '',
+        estado, minutos_tarde: minutosTarde,
+      });
+    }
+  }
+  out.sort((a, b) => a.empleado.localeCompare(b.empleado) || a.fecha.localeCompare(b.fecha));
+  res.json(out);
 });
 
 router.get('/informes/tareas', verificarToken, (req, res) => {
