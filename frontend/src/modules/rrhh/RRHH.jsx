@@ -100,10 +100,15 @@ const MESES = [
   { v: '10', l: 'Octubre'    }, { v: '11', l: 'Noviembre'  }, { v: '12', l: 'Diciembre'  },
 ]
 
-function fmtH(h) {
-  if (!h && h !== 0) return '—'
-  const hh = Math.floor(h), mm = Math.round((h - hh) * 60)
-  return mm > 0 ? `${hh}h ${mm}m` : `${hh}h`
+function fmtH(h, signo = false) {
+  if (h === '' || h == null || Number.isNaN(+h)) return '—'
+  const n = +h
+  const neg = n < 0
+  const abs = Math.abs(n)
+  let hh = Math.floor(abs), mm = Math.round((abs - hh) * 60)
+  if (mm === 60) { hh++; mm = 0 }
+  const base = mm > 0 ? `${hh}h ${mm}m` : `${hh}h`
+  return `${neg ? '-' : (signo ? '+' : '')}${base}`
 }
 function fmtF(f) {
   if (!f) return '—'
@@ -2045,13 +2050,13 @@ export default function RRHH() {
         let gFichada=0, gParte=0, gDif=0, gLaboral=0, gDifHorario=0, gOk=0, gTarde=0, gInasist=0
         resumen.forEach(t => {
           const row = wsR.addRow([t.empleado, t.ok, t.tarde, t.inasistencia,
-            +t.fichada.toFixed(2), +t.parte.toFixed(2), +t.dif.toFixed(2), +t.laboral.toFixed(2), +t.difHorario.toFixed(2)])
+            fmtH(t.fichada), fmtH(t.parte), fmtH(t.dif, true), fmtH(t.laboral), fmtH(t.difHorario, true)])
           estiloCeldas(row)
           gFichada+=t.fichada; gParte+=t.parte; gDif+=t.dif; gLaboral+=t.laboral; gDifHorario+=t.difHorario
           gOk+=t.ok; gTarde+=t.tarde; gInasist+=t.inasistencia
         })
         const rowTot = wsR.addRow(['TOTAL GENERAL', gOk, gTarde, gInasist,
-          +gFichada.toFixed(2), +gParte.toFixed(2), +gDif.toFixed(2), +gLaboral.toFixed(2), +gDifHorario.toFixed(2)])
+          fmtH(gFichada), fmtH(gParte), fmtH(gDif, true), fmtH(gLaboral), fmtH(gDifHorario, true)])
         rowTot.font = { bold: true }
         estiloCeldas(rowTot, CORP.totalBg)
         wsR.getRow(hR.number).alignment = { horizontal: 'center' }
@@ -2081,17 +2086,17 @@ export default function RRHH() {
             const row = ws.addRow([
               `${dd}/${mm}/${yy}`,
               f.entrada || '—', f.salida || '—',
-              f.horas_fichada !== '' ? +f.horas_fichada : '',
-              f.horas_parte !== '' ? +f.horas_parte : '',
-              f.diferencia !== '' ? +f.diferencia : '',
-              f.horas_laborales !== '' ? +f.horas_laborales : '',
-              f.diferencia_horario !== '' ? +f.diferencia_horario : '',
+              fmtH(f.horas_fichada),
+              fmtH(f.horas_parte),
+              fmtH(f.diferencia, true),
+              fmtH(f.horas_laborales),
+              fmtH(f.diferencia_horario, true),
               novedad,
             ])
             const bg = f.estado === 'inasistencia' ? 'FFFBE1E3' : f.estado === 'tarde' ? 'FFFEE7D6' : undefined
             estiloCeldas(row, bg)
           }
-          const rowT = ws.addRow(['TOTAL','','', +tFichada.toFixed(2), +tParte.toFixed(2), +tDif.toFixed(2), +tLaboral.toFixed(2), +tDifHorario.toFixed(2), ''])
+          const rowT = ws.addRow(['TOTAL','','', fmtH(tFichada), fmtH(tParte), fmtH(tDif, true), fmtH(tLaboral), fmtH(tDifHorario, true), ''])
           rowT.font = { bold: true }
           estiloCeldas(rowT, CORP.totalBg)
           ws.views = [{ state: 'frozen', ySplit: 2 }]
@@ -2246,8 +2251,8 @@ export default function RRHH() {
               </span>
               <span className="text-muted small">
                 {infTab === 'asistencia'
-                  ? `Fichado: ${infData.reduce((s,r)=>s+(+r.horas_fichada||0),0).toFixed(1)}h · Parte: ${infData.reduce((s,r)=>s+(+r.horas_parte||0),0).toFixed(1)}h`
-                  : `Total: ${infData.reduce((s,r)=>s+(+r.horas||0),0).toFixed(1)}h`}
+                  ? `Fichado: ${fmtH(infData.reduce((s,r)=>s+(+r.horas_fichada||0),0))} · Parte: ${fmtH(infData.reduce((s,r)=>s+(+r.horas_parte||0),0))}`
+                  : `Total: ${fmtH(infData.reduce((s,r)=>s+(+r.horas||0),0))}`}
               </span>
             </div>
             <div className="table-responsive" style={{maxHeight:520, overflowY:'auto'}}>
@@ -2270,12 +2275,12 @@ export default function RRHH() {
                             return <td key={c.k}>{dd}/{mm}/{yy}</td>
                           }
                           if ((c.k==='horas_fichada'||c.k==='horas'||c.k==='horas_parte'||c.k==='horas_laborales') && v !== '') {
-                            return <td key={c.k}>{(+v).toFixed(1)}h</td>
+                            return <td key={c.k}>{fmtH(+v)}</td>
                           }
                           if ((c.k === 'diferencia' || c.k === 'diferencia_horario') && v !== '') {
                             const n = +v
                             return <td key={c.k} className={Math.abs(n)>1?'text-danger fw-semibold':'text-success'}>
-                              {n>0?`+${n.toFixed(1)}h`:`${n.toFixed(1)}h`}
+                              {fmtH(n, true)}
                             </td>
                           }
                           if (c.k === 'estado') {
@@ -2294,11 +2299,11 @@ export default function RRHH() {
                   <tfoot>
                     <tr className="table-light fw-bold">
                       <td colSpan={4}>TOTAL</td>
-                      <td>{infData.reduce((s,r)=>s+(+r.horas_fichada||0),0).toFixed(1)}h</td>
-                      <td>{infData.reduce((s,r)=>s+(+r.horas_parte||0),0).toFixed(1)}h</td>
-                      <td>{infData.reduce((s,r)=>s+(+r.diferencia||0),0).toFixed(1)}h</td>
-                      <td>{infData.reduce((s,r)=>s+(+r.horas_laborales||0),0).toFixed(1)}h</td>
-                      <td>{infData.reduce((s,r)=>s+(+r.diferencia_horario||0),0).toFixed(1)}h</td>
+                      <td>{fmtH(infData.reduce((s,r)=>s+(+r.horas_fichada||0),0))}</td>
+                      <td>{fmtH(infData.reduce((s,r)=>s+(+r.horas_parte||0),0))}</td>
+                      <td>{fmtH(infData.reduce((s,r)=>s+(+r.diferencia||0),0), true)}</td>
+                      <td>{fmtH(infData.reduce((s,r)=>s+(+r.horas_laborales||0),0))}</td>
+                      <td>{fmtH(infData.reduce((s,r)=>s+(+r.diferencia_horario||0),0), true)}</td>
                       <td></td>
                     </tr>
                   </tfoot>

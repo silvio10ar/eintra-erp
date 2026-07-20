@@ -829,16 +829,10 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
   const params = [desde, hasta]
   if (empleado_id) { where.push('e.id = ?'); params.push(empleado_id) }
 
+  // horas_fichada se calcula en JS (más abajo), recortada al horario configurado del empleado
   const fichadas = db.prepare(`
     SELECT e.id AS empleado_id, e.nombre AS empleado, a.fecha,
-           MIN(a.hora) AS entrada, MAX(a.hora) AS salida,
-           CASE WHEN MIN(a.hora) != MAX(a.hora) THEN
-             ROUND((
-               (CAST(SUBSTR(MAX(a.hora),1,2) AS REAL)*60 + CAST(SUBSTR(MAX(a.hora),4,2) AS REAL))
-             - (CAST(SUBSTR(MIN(a.hora),1,2) AS REAL)*60 + CAST(SUBSTR(MIN(a.hora),4,2) AS REAL))
-             - CASE WHEN MIN(a.hora) <= '13:00' AND MAX(a.hora) >= '14:00' THEN 60 ELSE 0 END
-             ) / 60.0, 2)
-           ELSE NULL END AS horas_fichada
+           MIN(a.hora) AS entrada, MAX(a.hora) AS salida
     FROM rrhh_asistencia a
     JOIN rrhh_empleados e ON e.id = a.empleado_id
     WHERE ${where.join(' AND ')}
@@ -896,23 +890,23 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
         if (diff > TOLERANCIA_TARDE_MIN) { estado = 'tarde'; minutosTarde = diff; }
       }
 
-      // Horas realmente trabajadas dentro del horario: si fichó antes de horario_entrada,
-      // ese tiempo no cuenta (no estaba trabajando todavía)
-      let horasFichadaEfectiva = null;
-      if (horasLaborales != null && f.entrada && f.salida) {
-        const entradaEfectiva = f.entrada < emp.horario_entrada ? emp.horario_entrada : f.entrada;
-        horasFichadaEfectiva = horasEntre(entradaEfectiva, f.salida);
-      }
+      // Horas fichadas recortadas al horario configurado: si fichó antes de horario_entrada
+      // o se quedó después de horario_salida, ese tiempo no cuenta como trabajado
+      let entradaEfectiva = f.entrada, salidaEfectiva = f.salida;
+      if (emp.horario_entrada && entradaEfectiva && entradaEfectiva < emp.horario_entrada) entradaEfectiva = emp.horario_entrada;
+      if (emp.horario_salida  && salidaEfectiva  && salidaEfectiva  > emp.horario_salida)  salidaEfectiva  = emp.horario_salida;
+      const horasFichada = horasEntre(entradaEfectiva, salidaEfectiva);
+
       // Negativo = trabajó menos que el horario laboral; positivo = trabajó de más
-      const diferenciaHorario = (horasLaborales != null && horasFichadaEfectiva != null)
-        ? +(horasFichadaEfectiva - horasLaborales).toFixed(2)
+      const diferenciaHorario = (horasLaborales != null && horasFichada != null)
+        ? +(horasFichada - horasLaborales).toFixed(2)
         : '';
 
       out.push({
         empleado: f.empleado, fecha,
         entrada: f.entrada || '', salida: f.salida || '',
-        horas_fichada: f.horas_fichada ?? '', horas_parte: horasParte,
-        diferencia: f.horas_fichada != null ? +(f.horas_fichada - horasParte).toFixed(2) : '',
+        horas_fichada: horasFichada ?? '', horas_parte: horasParte,
+        diferencia: horasFichada != null ? +(horasFichada - horasParte).toFixed(2) : '',
         estado, minutos_tarde: minutosTarde,
         horas_laborales: horasLaborales ?? '',
         diferencia_horario: diferenciaHorario,
