@@ -1887,6 +1887,7 @@ export default function RRHH() {
       { k:'horas_fichada', l:'Hs Fichada' },
       { k:'horas_parte',   l:'Hs Parte'   },
       { k:'diferencia',    l:'Diferencia' },
+      { k:'estado',        l:'Novedad'    },
     ]
     const COLS_TAREAS = [
       { k:'empleado',    l:'Empleado'    },
@@ -1959,6 +1960,8 @@ export default function RRHH() {
           <div className="alert alert-info">Sin datos para el período seleccionado.</div>
         )}
         {infData && infData.length > 0 && (
+          <>
+          {infTab === 'asistencia' && <GraficoAsistencia data={infData} />}
           <div className="card">
             <div className="card-header py-1 d-flex justify-content-between align-items-center">
               <span className="small fw-semibold">
@@ -1978,8 +1981,11 @@ export default function RRHH() {
                 <tbody>
                   {infData.map((row, i) => {
                     const sinParte = infTab === 'asistencia' && !row.horas_parte && row.horas_fichada !== ''
+                    const rowCls   = row.estado === 'inasistencia' ? 'table-danger'
+                                   : row.estado !== 'tarde' && sinParte ? 'table-warning' : ''
+                    const rowStyle = row.estado === 'tarde' ? { backgroundColor: 'rgba(253,126,20,0.15)' } : undefined
                     return (
-                      <tr key={i} className={sinParte ? 'table-warning' : ''}>
+                      <tr key={i} className={rowCls} style={rowStyle}>
                         {cols.map(c => {
                           let v = row[c.k] ?? ''
                           if (c.k === 'fecha' && v) {
@@ -1995,6 +2001,12 @@ export default function RRHH() {
                               {n>0?`+${n.toFixed(1)}h`:`${n.toFixed(1)}h`}
                             </td>
                           }
+                          if (c.k === 'estado') {
+                            if (v === 'inasistencia') return <td key={c.k}><span className="badge bg-danger">Inasistencia</span></td>
+                            if (v === 'tarde')        return <td key={c.k}><span className="badge" style={{ backgroundColor:'#fd7e14', color:'#fff' }}>Tarde +{row.minutos_tarde}m</span></td>
+                            if (v === 'normal')       return <td key={c.k}><span className="badge bg-success bg-opacity-75">OK</span></td>
+                            return <td key={c.k}>—</td>
+                          }
                           return <td key={c.k}>{v===''?'—':v}</td>
                         })}
                       </tr>
@@ -2004,7 +2016,51 @@ export default function RRHH() {
               </table>
             </div>
           </div>
+          </>
         )}
+      </div>
+    )
+  }
+
+  // ── GraficoAsistencia ───────────────────────────────────────────────────────
+  function GraficoAsistencia({ data }) {
+    const porEmp = {}
+    data.forEach(r => {
+      if (!porEmp[r.empleado]) porEmp[r.empleado] = { normal: 0, tarde: 0, inasistencia: 0 }
+      if (porEmp[r.empleado][r.estado] !== undefined) porEmp[r.empleado][r.estado]++
+    })
+    const filas = Object.entries(porEmp)
+      .map(([empleado, c]) => ({ empleado, ...c, total: c.normal + c.tarde + c.inasistencia }))
+      .filter(f => f.total > 0)
+      .sort((a, b) => (b.inasistencia + b.tarde) - (a.inasistencia + a.tarde))
+
+    if (filas.length === 0) return null
+
+    return (
+      <div className="card mb-3">
+        <div className="card-body">
+          <h6 className="fw-semibold mb-3"><i className="bi bi-bar-chart me-2 text-primary" />Asistencia por empleado</h6>
+          {filas.map(f => (
+            <div key={f.empleado} className="mb-2">
+              <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.78rem' }}>
+                <span className="text-truncate fw-semibold" style={{ maxWidth: '60%' }} title={f.empleado}>{f.empleado}</span>
+                <span className="text-muted">
+                  {f.normal} OK{f.tarde > 0 && ` · ${f.tarde} tarde`}{f.inasistencia > 0 && ` · ${f.inasistencia} inasist.`}
+                </span>
+              </div>
+              <div className="d-flex rounded overflow-hidden" style={{ height: 12 }}>
+                {f.normal > 0 && <div style={{ width: `${f.normal / f.total * 100}%`, background: '#198754' }} title={`${f.normal} días OK`} />}
+                {f.tarde > 0 && <div style={{ width: `${f.tarde / f.total * 100}%`, background: '#fd7e14' }} title={`${f.tarde} llegadas tarde`} />}
+                {f.inasistencia > 0 && <div style={{ width: `${f.inasistencia / f.total * 100}%`, background: '#dc3545' }} title={`${f.inasistencia} inasistencias`} />}
+              </div>
+            </div>
+          ))}
+          <div className="d-flex gap-3 mt-2" style={{ fontSize: '0.72rem' }}>
+            <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: '#198754', marginRight: 4 }} />Presente</span>
+            <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: '#fd7e14', marginRight: 4 }} />Tarde</span>
+            <span><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, background: '#dc3545', marginRight: 4 }} />Inasistencia</span>
+          </div>
+        </div>
       </div>
     )
   }
