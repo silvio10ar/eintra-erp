@@ -123,6 +123,7 @@ export default function RRHH() {
   const [empleados, setEmpleados] = useState([])
   const [proyectosMain,    setProyectosMain]    = useState([])
   const [proyectosActivos, setProyectosActivos] = useState([])
+  const [proyectosTodos,   setProyectosTodos]   = useState([])
   const [actividades,      setActividades]      = useState([])
   const [modalAct,         setModalAct]         = useState(null)
   const [categorias,setCategorias]= useState([])
@@ -186,7 +187,8 @@ export default function RRHH() {
       api.get('/rrhh/asistencia/empleados-dispositivo'),
       api.get('/proyectos?estado=Activo'),
       api.get('/rrhh/actividades'),
-    ]).then(([c, e, pm, d, ed, pa, act]) => {
+      api.get('/proyectos'),
+    ]).then(([c, e, pm, d, ed, pa, act, ptodos]) => {
       setCategorias(c.data)
       setEmpleados(e.data)
       setProyectosMain(pm.data)
@@ -194,6 +196,7 @@ export default function RRHH() {
       setEmpDispositivo(ed.data)
       setActividades(act.data)
       setProyectosActivos(pa.data)
+      setProyectosTodos(ptodos.data)
     }).catch(() => {})
   }, [])
 
@@ -264,7 +267,8 @@ export default function RRHH() {
   const reloadProyectos  = () => Promise.all([
     api.get('/rrhh/proyectos'),
     api.get('/proyectos?estado=Activo'),
-  ]).then(([pm, pa]) => { setProyectosMain(pm.data); setProyectosActivos(pa.data) })
+    api.get('/proyectos'),
+  ]).then(([pm, pa, ptodos]) => { setProyectosMain(pm.data); setProyectosActivos(pa.data); setProyectosTodos(ptodos.data) })
   const reloadActividades = () => api.get('/rrhh/actividades').then(r => setActividades(r.data))
 
   // ── acciones dispositivo ──────────────────────────────────────────────────
@@ -536,7 +540,7 @@ export default function RRHH() {
             </select>
             <select className="form-select form-select-sm" style={{width:180}} value={fProy} onChange={e=>setFProy(e.target.value)}>
               <option value="">Todos los proyectos</option>
-              {proyectosActivos.map(p=><option key={p.id} value={p.id}>{p.codigo ? `${p.codigo} — ${p.nombre}` : p.nombre}</option>)}
+              {proyectosTodos.map(p=><option key={p.id} value={p.id}>{p.codigo ? `${p.codigo} — ${p.nombre}` : p.nombre}</option>)}
             </select>
             <span className="badge bg-secondary align-self-center">
               {registros.length} registros · {fmtH(totalH)}
