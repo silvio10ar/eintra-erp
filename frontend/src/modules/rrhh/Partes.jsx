@@ -60,12 +60,10 @@ export default function Partes() {
   const [loadingSemana, setLoadingSemana] = useState(false)
   const [diasVer,       setDiasVer]       = useState(7)
 
-  const [modalDia,     setModalDia]     = useState(null) // { empleado_id, empleado_nombre, fecha }
-  const [modalRegs,    setModalRegs]    = useState([])
-  const [modalLoading, setModalLoading] = useState(false)
-  const [modalEditId,  setModalEditId]  = useState(null) // id en edición, o 'nuevo'
-  const [modalForm,    setModalForm]    = useState(null)
-  const [modalSaving,  setModalSaving]  = useState(false)
+  const [regs7,     setRegs7]     = useState([])
+  const [loading7,  setLoading7]  = useState(false)
+  const [modalReg7, setModalReg7] = useState(null)
+  const [saving7,   setSaving7]   = useState(false)
 
   const [proyData,     setProyData]     = useState([])
   const [loadingProy,  setLoadingProy]  = useState(false)
@@ -100,75 +98,55 @@ export default function Partes() {
     cargarSemana()
   }, [tab, diasVer])
 
-  // ── Modal: revisar / corregir el parte de un día ──────────────────────────────
-  function abrirDia(emp, fecha) {
-    setModalDia({ empleado_id: emp.id, empleado_nombre: emp.nombre, fecha })
-    setModalEditId(null)
-    setModalLoading(true)
-    api.get('/rrhh/registros', { params: { empleado_id: emp.id, fecha } })
-      .then(r => setModalRegs(r.data))
-      .catch(() => setModalRegs([]))
-      .finally(() => setModalLoading(false))
+  // ── Tab: Últimos 7 días (listado plano para detectar/corregir partes mal hechos) ──
+  function cargarUltimos7() {
+    setLoading7(true)
+    const hasta = new Date().toISOString().slice(0, 10)
+    const d = new Date(); d.setDate(d.getDate() - (diasVer - 1))
+    const desde = d.toISOString().slice(0, 10)
+    api.get('/rrhh/registros', { params: { desde, hasta } })
+      .then(r => setRegs7(r.data))
+      .catch(() => setRegs7([]))
+      .finally(() => setLoading7(false))
   }
 
-  function cerrarModalDia() {
-    setModalDia(null); setModalRegs([]); setModalEditId(null); setModalForm(null)
-  }
+  useEffect(() => {
+    if (tab !== 'ultimos7') return
+    cargarUltimos7()
+  }, [tab, diasVer])
 
-  function editarRegistro(r) {
-    setModalEditId(r.id)
-    setModalForm({
-      cat_id: r.categoria_id || '',
-      ini: r.hora_inicio || '', fin: r.hora_fin || '',
-      horas: r.horas,
-      asignacion: r.actividad_id ? `a:${r.actividad_id}` : r.proyecto_id ? `p:${r.proyecto_id}` : '',
-      descripcion: r.descripcion || '',
-    })
-  }
-
-  function updModalForm(field, val) {
-    setModalForm(f => {
-      const u = { ...f, [field]: val }
-      if (field === 'ini' || field === 'fin') {
-        const h = calcHoras(field === 'ini' ? val : f.ini, field === 'fin' ? val : f.fin)
-        if (h !== null) u.horas = h
-      }
-      return u
-    })
-  }
-
-  async function guardarEdicionRegistro() {
-    if (!modalForm.cat_id || !modalForm.ini || !modalForm.fin || !modalForm.asignacion) {
-      alert('Completá código, INI, FIN y proyecto/actividad'); return
+  async function guardarReg7() {
+    const m = modalReg7
+    if (!m.fecha || !m.empleado_id || !m.hora_inicio || !m.hora_fin || !m.asignacion) {
+      alert('Completá fecha, empleado, horario y proyecto/actividad'); return
     }
-    setModalSaving(true)
+    setSaving7(true)
     try {
-      const esActividad = modalForm.asignacion.startsWith('a:')
-      const asigId = Number(modalForm.asignacion.slice(2))
-      await api.put(`/rrhh/registros/${modalEditId}`, {
-        fecha: modalDia.fecha,
-        empleado_id: modalDia.empleado_id,
-        categoria_id: Number(modalForm.cat_id),
+      const esActividad = m.asignacion.startsWith('a:')
+      const asigId = Number(m.asignacion.slice(2))
+      await api.put(`/rrhh/registros/${m.id}`, {
+        fecha: m.fecha,
+        empleado_id: Number(m.empleado_id),
+        categoria_id: m.categoria_id ? Number(m.categoria_id) : null,
         proyecto_id: esActividad ? null : asigId,
         actividad_id: esActividad ? asigId : null,
-        hora_inicio: modalForm.ini, hora_fin: modalForm.fin,
-        horas: parseFloat(modalForm.horas),
-        descripcion: modalForm.descripcion,
+        hora_inicio: m.hora_inicio, hora_fin: m.hora_fin,
+        horas: parseFloat(m.horas),
+        descripcion: m.descripcion || '',
       })
-      setModalEditId(null); setModalForm(null)
-      abrirDia({ id: modalDia.empleado_id, nombre: modalDia.empleado_nombre }, modalDia.fecha)
-      cargarSemana()
+      setModalReg7(null)
+      cargarUltimos7()
+      if (tab === 'semana') cargarSemana()
     } catch (e) {
       alert(e.response?.data?.error || 'Error al guardar')
-    } finally { setModalSaving(false) }
+    } finally { setSaving7(false) }
   }
 
-  async function eliminarRegistro(id) {
+  async function eliminarReg7(id) {
     if (!window.confirm('¿Eliminar esta fila del parte?')) return
     try {
       await api.delete(`/rrhh/registros/${id}`)
-      setModalRegs(rs => rs.filter(r => r.id !== id))
-      cargarSemana()
+      setRegs7(rs => rs.filter(r => r.id !== id))
     } catch (e) {
       alert(e.response?.data?.error || 'Error al eliminar')
     }
@@ -577,9 +555,7 @@ export default function Partes() {
                           : diff <= 2 ? '#fff3cd'
                           : '#f8d7da'
                         return (
-                          <td key={fecha} className="text-center" style={{ background: bg, cursor: 'pointer' }}
-                            title="Ver / corregir el parte de este día"
-                            onClick={() => abrirDia(emp, fecha)}>
+                          <td key={fecha} className="text-center" style={{ background: bg }}>
                             <div className="fw-semibold" style={{ fontSize: '0.88rem' }}>
                               {fmtH(d.horas_parte)}
                             </div>
@@ -615,120 +591,178 @@ export default function Partes() {
             </div>
           </div>
         )}
+      </div>
+    )
+  }
 
-        {modalDia && (
+  // ── Tab: Últimos días (listado plano, para detectar/corregir partes mal hechos) ──
+  function TabUltimos7() {
+    return (
+      <div>
+        <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+          <div className="d-flex gap-2 align-items-center">
+            <span className="text-muted small">Período:</span>
+            {[7, 14, 30].map(n => (
+              <button key={n}
+                className={`btn btn-sm ${diasVer === n ? 'btn-primary' : 'btn-outline-secondary'}`}
+                onClick={() => setDiasVer(n)}>
+                {n}d
+              </button>
+            ))}
+            <span className="badge bg-secondary ms-2">{regs7.length} registros</span>
+          </div>
+        </div>
+
+        {loading7 && <div className="text-center py-5"><span className="spinner-border text-primary" /></div>}
+
+        {!loading7 && (
+          <div className="table-responsive">
+            <table className="table table-sm table-hover align-middle">
+              <thead className="table-dark">
+                <tr>
+                  <th>Fecha</th><th>Empleado</th><th>T</th><th>Código</th>
+                  <th>Inicio</th><th>Fin</th><th className="text-end">Horas</th>
+                  <th>Proyecto</th><th style={{ minWidth: 140 }}>Descripción</th><th />
+                </tr>
+              </thead>
+              <tbody>
+                {regs7.map(r => (
+                  <tr key={r.id}>
+                    <td className="text-nowrap">{fmtDia(r.fecha)}</td>
+                    <td>{r.empleado_nombre}</td>
+                    <td>
+                      <span className={`badge bg-${r.empleado_tipo === 'interno' ? 'primary' : 'secondary'}`}>
+                        {r.empleado_tipo === 'interno' ? 'E' : 'C'}
+                      </span>
+                    </td>
+                    <td>
+                      {r.cat_codigo
+                        ? <span className="badge bg-light text-dark border" title={r.cat_descripcion}>{r.cat_codigo}</span>
+                        : '—'}
+                    </td>
+                    <td>{r.hora_inicio || '—'}</td>
+                    <td>{r.hora_fin || '—'}</td>
+                    <td className="text-end fw-semibold text-nowrap">{fmtH(r.horas)}</td>
+                    <td className="text-truncate" style={{ maxWidth: 160 }} title={r.proyecto_nombre}>{r.proyecto_nombre || '—'}</td>
+                    <td className="text-truncate" style={{ maxWidth: 160 }} title={r.descripcion}>{r.descripcion || '—'}</td>
+                    <td className="text-nowrap">
+                      <button className="btn btn-sm btn-outline-primary py-0 me-1" onClick={() => setModalReg7({
+                        ...r,
+                        asignacion: r.actividad_id ? `a:${r.actividad_id}` : r.proyecto_id ? `p:${r.proyecto_id}` : '',
+                      })}>
+                        <i className="bi bi-pencil" />
+                      </button>
+                      <button className="btn btn-sm btn-outline-danger py-0" onClick={() => eliminarReg7(r.id)}>
+                        <i className="bi bi-trash" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {regs7.length === 0 && (
+                  <tr><td colSpan={10} className="text-center text-muted py-4">Sin registros en el período seleccionado</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {modalReg7 && (
           <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
             <div className="modal-dialog modal-lg">
               <div className="modal-content">
                 <div className="modal-header">
-                  <h5 className="modal-title">
-                    <i className="bi bi-calendar-check me-2" />
-                    Parte de <strong>{modalDia.empleado_nombre}</strong> — {fmtDia(modalDia.fecha)}
-                  </h5>
-                  <button className="btn-close" onClick={cerrarModalDia} />
+                  <h5 className="modal-title">Editar registro</h5>
+                  <button className="btn-close" onClick={() => setModalReg7(null)} />
                 </div>
                 <div className="modal-body">
-                  {modalLoading && <div className="text-center py-3"><span className="spinner-border text-primary" /></div>}
-                  {!modalLoading && modalRegs.length === 0 && (
-                    <p className="text-muted text-center py-3">Sin filas cargadas para este día.</p>
-                  )}
-                  {!modalLoading && modalRegs.length > 0 && (
-                    <div className="table-responsive">
-                      <table className="table table-sm align-middle">
-                        <thead className="table-light">
-                          <tr>
-                            <th style={{ minWidth: 160 }}>Código</th>
-                            <th style={{ width: 90 }}>INI</th>
-                            <th style={{ width: 90 }}>FIN</th>
-                            <th style={{ width: 62 }} className="text-center">Horas</th>
-                            <th style={{ minWidth: 140 }}>Proyecto</th>
-                            <th>Descripción</th>
-                            <th style={{ width: 70 }} />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {modalRegs.map(r => {
-                            if (modalEditId === r.id) return (
-                              <tr key={r.id} className="table-active">
-                                <td>
-                                  <select className="form-select form-select-sm" style={{ fontSize: '0.78rem' }}
-                                    value={modalForm.cat_id}
-                                    onChange={e => updModalForm('cat_id', e.target.value ? Number(e.target.value) : '')}>
-                                    <option value="">—</option>
-                                    {Object.entries(gruposCats).map(([g, cats]) => (
-                                      <optgroup key={g} label={g}>
-                                        {cats.map(c => <option key={c.id} value={c.id}>{c.codigo} – {c.descripcion}</option>)}
-                                      </optgroup>
-                                    ))}
-                                  </select>
-                                </td>
-                                <td><input type="time" className="form-control form-control-sm"
-                                  value={modalForm.ini} onChange={e => updModalForm('ini', e.target.value)} /></td>
-                                <td><input type="time" className="form-control form-control-sm"
-                                  value={modalForm.fin} onChange={e => updModalForm('fin', e.target.value)} /></td>
-                                <td className="text-center fw-semibold text-primary">
-                                  {modalForm.horas ? `${parseFloat(modalForm.horas).toFixed(1)}h` : '—'}
-                                </td>
-                                <td>
-                                  <select className="form-select form-select-sm" style={{ fontSize: '0.78rem' }}
-                                    value={modalForm.asignacion}
-                                    onChange={e => updModalForm('asignacion', e.target.value)}>
-                                    <option value="">—</option>
-                                    {proyectosLista.length > 0 && (
-                                      <optgroup label="Proyectos">
-                                        {proyectosLista.map(p =>
-                                          <option key={p.id} value={`p:${p.id}`}>{fmtCod(p.codigo)} — {p.nombre}</option>)}
-                                      </optgroup>
-                                    )}
-                                    {actividadesLista.length > 0 && (
-                                      <optgroup label="Actividades">
-                                        {actividadesLista.map(a =>
-                                          <option key={a.id} value={`a:${a.id}`}>{a.nombre}</option>)}
-                                      </optgroup>
-                                    )}
-                                  </select>
-                                </td>
-                                <td>
-                                  <input type="text" className="form-control form-control-sm"
-                                    value={modalForm.descripcion} onChange={e => updModalForm('descripcion', e.target.value)} />
-                                </td>
-                                <td className="text-nowrap">
-                                  <button className="btn btn-sm btn-success py-0 me-1" disabled={modalSaving} onClick={guardarEdicionRegistro}>
-                                    <i className="bi bi-check-lg" />
-                                  </button>
-                                  <button className="btn btn-sm btn-outline-secondary py-0"
-                                    onClick={() => { setModalEditId(null); setModalForm(null) }}>
-                                    <i className="bi bi-x-lg" />
-                                  </button>
-                                </td>
-                              </tr>
-                            )
-                            return (
-                              <tr key={r.id}>
-                                <td><strong>{r.cat_codigo}</strong> <span className="text-muted small">{r.cat_descripcion}</span></td>
-                                <td>{r.hora_inicio || '—'}</td>
-                                <td>{r.hora_fin || '—'}</td>
-                                <td className="text-center fw-semibold text-primary">{fmtH(r.horas)}</td>
-                                <td className="text-truncate" style={{ maxWidth: 160 }} title={r.proyecto_nombre}>{r.proyecto_nombre || '—'}</td>
-                                <td className="text-muted small">{r.descripcion || '—'}</td>
-                                <td className="text-nowrap">
-                                  <button className="btn btn-sm btn-outline-primary py-0 me-1" onClick={() => editarRegistro(r)}>
-                                    <i className="bi bi-pencil" />
-                                  </button>
-                                  <button className="btn btn-sm btn-outline-danger py-0" onClick={() => eliminarRegistro(r.id)}>
-                                    <i className="bi bi-trash" />
-                                  </button>
-                                </td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
+                  <div className="row g-3">
+                    <div className="col-md-4">
+                      <label className="form-label fw-semibold">Fecha *</label>
+                      <DateInput className="form-control form-control-sm"
+                        value={modalReg7.fecha || ''} onChange={v => setModalReg7(x => ({ ...x, fecha: v }))} />
                     </div>
-                  )}
+                    <div className="col-md-8">
+                      <label className="form-label fw-semibold">Empleado *</label>
+                      <select className="form-select form-select-sm"
+                        value={modalReg7.empleado_id || ''} onChange={e => setModalReg7(x => ({ ...x, empleado_id: e.target.value }))}>
+                        <option value="">— seleccionar —</option>
+                        <optgroup label="E-INTRA">
+                          {empleados.filter(x => x.tipo === 'interno').map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
+                        </optgroup>
+                        <optgroup label="Contratistas">
+                          {empleados.filter(x => x.tipo === 'contratista').map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
+                        </optgroup>
+                      </select>
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label fw-semibold">Código</label>
+                      <select className="form-select form-select-sm"
+                        value={modalReg7.categoria_id || ''} onChange={e => setModalReg7(x => ({ ...x, categoria_id: e.target.value }))}>
+                        <option value="">— sin categoría —</option>
+                        {Object.entries(gruposCats).map(([g, cats]) => (
+                          <optgroup key={g} label={g}>
+                            {cats.map(c => <option key={c.id} value={c.id}>{c.codigo} – {c.descripcion}</option>)}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="col-md-6">
+                      <label className="form-label fw-semibold">Proyecto / Actividad *</label>
+                      <select className="form-select form-select-sm"
+                        value={modalReg7.asignacion || ''} onChange={e => setModalReg7(x => ({ ...x, asignacion: e.target.value }))}>
+                        <option value="">— sin asignar —</option>
+                        {modalReg7.proyecto_id && !modalReg7.asignacion?.startsWith('a:') && !proyectosLista.some(p => String(p.id) === String(modalReg7.proyecto_id)) && modalReg7.proyecto_nombre && (
+                          <optgroup label="Proyecto actual (no activo)">
+                            <option value={`p:${modalReg7.proyecto_id}`}>{modalReg7.proyecto_nombre}</option>
+                          </optgroup>
+                        )}
+                        {proyectosLista.length > 0 && (
+                          <optgroup label="Proyectos">
+                            {proyectosLista.map(p => <option key={p.id} value={`p:${p.id}`}>{fmtCod(p.codigo)} — {p.nombre}</option>)}
+                          </optgroup>
+                        )}
+                        {actividadesLista.length > 0 && (
+                          <optgroup label="Actividades">
+                            {actividadesLista.map(a => <option key={a.id} value={`a:${a.id}`}>{a.nombre}</option>)}
+                          </optgroup>
+                        )}
+                      </select>
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label fw-semibold">Hora inicio</label>
+                      <input type="time" className="form-control form-control-sm"
+                        value={modalReg7.hora_inicio || ''} onChange={e => {
+                          const v = e.target.value
+                          const h = calcHoras(v, modalReg7.hora_fin)
+                          setModalReg7(x => ({ ...x, hora_inicio: v, ...(h !== null && { horas: h }) }))
+                        }} />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label fw-semibold">Hora fin</label>
+                      <input type="time" className="form-control form-control-sm"
+                        value={modalReg7.hora_fin || ''} onChange={e => {
+                          const v = e.target.value
+                          const h = calcHoras(modalReg7.hora_inicio, v)
+                          setModalReg7(x => ({ ...x, hora_fin: v, ...(h !== null && { horas: h }) }))
+                        }} />
+                    </div>
+                    <div className="col-md-4">
+                      <label className="form-label fw-semibold">Horas *</label>
+                      <input type="number" className="form-control form-control-sm" step="0.01" min="0" max="24"
+                        value={modalReg7.horas || ''} onChange={e => setModalReg7(x => ({ ...x, horas: e.target.value }))} />
+                    </div>
+                    <div className="col-12">
+                      <label className="form-label fw-semibold">Descripción</label>
+                      <input type="text" className="form-control form-control-sm"
+                        value={modalReg7.descripcion || ''} onChange={e => setModalReg7(x => ({ ...x, descripcion: e.target.value }))} />
+                    </div>
+                  </div>
                 </div>
                 <div className="modal-footer">
-                  <button className="btn btn-secondary" onClick={cerrarModalDia}>Cerrar</button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setModalReg7(null)}>Cancelar</button>
+                  <button className="btn btn-primary btn-sm" disabled={saving7} onClick={guardarReg7}>
+                    {saving7 ? <><span className="spinner-border spinner-border-sm me-1" />Guardando...</> : 'Guardar'}
+                  </button>
                 </div>
               </div>
             </div>
@@ -873,6 +907,7 @@ export default function Partes() {
         {[
           { id: 'cargar',    icon: 'file-earmark-plus', label: 'Cargar Parte' },
           { id: 'semana',    icon: 'calendar3',          label: 'Estado 7 días' },
+          { id: 'ultimos7',  icon: 'list-check',         label: 'Corregir partes' },
           { id: 'proyectos', icon: 'kanban',              label: 'Proyectos' },
         ].map(t => (
           <li key={t.id} className="nav-item">
@@ -886,6 +921,7 @@ export default function Partes() {
 
       {tab === 'cargar'    && TabCargar()}
       {tab === 'semana'    && TabSemana()}
+      {tab === 'ultimos7'  && TabUltimos7()}
       {tab === 'proyectos' && TabProyectos()}
     </div>
   )
