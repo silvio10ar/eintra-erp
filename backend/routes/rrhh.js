@@ -136,10 +136,13 @@ router.get('/dashboard', verificarToken, (req, res) => {
 
 // ── Registros ─────────────────────────────────────────────────────────────────
 router.get('/registros', verificarToken, (req, res) => {
-  const { year, month, empleado_id, proyecto_id, categoria_id } = req.query;
+  const { year, month, fecha, empleado_id, proyecto_id, categoria_id } = req.query;
   const where = []; const params = [];
 
-  if (year && month) {
+  if (fecha) {
+    where.push(`r.fecha = ?`);
+    params.push(fecha);
+  } else if (year && month) {
     where.push(`r.fecha LIKE ?`);
     params.push(`${year}-${String(month).padStart(2,'0')}%`);
   } else if (year) {
