@@ -7,6 +7,7 @@ const { verificarToken } = require('../middleware/auth');
 
 const router = express.Router();
 const puede = req => req.usuario?.rol === 'admin' || !!(req.permisos?.rrhh?.escribir);
+const puedeParte = req => req.usuario?.rol === 'admin' || !!(req.permisos?.rrhh?.escribir) || !!(req.permisos?.partes?.escribir);
 
 // Fecha actual en zona horaria Argentina (evita desfase UTC)
 const hoyAR = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' })
@@ -176,7 +177,7 @@ router.get('/registros', verificarToken, (req, res) => {
 });
 
 router.post('/registros', verificarToken, (req, res) => {
-  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  if (!puedeParte(req)) return res.status(403).json({ error: 'Sin permiso' });
   const { fecha, empleado_id, proyecto_id, categoria_id, hora_inicio, hora_fin, horas, modulo, descripcion } = req.body;
   if (!fecha || !empleado_id || !horas) return res.status(400).json({ error: 'fecha, empleado_id y horas son requeridos' });
 
@@ -228,7 +229,7 @@ router.post('/registros/batch', verificarToken, (req, res) => {
 });
 
 router.put('/registros/:id', verificarToken, (req, res) => {
-  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  if (!puedeParte(req)) return res.status(403).json({ error: 'Sin permiso' });
   const { fecha, empleado_id, proyecto_id, actividad_id, categoria_id, hora_inicio, hora_fin, horas, modulo, descripcion } = req.body;
 
   db.prepare(`
@@ -243,7 +244,7 @@ router.put('/registros/:id', verificarToken, (req, res) => {
 });
 
 router.delete('/registros/:id', verificarToken, (req, res) => {
-  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  if (!puedeParte(req)) return res.status(403).json({ error: 'Sin permiso' });
   db.prepare('DELETE FROM rrhh_registros WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
