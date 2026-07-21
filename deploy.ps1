@@ -155,7 +155,7 @@ fi
 mkdir -p "`$RUTA/logs"
 NODE_BIN=`$(which node 2>/dev/null || echo /usr/bin/node)
 CRON_JOB="0 0 * * * `$NODE_BIN `$RUTA/backend/scripts/backup-email.js >> `$RUTA/logs/backup.log 2>&1"
-( crontab -l 2>/dev/null | grep -v "backup-email.js" ; echo "`$CRON_JOB" ) | crontab -
+( crontab -l 2>/dev/null | grep -v "backup-email.js" || true ; echo "`$CRON_JOB" ) | crontab -
 echo "[cron] Backup BD programado a medianoche"
 
 echo ""
