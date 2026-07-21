@@ -2369,7 +2369,7 @@ export default function RRHH() {
     <div>
       <div className="d-flex align-items-center justify-content-between mb-3">
         <div>
-          <h4 className="mb-0 fw-bold">RRHH — Análisis de horas</h4>
+          <h4 className="mb-0 fw-bold">RRHH — ANÁLISIS DE HORAS</h4>
           <small className="text-muted">Form 43 · Gestión de horas utilizadas</small>
         </div>
       </div>
