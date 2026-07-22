@@ -743,7 +743,9 @@ export default function Compras() {
                               <td className="text-center text-muted">
                                 {it.dias_plazo != null && it.dias_plazo !== ''
                                   ? `${it.dias_plazo}d — ${fmtF(sumarDias(modalOC.fecha, it.dias_plazo))}`
-                                  : it.plazo}
+                                  : modalOC.modo_plazo !== 'ITEM' && modalOC.fecha_entrega_est
+                                    ? fmtF(modalOC.fecha_entrega_est)
+                                    : it.plazo}
                               </td>
                               <td className="text-end">
                                 {it.producto_id

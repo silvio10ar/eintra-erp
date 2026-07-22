@@ -297,7 +297,9 @@ export default function ImprimirOC() {
                   <td style={{textAlign:'center', fontSize:'7pt'}}>
                     {item.dias_plazo != null && item.dias_plazo !== ''
                       ? fmtF(sumarDias(oc.fecha, item.dias_plazo))
-                      : item.plazo}
+                      : oc.modo_plazo !== 'ITEM' && oc.fecha_entrega_est
+                        ? fmtF(oc.fecha_entrega_est)
+                        : item.plazo}
                   </td>
                 </tr>
               ) : (
