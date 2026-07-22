@@ -11,6 +11,16 @@ body {
   font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
+/* ── Inputs numéricos sin flechas (evita superposición en columnas angostas) ── */
+.input-sin-flechas::-webkit-outer-spin-button,
+.input-sin-flechas::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.input-sin-flechas[type=number] {
+  -moz-appearance: textfield;
+}
+
 /* ── Sidebar ─────────────────────────────────────── */
 .sidebar {
   position: fixed;

@@ -998,15 +998,15 @@ export default function Compras() {
                         <th style={{width:90}}>CÓDIGO</th>
                         <th style={{minWidth:450}}>DESCRIPCIÓN</th>
                         <th style={{width:68}}>UNID.</th>
-                        <th style={{width:76}}>CANT.</th>
-                        <th style={{width:96}}>PRECIO U.</th>
-                        <th style={{width:56}}>B1%</th>
-                        <th style={{width:56}}>B2%</th>
-                        <th style={{width:56}}>B3%</th>
-                        <th style={{width:56}}>B4%</th>
-                        <th style={{width:96}}>PRECIO F.</th>
-                        <th style={{width:96}}>SUBTOTAL</th>
-                        <th style={{width:96}}>DÍAS/ENTREGA</th>
+                        <th style={{width:80}}>CANT.</th>
+                        <th style={{width:100}}>PRECIO U.</th>
+                        <th style={{width:64}}>B1%</th>
+                        <th style={{width:64}}>B2%</th>
+                        <th style={{width:64}}>B3%</th>
+                        <th style={{width:64}}>B4%</th>
+                        <th style={{width:100}}>PRECIO F.</th>
+                        <th style={{width:100}}>SUBTOTAL</th>
+                        <th style={{width:100}}>DÍAS/ENTREGA</th>
                         <th style={{width:28}}/>
                       </tr>
                     </thead>
@@ -1082,25 +1082,25 @@ export default function Compras() {
                             )}
                           </td>
                           <td><input className="form-control form-control-sm border-0 p-0 px-1" value={it.unidad} onChange={e=>setItem(idx,'unidad',e.target.value)}/></td>
-                          <td><input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.cantidad} min="0" step="any" onChange={e=>setItem(idx,'cantidad',e.target.value)}/></td>
+                          <td><input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.cantidad} min="0" step="any" onChange={e=>setItem(idx,'cantidad',e.target.value)}/></td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.precio_unitario} min="0" step="any" onChange={e=>setItem(idx,'precio_unitario',e.target.value)}/>
+                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.precio_unitario} min="0" step="any" onChange={e=>setItem(idx,'precio_unitario',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{fmtN(refPrecios[idx].precio_unitario)}</div>}
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif1} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif1',e.target.value)}/>
+                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif1} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif1',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif1 > 0 ? refPrecios[idx].bonif1 : '—'}</div>}
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif2} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif2',e.target.value)}/>
+                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif2} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif2',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif2 > 0 ? refPrecios[idx].bonif2 : '—'}</div>}
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif3} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif3',e.target.value)}/>
+                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif3} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif3',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif3 > 0 ? refPrecios[idx].bonif3 : '—'}</div>}
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end" value={it.bonif4} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif4',e.target.value)}/>
+                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif4} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif4',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif4 > 0 ? refPrecios[idx].bonif4 : '—'}</div>}
                           </td>
                           <td style={{background:'#f8f9fa'}}>
@@ -1111,7 +1111,7 @@ export default function Compras() {
                           <td>
                             {formOC.modo_plazo === 'ITEM' ? (
                               <>
-                                <input type="number" min="0" className="form-control form-control-sm border-0 p-0 px-1 text-end"
+                                <input type="number" min="0" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas"
                                   placeholder="días" value={it.dias_plazo}
                                   onChange={e=>setItem(idx,'dias_plazo',e.target.value)}/>
                                 {it.dias_plazo !== '' && it.dias_plazo != null &&
