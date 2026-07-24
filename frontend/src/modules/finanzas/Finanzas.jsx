@@ -2219,8 +2219,9 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                   {ctrlOC.map(r => {
                     const diff = (r.facturas_neto_total || 0) - (r.oc_neto_pesos || 0)
                     const esPeso = r.oc_moneda === 'PESOS' || r.oc_moneda === 'PESO'
+                    const tcValido = !!r.oc_tc_valido
                     return (
-                      <tr key={r.oc_id} className={Math.abs(diff) > 1000 ? 'table-danger' : 'table-warning'}>
+                      <tr key={r.oc_id} className={!tcValido ? 'table-info' : Math.abs(diff) > 1000 ? 'table-danger' : 'table-warning'}>
                         <td className="fw-semibold text-primary">{r.oc_numero}</td>
                         <td>{r.proveedor_nombre}</td>
                         <td>
@@ -2233,16 +2234,22 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                           )}
                         </td>
                         <td className="text-end">
-                          {fmtM(r.oc_neto_pesos, 'PESO')}
+                          {tcValido
+                            ? fmtM(r.oc_neto_pesos, 'PESO')
+                            : <span className="text-muted">—</span>}
                           {!esPeso && (
-                            <div className="text-muted" style={{ fontSize: '0.72rem' }}>
-                              {r.oc_moneda === 'DÓLAR' ? 'USD' : r.oc_moneda} {fmtM(r.oc_neto_orig, r.oc_moneda)} × {(r.oc_tc||1).toLocaleString('es-AR')}
+                            <div className={tcValido ? 'text-muted' : 'text-danger fw-semibold'} style={{ fontSize: '0.72rem' }}>
+                              {tcValido
+                                ? `${r.oc_moneda === 'DÓLAR' ? 'USD' : r.oc_moneda} ${fmtM(r.oc_neto_orig, r.oc_moneda)} × ${(r.oc_tc||1).toLocaleString('es-AR')}`
+                                : `⚠️ Sin TC cargado (${r.oc_moneda === 'DÓLAR' ? 'USD' : r.oc_moneda} ${fmtM(r.oc_neto_orig, r.oc_moneda)})`}
                             </div>
                           )}
                         </td>
                         <td className="text-end">{fmtM(r.facturas_neto_total, 'PESO')}</td>
-                        <td className={`text-end fw-bold ${diff > 0 ? 'text-danger' : 'text-success'}`}>
-                          {diff > 0 ? '+' : ''}{fmtM(diff, 'PESO')}
+                        <td className={`text-end fw-bold ${!tcValido ? 'text-muted' : diff > 0 ? 'text-danger' : 'text-success'}`}>
+                          {tcValido
+                            ? <>{diff > 0 ? '+' : ''}{fmtM(diff, 'PESO')}</>
+                            : 'TC no cargado en la OC'}
                         </td>
                         <td className="text-center">
                           <span className={`badge ${esPeso ? 'bg-secondary' : 'bg-info text-dark'}`}>{r.oc_moneda}</span>
@@ -2253,10 +2260,17 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                 </tbody>
                 <tfoot className="table-light fw-semibold">
                   <tr>
-                    <td colSpan={3}>{ctrlOC.length} OC{ctrlOC.length !== 1 ? 's' : ''} con diferencia</td>
-                    <td className="text-end">{fmtM(ctrlOC.reduce((s, r) => s + (r.oc_neto_pesos || 0), 0), 'PESO')}</td>
-                    <td className="text-end">{fmtM(ctrlOC.reduce((s, r) => s + (r.facturas_neto_total || 0), 0), 'PESO')}</td>
-                    <td className="text-end">{fmtM(ctrlOC.reduce((s, r) => s + ((r.facturas_neto_total||0) - (r.oc_neto_pesos||0)), 0), 'PESO')}</td>
+                    <td colSpan={3}>
+                      {ctrlOC.filter(r => r.oc_tc_valido).length} OC{ctrlOC.filter(r => r.oc_tc_valido).length !== 1 ? 's' : ''} con diferencia
+                      {ctrlOC.some(r => !r.oc_tc_valido) && (
+                        <span className="text-muted fw-normal ms-2">
+                          ({ctrlOC.filter(r => !r.oc_tc_valido).length} sin TC cargado, excluida{ctrlOC.filter(r => !r.oc_tc_valido).length !== 1 ? 's' : ''} del total)
+                        </span>
+                      )}
+                    </td>
+                    <td className="text-end">{fmtM(ctrlOC.filter(r => r.oc_tc_valido).reduce((s, r) => s + (r.oc_neto_pesos || 0), 0), 'PESO')}</td>
+                    <td className="text-end">{fmtM(ctrlOC.filter(r => r.oc_tc_valido).reduce((s, r) => s + (r.facturas_neto_total || 0), 0), 'PESO')}</td>
+                    <td className="text-end">{fmtM(ctrlOC.filter(r => r.oc_tc_valido).reduce((s, r) => s + ((r.facturas_neto_total||0) - (r.oc_neto_pesos||0)), 0), 'PESO')}</td>
                     <td />
                   </tr>
                 </tfoot>
