@@ -297,6 +297,8 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
   const [ctrlOC,    setCtrlOC]    = useState([])
   const [loadCtrlOC, setLoadCtrlOC] = useState(false)
+  const [editTC,    setEditTC]    = useState(null) // { oc_id, oc_numero, valor }
+  const [savingTC,  setSavingTC]  = useState(false)
 
   const cargarCtrlOC = useCallback(async () => {
     setLoadCtrlOC(true)
@@ -306,6 +308,17 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
   }, [])
 
   useEffect(() => { if (tab === 'control') cargarCtrlOC() }, [tab, cargarCtrlOC])
+
+  async function guardarTCManual() {
+    setSavingTC(true)
+    try {
+      await api.put(`/finanzas/control-oc/${editTC.oc_id}/tc-manual`, { valor: editTC.valor || null })
+      setEditTC(null)
+      cargarCtrlOC()
+    } catch (e) {
+      alert(e.response?.data?.error || 'Error al guardar')
+    } finally { setSavingTC(false) }
+  }
 
   const cargarServicios = useCallback(async () => {
     setLoadServ(true)
@@ -2220,6 +2233,9 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     const diff = (r.facturas_neto_total || 0) - (r.oc_neto_pesos || 0)
                     const esPeso = r.oc_moneda === 'PESOS' || r.oc_moneda === 'PESO'
                     const tcValido = !!r.oc_tc_valido
+                    const origenTC = r.oc_tc_manual ? 'manual'
+                      : r.oc_tc_dia ? 'dia'
+                      : r.oc_tc_original > 0 ? 'oc' : null
                     return (
                       <tr key={r.oc_id} className={!tcValido ? 'table-info' : Math.abs(diff) > 1000 ? 'table-danger' : 'table-warning'}>
                         <td className="fw-semibold text-primary">{r.oc_numero}</td>
@@ -2240,16 +2256,25 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                           {!esPeso && (
                             <div className={tcValido ? 'text-muted' : 'text-danger fw-semibold'} style={{ fontSize: '0.72rem' }}>
                               {tcValido
-                                ? `${r.oc_moneda === 'DÓLAR' ? 'USD' : r.oc_moneda} ${fmtM(r.oc_neto_orig, r.oc_moneda)} × ${(r.oc_tc||1).toLocaleString('es-AR')}`
+                                ? `${r.oc_moneda === 'DÓLAR' ? 'USD' : r.oc_moneda} ${fmtM(r.oc_neto_orig, r.oc_moneda)} × ${(r.oc_tc_usado||1).toLocaleString('es-AR')}`
                                 : `⚠️ Sin TC cargado (${r.oc_moneda === 'DÓLAR' ? 'USD' : r.oc_moneda} ${fmtM(r.oc_neto_orig, r.oc_moneda)})`}
+                            </div>
+                          )}
+                          {!esPeso && tcValido && (
+                            <div className="text-muted fst-italic" style={{ fontSize: '0.68rem' }}>
+                              {origenTC === 'manual' ? 'TC manual' : origenTC === 'dia' ? `TC del día (${fmtF(r.fecha_ultima)})` : 'TC cargado en la OC'}
                             </div>
                           )}
                         </td>
                         <td className="text-end">{fmtM(r.facturas_neto_total, 'PESO')}</td>
-                        <td className={`text-end fw-bold ${!tcValido ? 'text-muted' : diff > 0 ? 'text-danger' : 'text-success'}`}>
+                        <td className={`text-end fw-bold ${!tcValido ? 'text-muted' : diff > 0 ? 'text-danger' : 'text-success'}`}
+                          style={!esPeso ? { cursor: 'pointer' } : undefined}
+                          title={!esPeso ? 'Click para ajustar el tipo de cambio usado en esta OC' : undefined}
+                          onClick={() => { if (!esPeso) setEditTC({ oc_id: r.oc_id, oc_numero: r.oc_numero, valor: r.oc_tc_manual || '' }) }}>
                           {tcValido
                             ? <>{diff > 0 ? '+' : ''}{fmtM(diff, 'PESO')}</>
                             : 'TC no cargado en la OC'}
+                          {!esPeso && <i className="bi bi-pencil-square ms-1 text-muted" style={{ fontSize: '0.7rem' }} />}
                         </td>
                         <td className="text-center">
                           <span className={`badge ${esPeso ? 'bg-secondary' : 'bg-info text-dark'}`}>{r.oc_moneda}</span>
@@ -2277,6 +2302,35 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
               </table>
             )}
           </div>
+
+          {editTC && (
+            <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+              <div className="modal-dialog modal-sm">
+                <div className="modal-content">
+                  <div className="modal-header py-2">
+                    <h6 className="modal-title">Ajustar TC — OC #{editTC.oc_numero}</h6>
+                    <button className="btn-close" onClick={() => setEditTC(null)} />
+                  </div>
+                  <div className="modal-body">
+                    <label className="form-label small fw-semibold">Tipo de cambio a usar para esta OC</label>
+                    <input type="number" min="0" step="0.01" className="form-control form-control-sm"
+                      placeholder="Ej: 1510"
+                      value={editTC.valor}
+                      onChange={e => setEditTC(x => ({ ...x, valor: e.target.value }))} />
+                    <div className="text-muted mt-2" style={{ fontSize: '0.75rem' }}>
+                      Dejalo vacío y guardá para volver a usar el TC del día / el cargado en la OC.
+                    </div>
+                  </div>
+                  <div className="modal-footer py-2">
+                    <button className="btn btn-secondary btn-sm" onClick={() => setEditTC(null)}>Cancelar</button>
+                    <button className="btn btn-primary btn-sm" disabled={savingTC} onClick={guardarTCManual}>
+                      {savingTC ? <><span className="spinner-border spinner-border-sm me-1" />Guardando...</> : 'Guardar'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

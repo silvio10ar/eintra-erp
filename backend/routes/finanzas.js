@@ -931,20 +931,33 @@ router.get('/control-oc', verificarToken, (req, res) => {
   // Agrupa por OC: compara la suma de netos de TODAS sus facturas contra el
   // total neto de la OC (precio_final × cantidad, convertido a pesos si aplica).
   // Tolerancia: diferencia > $1 para evitar redondeos de centavos.
+  //
+  // Tipo de cambio usado para convertir la OC a pesos, en orden de prioridad:
+  //   1. tc_control_manual  — override manual cargado desde esta pantalla de control
+  //   2. tipo_cambio del día — el registrado en el sistema a la fecha de la última factura
+  //   3. oc.tasa_cambio      — la cargada en la OC al crearla (último recurso)
+  const TC_DIA = `(
+    SELECT tc.valor FROM tipo_cambio tc
+    WHERE tc.moneda = oc.moneda AND tc.fecha <= fc_sub.fecha_ultima AND tc.fecha != ''
+    ORDER BY tc.fecha DESC, tc.id DESC LIMIT 1
+  )`
+  const TC_USADO = `COALESCE(oc.tc_control_manual, ${TC_DIA}, NULLIF(oc.tasa_cambio, 0))`
   const filas = db.prepare(`
     SELECT
       oc.id              AS oc_id,
       oc.numero          AS oc_numero,
       oc.proveedor_nombre,
       oc.moneda          AS oc_moneda,
-      oc.tasa_cambio     AS oc_tc,
+      oc.tasa_cambio     AS oc_tc_original,
+      oc.tc_control_manual AS oc_tc_manual,
+      ${TC_DIA}          AS oc_tc_dia,
+      ${TC_USADO}        AS oc_tc_usado,
       oc_sub.neto_orig   AS oc_neto_orig,
-      CASE WHEN oc.moneda IN ('PESOS','PESO') OR oc.tasa_cambio > 0 THEN 1 ELSE 0 END AS oc_tc_valido,
+      CASE WHEN oc.moneda IN ('PESOS','PESO') OR ${TC_USADO} IS NOT NULL THEN 1 ELSE 0 END AS oc_tc_valido,
       CASE
         WHEN oc.moneda IN ('PESOS','PESO')
         THEN oc_sub.neto_orig
-        ELSE oc_sub.neto_orig
-             * CASE WHEN oc.tasa_cambio > 0 THEN oc.tasa_cambio ELSE 1 END
+        ELSE oc_sub.neto_orig * COALESCE(${TC_USADO}, 1)
       END                AS oc_neto_pesos,
       fc_sub.facturas_neto   AS facturas_neto_total,
       fc_sub.cant_facturas,
@@ -970,12 +983,24 @@ router.get('/control-oc', verificarToken, (req, res) => {
     WHERE ABS(fc_sub.facturas_neto -
       CASE
         WHEN oc.moneda IN ('PESOS','PESO') THEN oc_sub.neto_orig
-        ELSE oc_sub.neto_orig * CASE WHEN oc.tasa_cambio > 0 THEN oc.tasa_cambio ELSE 1 END
+        ELSE oc_sub.neto_orig * COALESCE(${TC_USADO}, 1)
       END
     ) > 1
     ORDER BY oc.numero DESC
   `).all();
   res.json(filas);
+});
+
+// Cargar / limpiar la tasa de cambio manual usada para reconciliar una OC puntual
+router.put('/control-oc/:oc_id/tc-manual', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const oc = db.prepare('SELECT id FROM ordenes_compra WHERE id=?').get(req.params.oc_id);
+  if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
+  const { valor } = req.body;
+  const v = (valor === null || valor === '' || valor === undefined) ? null : parseFloat(valor);
+  if (v != null && (isNaN(v) || v <= 0)) return res.status(400).json({ error: 'Valor inválido' });
+  db.prepare('UPDATE ordenes_compra SET tc_control_manual=? WHERE id=?').run(v, req.params.oc_id);
+  res.json({ ok: true });
 });
 
 // ── Control OC Clientes ──────────────────────────────────────────────────────
