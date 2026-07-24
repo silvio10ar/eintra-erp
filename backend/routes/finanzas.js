@@ -939,6 +939,7 @@ router.get('/control-oc', verificarToken, (req, res) => {
       oc.moneda          AS oc_moneda,
       oc.tasa_cambio     AS oc_tc,
       oc_sub.neto_orig   AS oc_neto_orig,
+      CASE WHEN oc.moneda IN ('PESOS','PESO') OR oc.tasa_cambio > 0 THEN 1 ELSE 0 END AS oc_tc_valido,
       CASE
         WHEN oc.moneda IN ('PESOS','PESO')
         THEN oc_sub.neto_orig
