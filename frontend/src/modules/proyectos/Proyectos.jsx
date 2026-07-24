@@ -525,8 +525,6 @@ export default function Proyectos() {
               <span className="fw-semibold text-primary">
                 <i className="bi bi-file-earmark-text me-1"/>
                 OC {ocCliente.numero_oc || '—'}
-                {ocCliente.monto_oc != null && ocCliente.monto_oc !== '' &&
-                  ` — USD ${new Intl.NumberFormat('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(ocCliente.monto_oc)}`}
               </span>
             ) : (
               <span className="text-muted fst-italic">
@@ -993,7 +991,6 @@ export default function Proyectos() {
                     {ocCliente ? (
                       <div className="d-flex flex-wrap gap-3">
                         <span><strong>N°:</strong> {ocCliente.numero_oc || '—'}</span>
-                        <span><strong>Monto:</strong> {ocCliente.monto_oc != null && ocCliente.monto_oc !== '' ? `USD ${fmtN(ocCliente.monto_oc)}` : '—'}</span>
                         <span><strong>Fecha:</strong> {fmtF(ocCliente.fecha_oc)}</span>
                       </div>
                     ) : (
