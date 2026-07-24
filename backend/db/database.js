@@ -332,6 +332,7 @@ function inicializar() {
   try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN importe_facturado REAL DEFAULT 0`) } catch(e) {}
   try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN fecha_vencimiento TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN pago_confirmado INTEGER DEFAULT 0`) } catch(e) {}
+  try { db.exec(`ALTER TABLE ordenes_compra ADD COLUMN tc_control_manual REAL`) } catch(e) {}
   try { db.exec(`ALTER TABLE oc_items ADD COLUMN estado_calidad TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE oc_items ADD COLUMN estado_factura TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE oc_items ADD COLUMN sin_codificar INTEGER DEFAULT 0`) } catch(e) {}
