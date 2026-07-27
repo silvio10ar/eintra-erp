@@ -9,6 +9,17 @@ const router = express.Router();
 const puede = req => req.usuario?.rol === 'admin' || !!(req.permisos?.rrhh?.escribir);
 const puedeParte = req => req.usuario?.rol === 'admin' || !!(req.permisos?.rrhh?.escribir) || !!(req.permisos?.partes?.escribir);
 
+// Solo RRHH (pantallas de administración: dashboard, dispositivos, feriados, informes, etc.)
+const leerRRHH = (req, res, next) => {
+  if (req.usuario?.rol === 'admin' || req.permisos?.rrhh?.leer) return next();
+  return res.status(403).json({ error: 'Sin permisos de lectura' });
+};
+// RRHH o Partes (datos que también usa la pantalla de carga diaria de partes)
+const leerRRHHOParte = (req, res, next) => {
+  if (req.usuario?.rol === 'admin' || req.permisos?.rrhh?.leer || req.permisos?.partes?.leer) return next();
+  return res.status(403).json({ error: 'Sin permisos de lectura' });
+};
+
 // Fecha actual en zona horaria Argentina (evita desfase UTC)
 const hoyAR = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' })
 
@@ -67,7 +78,7 @@ function hikRequest(ip, puerto, method, path, body, user, pass) {
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-router.get('/dashboard', verificarToken, (req, res) => {
+router.get('/dashboard', verificarToken, leerRRHH, (req, res) => {
   const year  = req.query.year  || new Date().getFullYear();
   const month = req.query.month;
 
@@ -136,7 +147,7 @@ router.get('/dashboard', verificarToken, (req, res) => {
 });
 
 // ── Registros ─────────────────────────────────────────────────────────────────
-router.get('/registros', verificarToken, (req, res) => {
+router.get('/registros', verificarToken, leerRRHHOParte, (req, res) => {
   const { year, month, fecha, desde, hasta, empleado_id, proyecto_id, categoria_id } = req.query;
   const where = []; const params = [];
 
@@ -250,7 +261,7 @@ router.delete('/registros/:id', verificarToken, (req, res) => {
 });
 
 // ── Empleados ─────────────────────────────────────────────────────────────────
-router.get('/empleados', verificarToken, (req, res) => {
+router.get('/empleados', verificarToken, leerRRHHOParte, (req, res) => {
   const anio = new Date().getFullYear();
   const rows = db.prepare(`
     SELECT e.*,
@@ -298,7 +309,7 @@ router.delete('/empleados/:id', verificarToken, (req, res) => {
 });
 
 // ── Proyectos (vista de solo lectura desde módulo principal) ──────────────────
-router.get('/proyectos', verificarToken, (req, res) => {
+router.get('/proyectos', verificarToken, leerRRHH, (req, res) => {
   const rows = db.prepare(`
     SELECT p.id, p.codigo, p.nombre, p.estado, p.cliente_nombre,
            COALESCE((SELECT SUM(horas) FROM rrhh_registros r WHERE r.proyecto_id = p.id), 0) AS total_horas
@@ -316,7 +327,7 @@ try { db.exec(`ALTER TABLE rrhh_proyectos ADD COLUMN revisado INTEGER DEFAULT 0`
 try { db.exec(`CREATE TABLE IF NOT EXISTS rrhh_actividades (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, activo INTEGER DEFAULT 1)`) } catch {}
 try { db.exec(`ALTER TABLE rrhh_registros ADD COLUMN actividad_id INTEGER`) } catch {}
 
-router.get('/actividades', verificarToken, (req, res) => {
+router.get('/actividades', verificarToken, leerRRHHOParte, (req, res) => {
   const rows = db.prepare(`SELECT * FROM rrhh_actividades ORDER BY activo DESC, nombre`).all();
   res.json(rows);
 });
@@ -335,7 +346,7 @@ router.put('/actividades/:id', verificarToken, (req, res) => {
   res.json({ ok: true });
 });
 
-router.get('/proyectos-legado', verificarToken, (req, res) => {
+router.get('/proyectos-legado', verificarToken, leerRRHH, (req, res) => {
   const rows = db.prepare(`
     SELECT rp.id, rp.nombre, rp.revisado,
            COUNT(r.id)  AS total_registros,
@@ -369,7 +380,7 @@ router.post('/proyectos-legado/:id/conservar', verificarToken, (req, res) => {
 });
 
 // ── Categorías ────────────────────────────────────────────────────────────────
-router.get('/categorias', verificarToken, (req, res) => {
+router.get('/categorias', verificarToken, leerRRHHOParte, (req, res) => {
   const rows = db.prepare(`SELECT * FROM rrhh_categorias WHERE activo=1 ORDER BY grupo, codigo`).all();
   res.json(rows);
 });
@@ -380,7 +391,7 @@ router.get('/categorias', verificarToken, (req, res) => {
 // via ALTER TABLE + aqui lo manejamos si viene en el body
 
 // ── Dispositivos (Hikvision) ──────────────────────────────────────────────────
-router.get('/dispositivos', verificarToken, (req, res) => {
+router.get('/dispositivos', verificarToken, leerRRHH, (req, res) => {
   res.json(db.prepare('SELECT * FROM rrhh_dispositivos ORDER BY id').all());
 });
 
@@ -574,7 +585,7 @@ router.post('/dispositivos/sync-todos', verificarToken, async (req, res) => {
 });
 
 // ── Empleados detectados en el fichador ───────────────────────────────────────
-router.get('/asistencia/empleados-dispositivo', verificarToken, (req, res) => {
+router.get('/asistencia/empleados-dispositivo', verificarToken, leerRRHH, (req, res) => {
   const rows = db.prepare(`
     SELECT
       a.empleado_ext,
@@ -615,7 +626,7 @@ router.post('/asistencia/vincular', verificarToken, (req, res) => {
   }
 });
 
-router.get('/asistencia/resumen', verificarToken, (req, res) => {
+router.get('/asistencia/resumen', verificarToken, leerRRHH, (req, res) => {
   const { desde, hasta, empleado_id } = req.query;
   const where = [], params = [];
   if (desde)       { where.push('a.fecha >= ?');       params.push(desde); }
@@ -653,7 +664,7 @@ router.get('/asistencia/resumen', verificarToken, (req, res) => {
 });
 
 // ── Asistencia: lecturas individuales (raw) ───────────────────────────────────
-router.get('/asistencia', verificarToken, (req, res) => {
+router.get('/asistencia', verificarToken, leerRRHH, (req, res) => {
   const { desde, hasta, empleado_id } = req.query;
   const where = [], params = [];
 
@@ -674,7 +685,7 @@ router.get('/asistencia', verificarToken, (req, res) => {
 });
 
 // ── Partes: resumen semanal por empleado ──────────────────────────────────────
-router.get('/partes/semana', verificarToken, (req, res) => {
+router.get('/partes/semana', verificarToken, leerRRHHOParte, (req, res) => {
   const dias = Math.min(Math.max(parseInt(req.query.dias) || 7, 1), 30);
   const fechas = [];
   for (let i = dias - 1; i >= 0; i--) {
@@ -736,7 +747,7 @@ router.get('/partes/semana', verificarToken, (req, res) => {
 });
 
 // ── Partes: horas por proyecto activo desglosadas por tarea ──────────────────
-router.get('/partes/proyectos', verificarToken, (req, res) => {
+router.get('/partes/proyectos', verificarToken, leerRRHHOParte, (req, res) => {
   const dias = Math.min(Math.max(parseInt(req.query.dias) || 7, 1), 90);
   const hasta = hoyAR();
   const [hy, hm, hd] = hasta.split('-').map(Number);
@@ -781,7 +792,7 @@ router.get('/partes/proyectos', verificarToken, (req, res) => {
 // ── Informes ──────────────────────────────────────────────────────────────────
 
 // ── Feriados (para excluirlos del cálculo de inasistencias) ──────────────────
-router.get('/feriados', verificarToken, (req, res) => {
+router.get('/feriados', verificarToken, leerRRHH, (req, res) => {
   const { anio } = req.query;
   const rows = anio
     ? db.prepare("SELECT fecha, descripcion FROM rrhh_feriados WHERE fecha LIKE ? ORDER BY fecha").all(`${anio}-%`)
@@ -820,7 +831,7 @@ const horasEntre = (inicio, fin) => {
   return +(mins / 60).toFixed(2);
 };
 
-router.get('/informes/asistencia', verificarToken, (req, res) => {
+router.get('/informes/asistencia', verificarToken, leerRRHH, (req, res) => {
   const { desde, hasta, empleado_id } = req.query;
   if (!desde || !hasta) return res.status(400).json({ error: 'Requerido: desde, hasta' });
 
@@ -924,7 +935,7 @@ router.get('/informes/asistencia', verificarToken, (req, res) => {
   res.json(out);
 });
 
-router.get('/informes/tareas', verificarToken, (req, res) => {
+router.get('/informes/tareas', verificarToken, leerRRHH, (req, res) => {
   const { desde, hasta, empleado_id } = req.query;
   if (!desde || !hasta) return res.status(400).json({ error: 'Requerido: desde, hasta' });
 
