@@ -1,11 +1,12 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { db } = require('../db/database');
-const { verificarToken } = require('../middleware/auth');
+const { verificarToken, puede: permisoModulo } = require('../middleware/auth');
 const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
 const puede = req => req.usuario?.rol === 'admin' || !!(req.permisos?.mantenimiento?.escribir);
+const leerMant = permisoModulo.leer('mantenimiento');
 
 function logEstado(equipo_id, estado_anterior, estado_nuevo, motivo = '') {
   try {
@@ -64,7 +65,7 @@ const ALERTAS_SQL = `
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
 
-router.get('/dashboard', verificarToken, (req, res) => {
+router.get('/dashboard', verificarToken, leerMant, (req, res) => {
   const vencidas   = db.prepare(`SELECT COUNT(*) as c FROM (${ALERTAS_SQL}) WHERE estado_alerta='vencida'`).get().c;
   const proximas   = db.prepare(`SELECT COUNT(*) as c FROM (${ALERTAS_SQL}) WHERE estado_alerta='proxima'`).get().c;
   const en_rep     = db.prepare("SELECT COUNT(*) as c FROM mant_equipos WHERE estado='en_reparacion'").get().c;
@@ -75,14 +76,14 @@ router.get('/dashboard', verificarToken, (req, res) => {
 
 // ── META (categorías / ubicaciones para filtros) ──────────────────────────────
 
-router.get('/meta', verificarToken, (req, res) => {
+router.get('/meta', verificarToken, leerMant, (req, res) => {
   const categorias = db.prepare('SELECT DISTINCT categoria FROM mant_equipos WHERE categoria IS NOT NULL ORDER BY categoria').all().map(r => r.categoria);
   res.json({ categorias, ubicaciones: ['MIGUENS', 'POGGIO'] });
 });
 
 // ── EQUIPOS ───────────────────────────────────────────────────────────────────
 
-router.get('/equipos', verificarToken, (req, res) => {
+router.get('/equipos', verificarToken, leerMant, (req, res) => {
   const { buscar, categoria, ubicacion, estado } = req.query;
   const conds = [], params = [];
   if (buscar)    { const b = buscarCondicion(buscar, ['codigo','nombre','marca']); conds.push(b.cond); params.push(...b.params); }
@@ -93,7 +94,7 @@ router.get('/equipos', verificarToken, (req, res) => {
   res.json(db.prepare(`SELECT * FROM mant_equipos ${where} ORDER BY codigo`).all(...params));
 });
 
-router.get('/equipos/:id', verificarToken, (req, res) => {
+router.get('/equipos/:id', verificarToken, leerMant, (req, res) => {
   const eq = db.prepare('SELECT * FROM mant_equipos WHERE id=?').get(req.params.id);
   if (!eq) return res.status(404).json({ error: 'Equipo no encontrado' });
   const tareas = db.prepare(`SELECT * FROM (${ALERTAS_SQL}) WHERE equipo_id=? ORDER BY estado_alerta`).all(eq.id);
@@ -102,7 +103,7 @@ router.get('/equipos/:id', verificarToken, (req, res) => {
   res.json({ ...eq, tareas, correctivas, inspecciones });
 });
 
-router.get('/equipos/:id/perfil', verificarToken, (req, res) => {
+router.get('/equipos/:id/perfil', verificarToken, leerMant, (req, res) => {
   const eq = db.prepare('SELECT * FROM mant_equipos WHERE id=?').get(req.params.id);
   if (!eq) return res.status(404).json({ error: 'Equipo no encontrado' });
   const correctivas = db.prepare('SELECT * FROM mant_intervenciones_correctivas WHERE equipo_id=? ORDER BY fecha_deteccion DESC').all(eq.id);
@@ -163,7 +164,7 @@ router.post('/equipos/:id/baja', verificarToken, (req, res) => {
 
 // ── ALERTAS / PLAN PREVENTIVO ─────────────────────────────────────────────────
 
-router.get('/alertas', verificarToken, (req, res) => {
+router.get('/alertas', verificarToken, leerMant, (req, res) => {
   const { estado, ubicacion, categoria } = req.query;
   const conds = ["estado_alerta != 'manual'"], params = [];
   if (estado)    { conds.push('estado_alerta=?'); params.push(estado); }
@@ -175,7 +176,7 @@ router.get('/alertas', verificarToken, (req, res) => {
 
 // ── TAREAS PREVENTIVAS (CRUD) ─────────────────────────────────────────────────
 
-router.get('/tareas', verificarToken, (req, res) => {
+router.get('/tareas', verificarToken, leerMant, (req, res) => {
   const { equipo_id } = req.query;
   if (!equipo_id) return res.status(400).json({ error: 'equipo_id requerido' });
   res.json(db.prepare('SELECT * FROM mant_tareas_preventivas WHERE equipo_id=? ORDER BY id').all(equipo_id));
@@ -237,7 +238,7 @@ router.post('/ejecuciones', verificarToken,
 
 // ── INTERVENCIONES CORRECTIVAS ────────────────────────────────────────────────
 
-router.get('/correctivas', verificarToken, (req, res) => {
+router.get('/correctivas', verificarToken, leerMant, (req, res) => {
   const { resultado, equipo_id } = req.query;
   const conds = [], params = [];
   if (resultado) { conds.push('ic.resultado=?');  params.push(resultado); }
@@ -308,7 +309,7 @@ router.put('/correctivas/:id', verificarToken, (req, res) => {
 
 // ── HISTORIAL COMPLETO DE MANTENIMIENTO ──────────────────────────────────────
 
-router.get('/historial', verificarToken, (req, res) => {
+router.get('/historial', verificarToken, leerMant, (req, res) => {
   const { equipo_id, desde, hasta, tipo, estado_equipo } = req.query;
 
   const mkWhere = conds => conds.length ? 'WHERE ' + conds.join(' AND ') : '';
@@ -406,7 +407,7 @@ router.get('/historial', verificarToken, (req, res) => {
 
 // ── INSPECCIONES ──────────────────────────────────────────────────────────────
 
-router.get('/inspecciones', verificarToken, (req, res) => {
+router.get('/inspecciones', verificarToken, leerMant, (req, res) => {
   const { equipo_id, desde, hasta, estado, ubicacion, estado_alerta, estado_equipo } = req.query;
   const conds = [], params = [];
   if (equipo_id)     { conds.push('i.equipo_id=?');            params.push(equipo_id); }
@@ -486,7 +487,7 @@ router.post('/inspecciones', verificarToken, (req, res) => {
 
 // ── HISTORIAL POR EQUIPO ──────────────────────────────────────────────────────
 
-router.get('/equipos/:codigo/historial', verificarToken, (req, res) => {
+router.get('/equipos/:codigo/historial', verificarToken, leerMant, (req, res) => {
   const equipo = db.prepare('SELECT * FROM mant_equipos WHERE codigo=?').get(req.params.codigo);
   if (!equipo) return res.status(404).json({ error: 'Equipo no encontrado' });
   const historial = db.prepare('SELECT * FROM v_mant_historial_equipo WHERE codigo=? ORDER BY fecha DESC').all(req.params.codigo);

@@ -1,10 +1,11 @@
 'use strict'
 const express = require('express')
 const { db }  = require('../db/database')
-const { verificarToken } = require('../middleware/auth')
+const { verificarToken, puede } = require('../middleware/auth')
 
 const router = express.Router()
 router.use(verificarToken)
+router.use(puede.leer('proyectos'))
 
 const puedeE = req => !!req.permisos?.proyectos?.escribir
 
@@ -201,6 +202,7 @@ router.delete('/proyecto/:proyectoId/tareas/:tareaId', (req, res) => {
 
 // ── POST recalcular ───────────────────────────────────────────────────────────
 router.post('/proyecto/:proyectoId/recalcular', (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   recalcularFechas(req.params.proyectoId)
   res.json({ ok: true })
 })

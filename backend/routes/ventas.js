@@ -2,15 +2,16 @@ const express = require('express');
 const XLSX    = require('xlsx');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
-const { verificarToken, ESCRITURA_VENTAS } = require('../middleware/auth');
+const { verificarToken, puede } = require('../middleware/auth');
 const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
 
 const puedeEscribirAdmin = (req) => req.usuario?.rol === 'admin' || req.permisos?.ventas?.escribir || req.permisos?.administracion?.escribir;
+const leerVentas = puede.leer('ventas');
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
-router.get('/stats', verificarToken, (req, res) => {
+router.get('/stats', verificarToken, leerVentas, (req, res) => {
   const total = db.prepare('SELECT COUNT(*) c FROM presupuestos').get().c
   const porEstado = db.prepare(`
     SELECT estado, COUNT(*) c,
@@ -28,7 +29,7 @@ router.get('/stats', verificarToken, (req, res) => {
 
 // ── Clientes ──────────────────────────────────────────────────────────────────
 
-router.get('/clientes', verificarToken, (req, res) => {
+router.get('/clientes', verificarToken, leerVentas, (req, res) => {
   const { buscar } = req.query;
   let where = '';
   const params = [];
@@ -101,7 +102,7 @@ function nextNumeroPpto() {
   return '000001';
 }
 
-router.get('/presupuestos', verificarToken, (req, res) => {
+router.get('/presupuestos', verificarToken, leerVentas, (req, res) => {
   const { estado, cliente_id, desde, hasta, buscar, page=1, limit=50 } = req.query;
   const conds=[], params=[];
   if (estado)     { conds.push('p.estado=?');         params.push(estado); }
@@ -120,7 +121,7 @@ router.get('/presupuestos', verificarToken, (req, res) => {
   res.json({ total, datos });
 });
 
-router.get('/presupuestos/:id', verificarToken, (req, res) => {
+router.get('/presupuestos/:id', verificarToken, leerVentas, (req, res) => {
   const p = db.prepare('SELECT * FROM presupuestos WHERE id=?').get(req.params.id);
   if (!p) return res.status(404).json({ error: 'No encontrado' });
   const items = db.prepare('SELECT * FROM presupuesto_items WHERE presupuesto_id=? ORDER BY item_num').all(p.id);
@@ -200,7 +201,7 @@ router.delete('/presupuestos/:id', verificarToken, (req, res) => {
 
 // ── Ofertas Técnicas ─────────────────────────────────────────────────────────
 
-router.get('/ofertas-tecnicas/:presupuesto_id', verificarToken, (req, res) => {
+router.get('/ofertas-tecnicas/:presupuesto_id', verificarToken, leerVentas, (req, res) => {
   const ot = db.prepare('SELECT * FROM ofertas_tecnicas WHERE presupuesto_id=?').get(req.params.presupuesto_id);
   if (!ot) return res.status(404).json({ error: 'No encontrada' });
   res.json(ot);
@@ -249,7 +250,7 @@ router.put('/ofertas-tecnicas/:presupuesto_id', verificarToken, (req, res) => {
   res.json(db.prepare('SELECT * FROM ofertas_tecnicas WHERE presupuesto_id=?').get(req.params.presupuesto_id));
 });
 
-router.get('/exportar/presupuestos', verificarToken, (req, res) => {
+router.get('/exportar/presupuestos', verificarToken, leerVentas, (req, res) => {
   const { estado } = req.query;
   const where = estado ? 'WHERE estado=?' : '';
   const pptos = db.prepare(`SELECT * FROM presupuestos ${where} ORDER BY id DESC`).all(...(estado?[estado]:[]));

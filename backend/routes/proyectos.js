@@ -12,6 +12,7 @@ const puedeE = req => !!req.permisos?.proyectos?.escribir
 
 // ── Listado ───────────────────────────────────────────────────────────────────
 router.get('/', verificarToken, (req, res) => {
+  if (!puedeL(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { estado, cliente_id, buscar } = req.query
   const conds = ["p.codigo NOT LIKE 'HIST-%'"], params = []
   if (estado)     { conds.push('p.estado=?');               params.push(estado) }

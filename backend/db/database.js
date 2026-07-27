@@ -34,6 +34,14 @@ function inicializar() {
     CREATE INDEX IF NOT EXISTS idx_login_log_usuario ON login_log(usuario_id);
     CREATE INDEX IF NOT EXISTS idx_login_log_fecha   ON login_log(fecha);
 
+    CREATE TABLE IF NOT EXISTS login_intentos_fallidos (
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT DEFAULT '',
+      ip       TEXT DEFAULT '',
+      fecha    TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_login_fallidos_fecha ON login_intentos_fallidos(fecha);
+
     -- ── Stock ────────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS productos (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,13 +1,24 @@
 const express = require('express');
 const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
 const { verificarToken, getPermisosEfectivos, MODULOS, MODULOS_LABEL, JERARQUIA } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.post('/login',
+// Máximo 8 intentos cada 15 min, por combinación IP+usuario (no bloquea a toda una IP compartida)
+const limiteLogin = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${ipKeyGenerator(req.ip)}:${String(req.body?.username || '').toLowerCase()}`,
+  message: { error: 'Demasiados intentos fallidos. Esperá unos minutos antes de volver a intentar.' },
+});
+
+router.post('/login', limiteLogin,
   body('username').trim().notEmpty(),
   body('password').notEmpty(),
   (req, res) => {
@@ -21,8 +32,10 @@ router.post('/login',
       LEFT JOIN rrhh_empleados e ON e.id = u.rrhh_empleado_id
       WHERE u.username=? AND u.activo=1
     `).get(username);
-    if (!u || !bcrypt.compareSync(password, u.password_hash))
+    if (!u || !bcrypt.compareSync(password, u.password_hash)) {
+      db.prepare('INSERT INTO login_intentos_fallidos (username, ip) VALUES (?,?)').run(username || '', req.ip || '');
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+    }
 
     const token = jwt.sign(
       { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol },

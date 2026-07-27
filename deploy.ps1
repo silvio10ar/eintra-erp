@@ -108,7 +108,8 @@ fi
 # ── .env (solo primer deploy) ─────────────────────────────────────
 if [ ! -f "`$RUTA/backend/.env" ]; then
   echo "[env] Creando .env inicial..."
-  printf 'PORT=3002\nJWT_SECRET=REDACTED_ROTAR_ESTE_SECRETO\nJWT_EXPIRES_IN=10h\nDB_PATH=./db/eintra_erp.db\nUPLOADS_PATH=../uploads\n' > "`$RUTA/backend/.env"
+  JWT_RANDOM=`$(openssl rand -hex 32 2>/dev/null || head -c 48 /dev/urandom | base64 | tr -d '/+=' | head -c 64)
+  printf 'PORT=3002\nJWT_SECRET=%s\nJWT_EXPIRES_IN=10h\nDB_PATH=./db/eintra_erp.db\nUPLOADS_PATH=../uploads\n' "`$JWT_RANDOM" > "`$RUTA/backend/.env"
 else
   echo "[env] .env existente, sin cambios"
 fi
@@ -151,12 +152,13 @@ else
   pm2 save
 fi
 
-# ── Cron backup BD ───────────────────────────────────────────────
+# ── Cron backup BD (mail + copia local rotativa) ──────────────────
 mkdir -p "`$RUTA/logs"
 NODE_BIN=`$(which node 2>/dev/null || echo /usr/bin/node)
-CRON_JOB="0 0 * * * `$NODE_BIN `$RUTA/backend/scripts/backup-email.js >> `$RUTA/logs/backup.log 2>&1"
-( crontab -l 2>/dev/null | grep -v "backup-email.js" || true ; echo "`$CRON_JOB" ) | crontab -
-echo "[cron] Backup BD programado a medianoche"
+CRON_MAIL="0 0 * * * `$NODE_BIN `$RUTA/backend/scripts/backup-email.js >> `$RUTA/logs/backup.log 2>&1"
+CRON_DISK="5 0 * * * `$NODE_BIN `$RUTA/backend/scripts/backup-disk.js >> `$RUTA/logs/backup-disk.log 2>&1"
+( crontab -l 2>/dev/null | grep -v "backup-email.js" | grep -v "backup-disk.js" || true ; echo "`$CRON_MAIL" ; echo "`$CRON_DISK" ) | crontab -
+echo "[cron] Backup BD programado a medianoche (mail + copia local en backend/db/backups/)"
 
 echo ""
 echo "[OK] Servicio activo en http://`$(hostname -I | awk '{print `$1}'):3002"
