@@ -206,8 +206,14 @@ export default function Usuarios() {
     setPermisosForm(p => ({ ...p, [m]: { ...p[m], [field]: val } }))
 
   /* ── Catálogo de puestos: crear / editar / eliminar ──────────────── */
-  const nuevoPuestoForm = () => { setErrPuesto(''); setPuestoForm({ id: null, nombre: '', modulos: {} }) }
-  const editarPuestoForm = p => { setErrPuesto(''); setPuestoForm({ id: p.id, nombre: p.nombre, modulos: { ...p.modulos } }) }
+  const PUESTO_VACIO = { id: null, nombre: '', area: '', mision: '', responsabilidades: '', requisitos: '', reporta_a_id: '', modulos: {} }
+  const nuevoPuestoForm = () => { setErrPuesto(''); setPuestoForm({ ...PUESTO_VACIO }) }
+  const editarPuestoForm = p => { setErrPuesto(''); setPuestoForm({
+    id: p.id, nombre: p.nombre,
+    area: p.area || '', mision: p.mision || '', responsabilidades: p.responsabilidades || '',
+    requisitos: p.requisitos || '', reporta_a_id: p.reporta_a_id || '',
+    modulos: { ...p.modulos },
+  }) }
 
   const setPuestoModulo = (m, field, val) =>
     setPuestoForm(p => ({
@@ -218,7 +224,12 @@ export default function Usuarios() {
   const guardarPuesto = async () => {
     setSavingPuesto(true); setErrPuesto('')
     try {
-      const body = { nombre: puestoForm.nombre, modulos: puestoForm.modulos }
+      const body = {
+        nombre: puestoForm.nombre, modulos: puestoForm.modulos,
+        area: puestoForm.area, mision: puestoForm.mision,
+        responsabilidades: puestoForm.responsabilidades, requisitos: puestoForm.requisitos,
+        reporta_a_id: puestoForm.reporta_a_id || null,
+      }
       if (puestoForm.id) await api.put(`/auth/puestos/${puestoForm.id}`, body)
       else await api.post('/auth/puestos', body)
       setPuestoForm(null)
@@ -549,9 +560,44 @@ export default function Usuarios() {
                 ) : (
                   <>
                     {errPuesto && <div className="alert alert-danger py-2 small">{errPuesto}</div>}
-                    <label className="form-label small fw-medium">Nombre del puesto *</label>
-                    <input className="form-control form-control-sm mb-3" value={puestoForm.nombre}
-                      onChange={e => setPuestoForm(p => ({ ...p, nombre: e.target.value }))} />
+                    <div className="row g-2 mb-2">
+                      <div className="col-md-8">
+                        <label className="form-label small fw-medium">Nombre del puesto *</label>
+                        <input className="form-control form-control-sm" value={puestoForm.nombre}
+                          onChange={e => setPuestoForm(p => ({ ...p, nombre: e.target.value }))} />
+                      </div>
+                      <div className="col-md-4">
+                        <label className="form-label small fw-medium">Área</label>
+                        <input className="form-control form-control-sm" value={puestoForm.area}
+                          onChange={e => setPuestoForm(p => ({ ...p, area: e.target.value }))} />
+                      </div>
+                      <div className="col-12">
+                        <label className="form-label small fw-medium">Misión / objetivo del puesto</label>
+                        <input className="form-control form-control-sm" value={puestoForm.mision}
+                          onChange={e => setPuestoForm(p => ({ ...p, mision: e.target.value }))} />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label small fw-medium">Responsabilidades</label>
+                        <textarea className="form-control form-control-sm" rows={2} value={puestoForm.responsabilidades}
+                          onChange={e => setPuestoForm(p => ({ ...p, responsabilidades: e.target.value }))} />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label small fw-medium">Requisitos</label>
+                        <textarea className="form-control form-control-sm" rows={2} value={puestoForm.requisitos}
+                          onChange={e => setPuestoForm(p => ({ ...p, requisitos: e.target.value }))} />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label small fw-medium">Reporta a</label>
+                        <select className="form-select form-select-sm" value={puestoForm.reporta_a_id}
+                          onChange={e => setPuestoForm(p => ({ ...p, reporta_a_id: e.target.value }))}>
+                          <option value="">— Ninguno (máximo nivel) —</option>
+                          {puestos.filter(p => p.id !== puestoForm.id).map(p => (
+                            <option key={p.id} value={p.id}>{p.nombre}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <label className="form-label small fw-medium mt-2">Accesos al sistema</label>
                     <table className="table table-sm align-middle mb-0">
                       <thead className="table-light">
                         <tr>

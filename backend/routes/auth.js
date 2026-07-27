@@ -202,8 +202,12 @@ router.post('/puestos', verificarToken, body('nombre').trim().notEmpty(), (req, 
   if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
   const errs = validationResult(req);
   if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
+  const { area = '', mision = '', responsabilidades = '', requisitos = '', reporta_a_id = null } = req.body;
   try {
-    const r = db.prepare('INSERT INTO puestos (nombre) VALUES (?)').run(req.body.nombre.trim());
+    const r = db.prepare(`
+      INSERT INTO puestos (nombre,area,mision,responsabilidades,requisitos,reporta_a_id)
+      VALUES (?,?,?,?,?,?)
+    `).run(req.body.nombre.trim(), area, mision, responsabilidades, requisitos, reporta_a_id || null);
     const ins = db.prepare('INSERT INTO puesto_modulos (puesto_id,modulo,puede_leer,puede_escribir) VALUES (?,?,?,?)');
     for (const [modulo, p] of Object.entries(req.body.modulos || {})) {
       if (p && typeof p === 'object' && MODULOS.includes(modulo) && (p.leer || p.escribir))
@@ -220,8 +224,13 @@ router.put('/puestos/:id', verificarToken, body('nombre').trim().notEmpty(), (re
   if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
   const errs = validationResult(req);
   if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
+  const { area = '', mision = '', responsabilidades = '', requisitos = '', reporta_a_id = null } = req.body;
+  if (reporta_a_id && Number(reporta_a_id) === Number(req.params.id))
+    return res.status(400).json({ error: 'Un puesto no puede reportar a sí mismo' });
   db.transaction(() => {
-    db.prepare('UPDATE puestos SET nombre=? WHERE id=?').run(req.body.nombre.trim(), req.params.id);
+    db.prepare(`
+      UPDATE puestos SET nombre=?,area=?,mision=?,responsabilidades=?,requisitos=?,reporta_a_id=? WHERE id=?
+    `).run(req.body.nombre.trim(), area, mision, responsabilidades, requisitos, reporta_a_id || null, req.params.id);
     db.prepare('DELETE FROM puesto_modulos WHERE puesto_id=?').run(req.params.id);
     const ins = db.prepare('INSERT INTO puesto_modulos (puesto_id,modulo,puede_leer,puede_escribir) VALUES (?,?,?,?)');
     for (const [modulo, p] of Object.entries(req.body.modulos || {})) {
