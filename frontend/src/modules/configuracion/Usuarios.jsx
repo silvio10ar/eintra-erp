@@ -3,6 +3,21 @@ import api from '../../api/client'
 
 const FORM_NUEVO = { username:'', nombre:'', email:'', password:'', rol:'solo_lectura', rrhh_empleado_id:'' }
 
+// Plantillas de permisos por puesto — solo precargan los checkboxes al aplicarlas,
+// el admin puede seguir ajustando cada módulo individualmente después.
+const PUESTOS = {
+  'Operario Producción / Taller': [],
+  'Mantenimiento (Técnico)':      [ { m:'mantenimiento', leer:true, escribir:true }, { m:'stock', leer:true, escribir:false } ],
+  'Depósito':                     [ { m:'stock', leer:true, escribir:true } ],
+  'Comprador':                    [ { m:'compras', leer:true, escribir:true }, { m:'partes', leer:true, escribir:true }, { m:'stock', leer:true, escribir:false } ],
+  'Coordinación de Proyectos':    [ { m:'proyectos', leer:true, escribir:true } ],
+  'Administración':               [ { m:'administracion', leer:true, escribir:true } ],
+  'Vendedor':                     [ { m:'ventas', leer:true, escribir:true }, { m:'proyectos', leer:true, escribir:false } ],
+  'Gerente de Ventas':            [ { m:'ventas', leer:true, escribir:true }, { m:'proyectos', leer:true, escribir:true }, { m:'finanzas', leer:true, escribir:false } ],
+  'Operador de Calidad':          [ { m:'calidad', leer:true, escribir:true }, { m:'produccion', leer:true, escribir:false }, { m:'stock', leer:true, escribir:false } ],
+  'Auditor de Calidad':           [ { m:'calidad', leer:true, escribir:true }, { m:'rrhh', leer:true, escribir:false }, { m:'compras', leer:true, escribir:false }, { m:'stock', leer:true, escribir:false } ],
+}
+
 export default function Usuarios() {
   const [usuarios, setUsuarios]   = useState([])
   const [empleados, setEmpleados] = useState([])
@@ -31,6 +46,7 @@ export default function Usuarios() {
   // Modal permisos
   const [userPermisos, setUserPermisos]       = useState(null)
   const [permisosForm, setPermisosForm]       = useState({})
+  const [puestoSel,    setPuestoSel]          = useState('')
   const [savingPermisos, setSavingPermisos]   = useState(false)
 
   // Modal historial de conexiones
@@ -139,7 +155,21 @@ export default function Usuarios() {
       leer:     directos[m]?.leer     ?? false,
       escribir: directos[m]?.escribir ?? false,
     }])))
+    setPuestoSel('')
     setUserPermisos(u)
+  }
+
+  /* ── Aplicar plantilla de puesto (solo precarga, no borra lo existente) ── */
+  const aplicarPuesto = nombre => {
+    setPuestoSel(nombre)
+    if (!nombre || !PUESTOS[nombre]) return
+    setPermisosForm(p => {
+      const next = { ...p }
+      for (const { m, leer, escribir } of PUESTOS[nombre]) {
+        next[m] = { activo: true, leer, escribir }
+      }
+      return next
+    })
   }
 
   /* ── Guardar permisos ──────────────────────────────────────────── */
@@ -289,6 +319,15 @@ export default function Usuarios() {
                   Permisos de <strong>{userPermisos.username}</strong>
                 </h5>
                 <button type="button" className="btn-close" onClick={() => setUserPermisos(null)} />
+              </div>
+              <div className="px-3 pt-3">
+                <label className="form-label small fw-medium">Aplicar plantilla de puesto</label>
+                <select className="form-select form-select-sm" value={puestoSel}
+                  onChange={e => aplicarPuesto(e.target.value)}>
+                  <option value="">— Seleccionar puesto —</option>
+                  {Object.keys(PUESTOS).map(nombre => <option key={nombre} value={nombre}>{nombre}</option>)}
+                </select>
+                <div className="form-text">Solo precarga los módulos típicos de ese puesto — podés seguir ajustando cada uno abajo.</div>
               </div>
               <div className="modal-body p-0">
                 <table className="table table-sm align-middle mb-0">
