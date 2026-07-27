@@ -1,7 +1,8 @@
 const express = require('express');
 const XLSX    = require('xlsx');
 const { db }  = require('../db/database');
-const { verificarToken, ESCRITURA_FINANZAS } = require('../middleware/auth');
+const { verificarToken, puede } = require('../middleware/auth');
+const leerFinanzas = puede.leer('finanzas');
 const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
@@ -13,7 +14,7 @@ const puedeEscribir = req =>
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
-router.get('/dashboard', verificarToken, (req, res) => {
+router.get('/dashboard', verificarToken, leerFinanzas, (req, res) => {
   const hoy = new Date().toISOString().slice(0, 10)
   const { desde = '', hasta = hoy } = req.query
   const filtC = desde ? 'fecha >= ? AND fecha <= ?' : 'fecha <= ?'
@@ -91,7 +92,7 @@ router.get('/dashboard', verificarToken, (req, res) => {
   res.json({ kpiC, kpiV, kpiVTotal, porMesC, porMesV, vencimientos, conAnticipo, topProv })
 })
 
-router.get('/dashboard-diario', verificarToken, (req, res) => {
+router.get('/dashboard-diario', verificarToken, leerFinanzas, (req, res) => {
   const hoy = new Date().toISOString().slice(0, 10)
 
   // Último saldo por banco + E-CHEQs sin confirmar de ese banco
@@ -233,7 +234,7 @@ router.get('/dashboard-diario', verificarToken, (req, res) => {
 
 // ── Cuentas ────────────────────────────────────────────────────────────────────
 
-router.get('/cuentas', verificarToken, (req, res) => {
+router.get('/cuentas', verificarToken, leerFinanzas, (req, res) => {
   const cuentas = db.prepare('SELECT * FROM cuentas_financieras WHERE activa=1 ORDER BY nombre').all();
   const result = cuentas.map(c => {
     const mov = db.prepare(`SELECT COALESCE(SUM(CASE WHEN tipo='Ingreso' THEN monto ELSE 0 END),0) as ing, COALESCE(SUM(CASE WHEN tipo='Egreso' THEN monto ELSE 0 END),0) as egr FROM movimientos_caja WHERE cuenta_id=? AND estado='Confirmado'`).get(c.id);
@@ -266,7 +267,7 @@ router.put('/cuentas/:id', verificarToken, (req, res) => {
 
 // ── Categorías ────────────────────────────────────────────────────────────────
 
-router.get('/categorias', verificarToken, (req, res) => {
+router.get('/categorias', verificarToken, leerFinanzas, (req, res) => {
   const { tipo } = req.query;
   const where = tipo ? 'WHERE tipo=?' : '';
   res.json(db.prepare(`SELECT * FROM categorias_financieras ${where} ORDER BY tipo,nombre`).all(...(tipo?[tipo]:[])));
@@ -292,7 +293,7 @@ router.delete('/categorias/:id', verificarToken, (req, res) => {
 
 // ── Movimientos ────────────────────────────────────────────────────────────────
 
-router.get('/movimientos', verificarToken, (req, res) => {
+router.get('/movimientos', verificarToken, leerFinanzas, (req, res) => {
   const { cuenta_id, tipo, categoria, estado, desde, hasta, buscar, page=1, limit=100 } = req.query;
   const conds=[], params=[];
   if (cuenta_id) { conds.push('cuenta_id=?');  params.push(cuenta_id); }
@@ -349,7 +350,7 @@ router.delete('/movimientos/:id', verificarToken, (req, res) => {
 
 // ── Resumen / KPIs ────────────────────────────────────────────────────────────
 
-router.get('/resumen/mes', verificarToken, (req, res) => {
+router.get('/resumen/mes', verificarToken, leerFinanzas, (req, res) => {
   const hoy  = new Date();
   const año  = parseInt(req.query.año)  || hoy.getFullYear();
   const mes  = parseInt(req.query.mes)  || hoy.getMonth()+1;
@@ -359,7 +360,7 @@ router.get('/resumen/mes', verificarToken, (req, res) => {
   res.json(row);
 });
 
-router.get('/exportar', verificarToken, (req, res) => {
+router.get('/exportar', verificarToken, leerFinanzas, (req, res) => {
   const { desde, hasta } = req.query;
   const conds=['1=1'], params=[];
   if (desde) { conds.push('fecha>=?'); params.push(desde); }
@@ -392,7 +393,7 @@ function recalcPagoFC(facturaId) {
   db.prepare("UPDATE facturas_compra SET pago_confirmado=?,updated_at=datetime('now','localtime') WHERE id=?").run(pagado, facturaId);
 }
 
-router.get('/facturas-compra', verificarToken, (req, res) => {
+router.get('/facturas-compra', verificarToken, leerFinanzas, (req, res) => {
   const { buscar, desde, hasta, moneda, pago } = req.query;
 
   let result = db.prepare(`
@@ -519,7 +520,7 @@ router.patch('/facturas-compra/:id/anticipo', verificarToken, (req, res) => {
 
 // ── Pagos de facturas de compra ───────────────────────────────────────────────
 
-router.get('/facturas-compra/:id/pagos', verificarToken, (req, res) => {
+router.get('/facturas-compra/:id/pagos', verificarToken, leerFinanzas, (req, res) => {
   res.json(db.prepare('SELECT * FROM pagos_factura_compra WHERE factura_id=? ORDER BY fecha,id').all(req.params.id));
 });
 
@@ -577,7 +578,7 @@ router.delete('/facturas-compra/:id/pagos/:pid', verificarToken, (req, res) => {
 
 // ── Facturas de Venta ─────────────────────────────────────────────────────────
 
-router.get('/facturas-venta', verificarToken, (req, res) => {
+router.get('/facturas-venta', verificarToken, leerFinanzas, (req, res) => {
   const { buscar, desde, hasta, moneda, pago, proyecto_id } = req.query;
   let rows = db.prepare(`
     SELECT fv.*, p.numero AS ppto_numero, pr.codigo AS proy_codigo, pr.nombre AS proy_nombre,
@@ -704,7 +705,7 @@ function recalcPagoFV(factura_id) {
     .run(saldo <= 0.01 ? 1 : 0, factura_id);
 }
 
-router.get('/facturas-venta/:id/pagos', verificarToken, (req, res) => {
+router.get('/facturas-venta/:id/pagos', verificarToken, leerFinanzas, (req, res) => {
   res.json(db.prepare('SELECT * FROM pagos_factura_venta WHERE factura_id=? ORDER BY fecha ASC, id ASC').all(req.params.id));
 });
 
@@ -769,7 +770,7 @@ router.delete('/facturas-venta/:id/pagos/:pid', verificarToken, (req, res) => {
 
 // ── Saldo bancario ────────────────────────────────────────────────────────────
 
-router.get('/saldo-bancario', verificarToken, (req, res) => {
+router.get('/saldo-bancario', verificarToken, leerFinanzas, (req, res) => {
   const { limit = 100 } = req.query;
   const rows = db.prepare(`
     SELECT sb.*, u.nombre AS usuario_nombre
@@ -802,7 +803,7 @@ router.delete('/saldo-bancario/:id', verificarToken, (req, res) => {
 
 // ── Tipo de cambio BNA ────────────────────────────────────────────────────────
 
-router.get('/tipo-cambio', verificarToken, (req, res) => {
+router.get('/tipo-cambio', verificarToken, leerFinanzas, (req, res) => {
   const rows = db.prepare(`
     SELECT tc.*, u.nombre AS usuario_nombre
     FROM tipo_cambio tc
@@ -849,7 +850,7 @@ function siguienteVencimiento(vencimiento, periodicidad) {
   return d.toISOString().slice(0, 10);
 }
 
-router.get('/servicios', verificarToken, (req, res) => {
+router.get('/servicios', verificarToken, leerFinanzas, (req, res) => {
   const { soloActivos = '1' } = req.query;
   const filtro = soloActivos === '1' ? 'WHERE s.activo=1' : '';
   const rows = db.prepare(`
@@ -927,7 +928,7 @@ router.post('/servicios-cuotas/:id/pagar', verificarToken, (req, res) => {
 });
 
 // ── Control: facturas vs OC (valores netos sin impuestos, agrupado por OC) ────
-router.get('/control-oc', verificarToken, (req, res) => {
+router.get('/control-oc', verificarToken, leerFinanzas, (req, res) => {
   // Agrupa por OC: compara la suma de netos de TODAS sus facturas contra el
   // total neto de la OC (precio_final × cantidad, convertido a pesos si aplica).
   // Tolerancia: diferencia > $1 para evitar redondeos de centavos.
@@ -1011,6 +1012,9 @@ const OC_CLIENTE_SELECT = `
     LEFT JOIN clientes c ON c.id = f.cliente_id
     LEFT JOIN proyectos p ON p.id = f.proyecto_id`;
 
+// Usado también desde Proyectos (sin permiso de finanzas) para mostrar N° de OC vinculada.
+// Los montos y demás datos monetarios se ocultan si el usuario no tiene permiso de lectura en Finanzas.
+const CAMPOS_MONETARIOS_OC_CLIENTE = ['monto_oc', 'anticipo_pct', 'monto_anticipo_usd', 'final_pct', 'monto_final_usd'];
 router.get('/oc-clientes', verificarToken, (req, res) => {
   const { buscar, proyecto_id } = req.query;
   let sql = `${OC_CLIENTE_SELECT} WHERE f.activo=1`;
@@ -1024,10 +1028,16 @@ router.get('/oc-clientes', verificarToken, (req, res) => {
     params.push(`%${buscar}%`, `%${buscar}%`, `%${buscar}%`);
   }
   sql += ' ORDER BY f.id DESC';
-  res.json(db.prepare(sql).all(...params));
+  const rows = db.prepare(sql).all(...params);
+  const puedeVerMontos = req.usuario?.rol === 'admin' || !!req.permisos?.finanzas?.leer;
+  if (!puedeVerMontos) {
+    for (const r of rows) for (const c of CAMPOS_MONETARIOS_OC_CLIENTE) delete r[c];
+  }
+  res.json(rows);
 });
 
 router.post('/oc-clientes', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
   const f = req.body;
   const r = db.prepare(`
     INSERT INTO fin_oc_clientes
@@ -1049,6 +1059,7 @@ router.post('/oc-clientes', verificarToken, (req, res) => {
 });
 
 router.put('/oc-clientes/:id', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
   const f = req.body;
   db.prepare(`
     UPDATE fin_oc_clientes SET
@@ -1072,6 +1083,7 @@ router.put('/oc-clientes/:id', verificarToken, (req, res) => {
 });
 
 router.delete('/oc-clientes/:id', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
   db.prepare('UPDATE fin_oc_clientes SET activo=0 WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
