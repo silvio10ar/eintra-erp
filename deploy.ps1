@@ -29,7 +29,9 @@ Paso 2 "Empaquetando codigo fuente (sin node_modules, sin DB, sin .env)..."
 Push-Location $LOCAL
 tar -czf $TMP_TAR `
   "backend/server.js" `
+  "backend/ecosystem.config.js" `
   "backend/package.json" `
+  "backend/.env.example" `
   "backend/routes" `
   "backend/middleware" `
   "backend/helpers" `
@@ -47,12 +49,14 @@ OK "Paquete listo ($kb KB)"
 
 # ─── 3. Subir y extraer en el servidor ───────────────────────────────────────
 Paso 3 "Subiendo archivos al servidor (ingresar contrasena)..."
-$dirs = "$RUTA_REMOTA/backend/routes $RUTA_REMOTA/backend/middleware $RUTA_REMOTA/backend/helpers $RUTA_REMOTA/backend/db $RUTA_REMOTA/backend/scripts $RUTA_REMOTA/backend/data $RUTA_REMOTA/frontend/src $RUTA_REMOTA/uploads"
+$dirs = "$RUTA_REMOTA/backend/routes $RUTA_REMOTA/backend/middleware $RUTA_REMOTA/backend/helpers $RUTA_REMOTA/backend/db $RUTA_REMOTA/backend/scripts $RUTA_REMOTA/backend/data $RUTA_REMOTA/frontend/src $RUTA_REMOTA/uploads $RUTA_REMOTA/releases"
 scp @O -q $TMP_TAR "${SSH}:${RUTA_REMOTA}/deploy.tar.gz"
 if ($LASTEXITCODE -ne 0) { Fallo "Error al subir el paquete" }
-ssh @O $SSH "mkdir -p $dirs && cd $RUTA_REMOTA && tar -xzf deploy.tar.gz && rm deploy.tar.gz"
+# Antes de pisar el codigo actual, guardar una copia (best-effort) para poder volver atras
+$extraerCmd = "mkdir -p $dirs && cd $RUTA_REMOTA && if [ -d backend ]; then tar -czf releases/rollback_`$(date +%Y%m%d_%H%M%S).tar.gz --exclude=node_modules --exclude=db backend frontend/dist 2>/dev/null; ls -1t releases 2>/dev/null | tail -n +6 | xargs -I{} rm -f releases/{} 2>/dev/null; fi; tar -xzf deploy.tar.gz && rm deploy.tar.gz"
+ssh @O $SSH $extraerCmd
 if ($LASTEXITCODE -ne 0) { Fallo "Error al extraer en el servidor" }
-OK "Archivos en $RUTA_REMOTA"
+OK "Archivos en $RUTA_REMOTA (snapshot previo guardado en releases/)"
 
 # Los archivos de datos NO se sincronizan automaticamente.
 # Para subir datos al servidor, hacerlo manualmente con scp.
@@ -145,7 +149,7 @@ if pm2 list 2>/dev/null | grep -q 'eintra-erp'; then
   pm2 restart eintra-erp --update-env
 else
   cd "`$RUTA/backend"
-  NODE_ENV=production pm2 start server.js --name eintra-erp
+  pm2 start ecosystem.config.js
   pm2 save
   echo "[pm2] Configurando inicio automatico al boot..."
   sudo env PATH=`$PATH:/usr/bin pm2 startup systemd -u "`$USUARIO" --hp "/home/`$USUARIO" 2>/dev/null || true
@@ -174,6 +178,23 @@ Start-Sleep -Seconds 2
 Write-Host ""
 ssh @O $SSH "pm2 list --no-color 2>/dev/null | grep -E 'App name|eintra-erp' || echo '  (no se pudo verificar)'"
 Write-Host ""
+
+$healthOk = $false
+for ($i = 0; $i -lt 5; $i++) {
+  $resultado = ssh @O $SSH "curl -s -o /dev/null -w '%{http_code}' http://localhost:3002/api/v1/health 2>/dev/null"
+  if ($resultado -eq "200") { $healthOk = $true; break }
+  Start-Sleep -Seconds 2
+}
+if ($healthOk) {
+  OK "Health-check OK (http://localhost:3002/api/v1/health)"
+} else {
+  Write-Host ""
+  Write-Host "  ADVERTENCIA: el health-check no respondio 200 despues del deploy." -ForegroundColor Yellow
+  Write-Host "  Revisar logs:  ssh $SSH `"pm2 logs eintra-erp --lines 50`"" -ForegroundColor Yellow
+  Write-Host "  Para volver a la version anterior:" -ForegroundColor Yellow
+  Write-Host "    ssh $SSH `"cd $RUTA_REMOTA && ls -t releases/ | head -1`"    (ver el snapshot mas reciente)" -ForegroundColor Yellow
+  Write-Host "    ssh $SSH `"cd $RUTA_REMOTA && tar -xzf releases/<archivo> && pm2 restart eintra-erp`"" -ForegroundColor Yellow
+}
 
 # Limpieza local
 Remove-Item $TMP_TAR -ErrorAction SilentlyContinue
