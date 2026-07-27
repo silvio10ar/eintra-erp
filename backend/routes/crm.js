@@ -1,8 +1,10 @@
 const express = require('express')
 const router  = express.Router()
 const { db }  = require('../db/database')
-const { verificarToken } = require('../middleware/auth')
+const { verificarToken, puede } = require('../middleware/auth')
 const { buscarCondicion } = require('../helpers/buscar')
+const leerCRM     = puede.leer('crm')
+const escribirCRM = puede.escribir('crm')
 
 const toNum = v => {
   if (v === null || v === undefined || v === '') return 0
@@ -11,7 +13,7 @@ const toNum = v => {
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────
-router.get('/stats', verificarToken, (req, res) => {
+router.get('/stats', verificarToken, leerCRM, (req, res) => {
   const total    = db.prepare('SELECT COUNT(*) c FROM crm_cotizaciones').get().c
   const activas  = db.prepare("SELECT COUNT(*) c, SUM(presupuestado) p FROM crm_cotizaciones WHERE estado='Activo'").get()
   const ganadas  = db.prepare("SELECT COUNT(*) c, SUM(ganado) m FROM crm_cotizaciones WHERE estado='Ganado'").get()
@@ -37,7 +39,7 @@ router.get('/stats', verificarToken, (req, res) => {
 })
 
 // ── Cotizaciones ──────────────────────────────────────────────────────────
-router.get('/cotizaciones', verificarToken, (req, res) => {
+router.get('/cotizaciones', verificarToken, leerCRM, (req, res) => {
   const { page = 1, limit = 50, estado = '', anio = '', buscar = '', moneda = '' } = req.query
   const where = ['1=1'], p = []
   if (estado) { where.push('c.estado=?');              p.push(estado) }
@@ -68,7 +70,7 @@ router.get('/cotizaciones', verificarToken, (req, res) => {
   res.json({ total, datos })
 })
 
-router.post('/cotizaciones', verificarToken, (req, res) => {
+router.post('/cotizaciones', verificarToken, escribirCRM, (req, res) => {
   const { empresa_id, contacto_id, fecha='', equipo='', indirecto='', moneda='USD',
           presupuestado=0, ganado=0, perdido=0, estado='Activo',
           observaciones='', seguimiento='', actualizado='' } = req.body
@@ -85,7 +87,7 @@ router.post('/cotizaciones', verificarToken, (req, res) => {
   res.status(201).json({ id: r.lastInsertRowid })
 })
 
-router.put('/cotizaciones/:id', verificarToken, (req, res) => {
+router.put('/cotizaciones/:id', verificarToken, escribirCRM, (req, res) => {
   const { empresa_id, contacto_id, fecha='', equipo='', indirecto='', moneda='USD',
           presupuestado=0, ganado=0, perdido=0, estado='Activo',
           observaciones='', seguimiento='', actualizado='' } = req.body
@@ -104,13 +106,13 @@ router.put('/cotizaciones/:id', verificarToken, (req, res) => {
   res.json({ ok: true })
 })
 
-router.delete('/cotizaciones/:id', verificarToken, (req, res) => {
+router.delete('/cotizaciones/:id', verificarToken, escribirCRM, (req, res) => {
   db.prepare('DELETE FROM crm_cotizaciones WHERE id=?').run(req.params.id)
   res.json({ ok: true })
 })
 
 // ── Empresas ──────────────────────────────────────────────────────────────
-router.get('/empresas', verificarToken, (req, res) => {
+router.get('/empresas', verificarToken, leerCRM, (req, res) => {
   const { buscar = '', page = 1, limit = 100 } = req.query
   const where = ['e.activo=1'], p = []
   if (buscar) { const bc = buscarCondicion(buscar, ['e.nombre']); where.push(bc.cond); p.push(...bc.params) }
@@ -135,7 +137,7 @@ router.get('/empresas', verificarToken, (req, res) => {
   res.json({ total, datos })
 })
 
-router.get('/empresas/:id', verificarToken, (req, res) => {
+router.get('/empresas/:id', verificarToken, leerCRM, (req, res) => {
   const emp = db.prepare('SELECT * FROM crm_empresas WHERE id=?').get(req.params.id)
   if (!emp) return res.status(404).json({ error: 'No encontrada' })
   const contactos = db.prepare('SELECT * FROM crm_contactos WHERE empresa_id=? AND activo=1 ORDER BY nombre').all(req.params.id)
@@ -143,14 +145,14 @@ router.get('/empresas/:id', verificarToken, (req, res) => {
   res.json({ ...emp, contactos, cotizaciones })
 })
 
-router.post('/empresas', verificarToken, (req, res) => {
+router.post('/empresas', verificarToken, escribirCRM, (req, res) => {
   const { nombre } = req.body
   if (!nombre?.trim()) return res.status(400).json({ error: 'Nombre requerido' })
   const r = db.prepare('INSERT INTO crm_empresas (nombre) VALUES (?)').run(nombre.trim())
   res.status(201).json({ id: r.lastInsertRowid, nombre: nombre.trim() })
 })
 
-router.put('/empresas/:id', verificarToken, (req, res) => {
+router.put('/empresas/:id', verificarToken, escribirCRM, (req, res) => {
   const { nombre } = req.body
   if (!nombre?.trim()) return res.status(400).json({ error: 'Nombre requerido' })
   db.prepare("UPDATE crm_empresas SET nombre=?,updated_at=datetime('now','localtime') WHERE id=?")
@@ -159,14 +161,14 @@ router.put('/empresas/:id', verificarToken, (req, res) => {
 })
 
 // ── Cliente desde empresa ─────────────────────────────────────────────────
-router.get('/empresas/:id/cliente', verificarToken, (req, res) => {
+router.get('/empresas/:id/cliente', verificarToken, leerCRM, (req, res) => {
   const emp = db.prepare('SELECT * FROM crm_empresas WHERE id=?').get(req.params.id)
   if (!emp) return res.status(404).json({ error: 'No encontrada' })
   const cliente = db.prepare('SELECT * FROM clientes WHERE LOWER(nombre)=LOWER(?)').get(emp.nombre)
   res.json({ existe: !!cliente, cliente: cliente || null, empresa: emp })
 })
 
-router.post('/empresas/:id/crear-cliente', verificarToken, (req, res) => {
+router.post('/empresas/:id/crear-cliente', verificarToken, escribirCRM, (req, res) => {
   const emp = db.prepare('SELECT * FROM crm_empresas WHERE id=?').get(req.params.id)
   if (!emp) return res.status(404).json({ error: 'No encontrada' })
 
@@ -186,7 +188,7 @@ router.post('/empresas/:id/crear-cliente', verificarToken, (req, res) => {
 })
 
 // ── Contactos ──────────────────────────────────────────────────────────────
-router.get('/contactos', verificarToken, (req, res) => {
+router.get('/contactos', verificarToken, leerCRM, (req, res) => {
   const { empresa_id, buscar = '' } = req.query
   const where = ['activo=1'], p = []
   if (empresa_id) { where.push('empresa_id=?'); p.push(empresa_id) }
@@ -195,21 +197,21 @@ router.get('/contactos', verificarToken, (req, res) => {
   res.json({ datos })
 })
 
-router.post('/contactos', verificarToken, (req, res) => {
+router.post('/contactos', verificarToken, escribirCRM, (req, res) => {
   const { empresa_id, nombre='', posicion='', telefono='', mail='' } = req.body
   const r = db.prepare('INSERT INTO crm_contactos (empresa_id,nombre,posicion,telefono,mail) VALUES (?,?,?,?,?)')
     .run(empresa_id||null, nombre, posicion, telefono, mail)
   res.status(201).json({ id: r.lastInsertRowid })
 })
 
-router.put('/contactos/:id', verificarToken, (req, res) => {
+router.put('/contactos/:id', verificarToken, escribirCRM, (req, res) => {
   const { nombre='', posicion='', telefono='', mail='' } = req.body
   db.prepare("UPDATE crm_contactos SET nombre=?,posicion=?,telefono=?,mail=?,updated_at=datetime('now','localtime') WHERE id=?")
     .run(nombre, posicion, telefono, mail, req.params.id)
   res.json({ ok: true })
 })
 
-router.delete('/contactos/:id', verificarToken, (req, res) => {
+router.delete('/contactos/:id', verificarToken, escribirCRM, (req, res) => {
   db.prepare("UPDATE crm_contactos SET activo=0 WHERE id=?").run(req.params.id)
   res.json({ ok: true })
 })
