@@ -275,23 +275,27 @@ router.get('/empleados', verificarToken, leerRRHHOParte, (req, res) => {
 
 router.post('/empleados', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
-  const { nombre, tipo, empresa } = req.body;
+  const { nombre, tipo, empresa, dni, fecha_ingreso } = req.body;
   if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
-  const r = db.prepare(`INSERT INTO rrhh_empleados (nombre,tipo,empresa) VALUES (?,?,?)`)
-    .run(nombre.trim().toUpperCase(), tipo || 'interno', empresa || '');
+  const r = db.prepare(`INSERT INTO rrhh_empleados (nombre,tipo,empresa,dni,fecha_ingreso) VALUES (?,?,?,?,?)`)
+    .run(nombre.trim().toUpperCase(), tipo || 'interno', empresa || '', dni || '', fecha_ingreso || '');
   res.json({ id: r.lastInsertRowid });
 });
 
 router.put('/empleados/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
-  const { nombre, tipo, empresa, activo, id_dispositivo, horario_entrada, horario_salida, obliga_fichar } = req.body;
-  db.prepare(`UPDATE rrhh_empleados SET nombre=?,tipo=?,empresa=?,activo=?,id_dispositivo=?,horario_entrada=?,horario_salida=?,obliga_fichar=? WHERE id=?`)
+  const { nombre, tipo, empresa, activo, id_dispositivo, horario_entrada, horario_salida, obliga_fichar,
+          dni, fecha_ingreso, fecha_egreso } = req.body;
+  const e = db.prepare('SELECT * FROM rrhh_empleados WHERE id=?').get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'No encontrado' });
+  db.prepare(`UPDATE rrhh_empleados SET nombre=?,tipo=?,empresa=?,activo=?,id_dispositivo=?,horario_entrada=?,horario_salida=?,obliga_fichar=?,dni=?,fecha_ingreso=?,fecha_egreso=? WHERE id=?`)
     .run(nombre.trim().toUpperCase(), tipo || 'interno', empresa || '',
          activo !== undefined ? Number(activo) : 1,
          id_dispositivo || '',
          horario_entrada || '',
          horario_salida  || '',
          obliga_fichar !== undefined ? Number(obliga_fichar) : 1,
+         dni ?? e.dni, fecha_ingreso ?? e.fecha_ingreso, fecha_egreso ?? e.fecha_egreso,
          req.params.id);
   res.json({ ok: true });
 });
@@ -306,6 +310,54 @@ router.delete('/empleados/:id', verificarToken, (req, res) => {
     db.prepare('DELETE FROM rrhh_empleados WHERE id=?').run(req.params.id);
     res.json({ ok: true, accion: 'eliminado' });
   }
+});
+
+// ── Estructura organizacional: organigrama + historial de puestos por empleado ──
+
+// Organigrama: solo los campos organizacionales del puesto, nunca sus permisos de sistema
+router.get('/organigrama', verificarToken, leerRRHH, (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, nombre, area, mision, responsabilidades, requisitos, reporta_a_id
+    FROM puestos ORDER BY nombre
+  `).all();
+  res.json(rows);
+});
+
+router.get('/empleados/:id/puestos', verificarToken, leerRRHH, (req, res) => {
+  const rows = db.prepare(`
+    SELECT ep.*, p.nombre AS puesto_nombre
+    FROM rrhh_empleado_puestos ep
+    JOIN puestos p ON p.id = ep.puesto_id
+    WHERE ep.empleado_id = ?
+    ORDER BY ep.fecha_desde DESC, ep.id DESC
+  `).all(req.params.id);
+  res.json(rows);
+});
+
+router.post('/empleados/:id/puestos', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  const { puesto_id, fecha_desde } = req.body;
+  if (!puesto_id || !fecha_desde) return res.status(400).json({ error: 'puesto_id y fecha_desde son requeridos' });
+  const r = db.prepare(`
+    INSERT INTO rrhh_empleado_puestos (empleado_id,puesto_id,fecha_desde) VALUES (?,?,?)
+  `).run(req.params.id, puesto_id, fecha_desde);
+  res.json({ id: r.lastInsertRowid });
+});
+
+router.put('/empleado-puestos/:id', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  const ep = db.prepare('SELECT * FROM rrhh_empleado_puestos WHERE id=?').get(req.params.id);
+  if (!ep) return res.status(404).json({ error: 'No encontrado' });
+  const { fecha_desde, fecha_hasta } = req.body;
+  db.prepare('UPDATE rrhh_empleado_puestos SET fecha_desde=?,fecha_hasta=? WHERE id=?')
+    .run(fecha_desde ?? ep.fecha_desde, fecha_hasta ?? ep.fecha_hasta, req.params.id);
+  res.json({ ok: true });
+});
+
+router.delete('/empleado-puestos/:id', verificarToken, (req, res) => {
+  if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
+  db.prepare('DELETE FROM rrhh_empleado_puestos WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 // ── Proyectos (vista de solo lectura desde módulo principal) ──────────────────

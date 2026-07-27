@@ -592,6 +592,15 @@ function inicializar() {
     })();
   }
 
+  // Descripción del puesto (Estructura Organizacional): un puesto deja de ser
+  // solo una plantilla de permisos y pasa a tener misión, responsabilidades,
+  // requisitos y a quién reporta (para el organigrama).
+  try { db.exec(`ALTER TABLE puestos ADD COLUMN area            TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE puestos ADD COLUMN mision           TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE puestos ADD COLUMN responsabilidades TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE puestos ADD COLUMN requisitos       TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE puestos ADD COLUMN reporta_a_id     INTEGER REFERENCES puestos(id)`); } catch(e) {}
+
   // ── Mantenimiento (sistema de equipos e inspecciones) ─────────────────────────
   db.exec(`
     CREATE TABLE IF NOT EXISTS mant_equipos (
@@ -824,6 +833,23 @@ function inicializar() {
   try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN horario_entrada TEXT DEFAULT ''`); } catch(e) {}
   try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN horario_salida  TEXT DEFAULT ''`); } catch(e) {}
   try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN obliga_fichar   INTEGER DEFAULT 1`); } catch(e) {}
+  // Legajo (Estructura Organizacional / Form 12): identificación y fecha de alta/baja
+  try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN dni            TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN fecha_ingreso  TEXT DEFAULT ''`); } catch(e) {}
+  try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN fecha_egreso   TEXT DEFAULT ''`); } catch(e) {}
+
+  // Historial de puestos por empleado: uno o más puestos a la vez, con vigencia
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS rrhh_empleado_puestos (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      empleado_id  INTEGER NOT NULL REFERENCES rrhh_empleados(id) ON DELETE CASCADE,
+      puesto_id    INTEGER NOT NULL REFERENCES puestos(id),
+      fecha_desde  TEXT NOT NULL,
+      fecha_hasta  TEXT DEFAULT '',
+      created_at   TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_emp_puestos_empleado ON rrhh_empleado_puestos(empleado_id);
+  `);
 
   // Asociación usuario ↔ empleado RRHH
   try { db.exec(`ALTER TABLE usuarios ADD COLUMN rrhh_empleado_id INTEGER REFERENCES rrhh_empleados(id) ON DELETE SET NULL`); } catch(e) {}

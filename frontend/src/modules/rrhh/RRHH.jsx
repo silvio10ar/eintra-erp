@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import ExcelJS from 'exceljs'
 import api from '../../api/client'
 import DateInput from '../../components/DateInput'
+import Estructura from './Estructura'
 
 // ── Estilo corporativo para exports .xlsx (ExcelJS) ───────────────────────────
 const CORP = {
@@ -1492,6 +1493,24 @@ export default function RRHH() {
                   <input type="text" className="form-control form-control-sm"
                     value={m.empresa||''} onChange={e => upd('empresa', e.target.value)}/>
                 </div>
+                <div className="col-12"><hr className="my-1"/><small className="text-muted fw-semibold">Legajo</small></div>
+                <div className="col-md-4">
+                  <label className="form-label fw-semibold">DNI / CUIL</label>
+                  <input type="text" className="form-control form-control-sm"
+                    value={m.dni||''} onChange={e => upd('dni', e.target.value)}/>
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label fw-semibold">Fecha de ingreso</label>
+                  <input type="date" className="form-control form-control-sm"
+                    value={m.fecha_ingreso||''} onChange={e => upd('fecha_ingreso', e.target.value)}/>
+                </div>
+                {m.id && (
+                  <div className="col-md-4">
+                    <label className="form-label fw-semibold">Fecha de egreso</label>
+                    <input type="date" className="form-control form-control-sm"
+                      value={m.fecha_egreso||''} onChange={e => upd('fecha_egreso', e.target.value)}/>
+                  </div>
+                )}
                 {m.id && (
                   <div className="col-md-6">
                     <label className="form-label fw-semibold">Estado</label>
@@ -2400,6 +2419,7 @@ export default function RRHH() {
           { id:'asistencia', icon:'person-check',           label:'Asistencia'  },
           { id:'registros',  icon:'clock-history',          label:'Horas'       },
           { id:'empleados',  icon:'people',                  label:'Empleados'  },
+          { id:'estructura', icon:'diagram-3',               label:'Estructura'  },
           { id:'proyectos',   icon:'kanban',                  label:'Proyectos'   },
           { id:'actividades', icon:'list-task',              label:'Actividades' },
           { id:'fusionador',  icon:'arrow-left-right',       label:'Fusionador'  },
@@ -2419,6 +2439,7 @@ export default function RRHH() {
       {tab==='asistencia' && TabAsistencia()}
       {tab==='registros'  && TabRegistros()}
       {tab==='empleados'  && TabEmpleados()}
+      {tab==='estructura' && <Estructura />}
       {tab==='proyectos'  && TabProyectos()}
       {tab==='actividades' && TabActividades()}
       {tab==='fusionador' && TabFusionador()}
