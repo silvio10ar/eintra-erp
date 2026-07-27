@@ -3,7 +3,6 @@ import Login from './modules/auth/Login'
 import Layout from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
 import Dashboard from './modules/dashboard/Dashboard'
-import EnConstruccion from './components/EnConstruccion'
 import Stock from './modules/stock/Stock'
 import Compras from './modules/compras/Compras'
 import ImprimirOC from './modules/compras/ImprimirOC'
@@ -25,6 +24,7 @@ import OfertaTecnica from './modules/ventas/OfertaTecnica'
 import ImprimirOfertaTecnica from './modules/ventas/ImprimirOfertaTecnica'
 import Finanzas from './modules/finanzas/Finanzas'
 import Calidad from './modules/calidad/Calidad'
+import Produccion from './modules/produccion/Produccion'
 
 export default function App() {
   return (
@@ -48,7 +48,7 @@ export default function App() {
             <Route path="/ventas/presupuesto/:id/oferta-tecnica" element={<OfertaTecnica />} />
             <Route path="/crm"         element={<CRM />} />
             <Route path="/proyectos"   element={<Proyectos />} />
-            <Route path="/produccion"  element={<EnConstruccion modulo="Producción" icono="tools" />} />
+            <Route path="/produccion"  element={<Produccion />} />
             <Route path="/finanzas"    element={<Finanzas />} />
             <Route path="/calidad"     element={<Calidad />} />
             <Route path="/mantenimiento" element={<Mantenimiento />} />
