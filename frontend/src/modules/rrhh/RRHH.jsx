@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import * as XLSX from 'xlsx'
 import ExcelJS from 'exceljs'
 import api from '../../api/client'
 import DateInput from '../../components/DateInput'
 import Estructura from './Estructura'
+import { fmtHorasMinutos as fmtH } from '../../utils/horas'
 
 // ── Estilo corporativo para exports .xlsx (ExcelJS) ───────────────────────────
 const CORP = {
@@ -101,16 +101,6 @@ const MESES = [
   { v: '10', l: 'Octubre'    }, { v: '11', l: 'Noviembre'  }, { v: '12', l: 'Diciembre'  },
 ]
 
-function fmtH(h, signo = false) {
-  if (h === '' || h == null || Number.isNaN(+h)) return '—'
-  const n = +h
-  const neg = n < 0
-  const abs = Math.abs(n)
-  let hh = Math.floor(abs), mm = Math.round((abs - hh) * 60)
-  if (mm === 60) { hh++; mm = 0 }
-  const base = mm > 0 ? `${hh}h ${mm}m` : `${hh}h`
-  return `${neg ? '-' : (signo ? '+' : '')}${base}`
-}
 function fmtF(f) {
   if (!f) return '—'
   const [y, m, d] = f.split('-')
