@@ -218,6 +218,7 @@ export default function Usuarios() {
                   <td className="fw-semibold">
                     {u.username}
                     {u.rol === 'admin' && <span className="badge bg-danger ms-2" style={{fontSize:'0.65rem'}}>ADMIN</span>}
+                    {u.rol === 'gerencia' && <span className="badge bg-primary ms-2" style={{fontSize:'0.65rem'}}>GERENCIA</span>}
                   </td>
                   <td>{u.nombre}</td>
                   <td className="text-muted small">
@@ -455,6 +456,7 @@ export default function Usuarios() {
                     <select className="form-select" value={formEdit.rol}
                       onChange={e => setFormEdit(p => ({ ...p, rol: e.target.value }))}>
                       <option value="solo_lectura">Usuario normal</option>
+                      <option value="gerencia">Gerencia</option>
                       <option value="admin">Administrador</option>
                     </select>
                   </div>
@@ -517,6 +519,7 @@ export default function Usuarios() {
                     <select className="form-select" value={formNuevo.rol}
                       onChange={e => setFormNuevo(p => ({ ...p, rol: e.target.value }))}>
                       <option value="solo_lectura">Usuario normal</option>
+                      <option value="gerencia">Gerencia</option>
                       <option value="admin">Administrador</option>
                     </select>
                     <div className="form-text">Admin accede a todo</div>
