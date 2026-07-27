@@ -3,11 +3,22 @@ const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
 const fs      = require('fs');
-const { inicializar } = require('./db/database');
+const { inicializar, db } = require('./db/database');
 
 const app  = express();
 const PORT = process.env.PORT || 3002;
 const isProd = process.env.NODE_ENV === 'production';
+
+// Un error no atrapado en un handler async no debe tumbar el proceso en silencio:
+// se loguea y, para uncaughtException (estado potencialmente inconsistente), se
+// sale del proceso para que PM2 lo reinicie limpio.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+  process.exit(1);
+});
 
 inicializar();
 
@@ -19,6 +30,16 @@ app.use(express.urlencoded({ extended: true }));
 
 const uploadsDir = process.env.UPLOADS_PATH || path.resolve(__dirname, '../uploads');
 app.use('/uploads', express.static(uploadsDir));
+
+// Health-check: para monitoreo externo y para el propio deploy (ver deploy.ps1)
+app.get('/api/v1/health', (req, res) => {
+  try {
+    db.prepare('SELECT 1').get();
+    res.json({ ok: true, uptime: process.uptime(), timestamp: new Date().toISOString() });
+  } catch (e) {
+    res.status(503).json({ ok: false, error: e.message });
+  }
+});
 
 app.use('/api/v1/auth',       require('./routes/auth'));
 app.use('/api/v1/stock',      require('./routes/stock'));
@@ -55,7 +76,7 @@ if (frontendDist && fs.existsSync(frontendDist)) {
 
 app.use((err, req, res, _next) => {
   console.error(err.stack);
-  res.status(500).json({ error: 'Error interno del servidor', detalle: err.message });
+  res.status(500).json({ error: 'Error interno del servidor', ...(isProd ? {} : { detalle: err.message }) });
 });
 
 app.listen(PORT, '0.0.0.0', () => {

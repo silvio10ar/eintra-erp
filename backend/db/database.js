@@ -11,6 +11,27 @@ const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+// Para cambios de esquema NUEVOS a partir de ahora: en vez de un ALTER TABLE
+// suelto con try/catch, envolverlo en migrar('nombre_unico', () => { ... }).
+// Se registra en `schema_migraciones` y no vuelve a correr una vez aplicado —
+// da visibilidad de qué migración corrió y cuándo. Los ALTER TABLE existentes
+// (más arriba, con su propio try/catch) quedan como están: ya se aplicaron en
+// producción y retocarlos no aporta nada, solo agrega riesgo.
+function migrar(nombre, fn) {
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS schema_migraciones (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre      TEXT NOT NULL UNIQUE,
+      aplicada_at TEXT DEFAULT (datetime('now','localtime'))
+    )
+  `).run();
+  if (db.prepare('SELECT 1 FROM schema_migraciones WHERE nombre=?').get(nombre)) return;
+  db.transaction(() => {
+    fn();
+    db.prepare('INSERT INTO schema_migraciones (nombre) VALUES (?)').run(nombre);
+  })();
+}
+
 function inicializar() {
   db.exec(`
     -- ── Auth ─────────────────────────────────────────────────────────────────
@@ -1782,4 +1803,4 @@ function inicializar() {
   try { db.exec(`ALTER TABLE gantt_plantilla_tarea ADD COLUMN plantilla_set_id INTEGER DEFAULT NULL`) } catch (_) {}
 }
 
-module.exports = { db, inicializar };
+module.exports = { db, inicializar, migrar };
