@@ -535,6 +535,55 @@ function inicializar() {
     );
   `);
 
+  // ── Puestos: catálogo de plantillas de acceso, asignables 1 o más por usuario ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS puestos (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre     TEXT NOT NULL UNIQUE,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    CREATE TABLE IF NOT EXISTS puesto_modulos (
+      puesto_id      INTEGER NOT NULL REFERENCES puestos(id) ON DELETE CASCADE,
+      modulo         TEXT    NOT NULL,
+      puede_leer     INTEGER NOT NULL DEFAULT 0,
+      puede_escribir INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (puesto_id, modulo)
+    );
+
+    CREATE TABLE IF NOT EXISTS usuario_puestos (
+      usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+      puesto_id  INTEGER NOT NULL REFERENCES puestos(id)  ON DELETE CASCADE,
+      PRIMARY KEY (usuario_id, puesto_id)
+    );
+  `);
+
+  // Seed inicial del catálogo de puestos (solo si está vacío — no pisa ediciones del admin)
+  const totalPuestos = db.prepare('SELECT COUNT(*) c FROM puestos').get().c;
+  if (totalPuestos === 0) {
+    const PUESTOS_SEED = {
+      'Operario Producción / Taller': [],
+      'Mantenimiento (Técnico)':      [ ['mantenimiento',1,1], ['stock',1,0] ],
+      'Depósito':                     [ ['stock',1,1] ],
+      'Comprador':                    [ ['compras',1,1], ['partes',1,1], ['stock',1,0] ],
+      'Gerente de Compras':           [ ['compras',1,1], ['compras_fusion',1,1], ['compras_informes',1,0], ['partes',1,1], ['stock',1,0] ],
+      'Coordinación de Proyectos':    [ ['proyectos',1,1] ],
+      'Administración':               [ ['administracion',1,1] ],
+      'Vendedor':                     [ ['ventas',1,1], ['proyectos',1,0] ],
+      'Gerente de Ventas':            [ ['ventas',1,1], ['proyectos',1,1], ['finanzas',1,0] ],
+      'Operador de Calidad':          [ ['calidad',1,1], ['produccion',1,0], ['stock',1,0] ],
+      'Auditor de Calidad':           [ ['calidad',1,1], ['rrhh',1,0], ['compras',1,0], ['stock',1,0] ],
+    };
+    const insPuesto = db.prepare('INSERT INTO puestos (nombre) VALUES (?)');
+    const insModulo = db.prepare('INSERT INTO puesto_modulos (puesto_id,modulo,puede_leer,puede_escribir) VALUES (?,?,?,?)');
+    db.transaction(() => {
+      for (const [nombre, modulos] of Object.entries(PUESTOS_SEED)) {
+        const puestoId = insPuesto.run(nombre).lastInsertRowid;
+        for (const [modulo, leer, escribir] of modulos) insModulo.run(puestoId, modulo, leer, escribir);
+      }
+    })();
+  }
+
   // ── Mantenimiento (sistema de equipos e inspecciones) ─────────────────────────
   db.exec(`
     CREATE TABLE IF NOT EXISTS mant_equipos (

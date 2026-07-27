@@ -2,7 +2,7 @@ const express = require('express');
 const XLSX    = require('xlsx');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
-const { verificarToken } = require('../middleware/auth');
+const { verificarToken, puede } = require('../middleware/auth');
 const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
@@ -15,6 +15,13 @@ const leerCompras = (req, res, next) => {
 // Igual que leerCompras, pero también permite a Codificación (necesita ver items de OC sin código)
 const leerComprasOCodif = (req, res, next) => {
   if (req.usuario?.rol === 'admin' || req.permisos?.compras?.leer || req.permisos?.codificacion?.leer || req.permisos?.finanzas?.leer) return next();
+  return res.status(403).json({ error: 'Sin permisos de lectura' });
+};
+// Fusión de proveedores duplicados: tarea de gestión, reservada a puestos con el módulo "ampliado" (ej. Gerente de Compras)
+const puedeFusion = (req) => req.usuario?.rol === 'admin' || req.permisos?.compras_fusion?.escribir || req.permisos?.administracion?.escribir;
+// Informes/exportaciones consolidadas de Compras: reservado a puestos con el módulo "ampliado"
+const leerInformesCompras = (req, res, next) => {
+  if (req.usuario?.rol === 'admin' || req.permisos?.compras_informes?.leer || req.permisos?.finanzas?.leer) return next();
   return res.status(403).json({ error: 'Sin permisos de lectura' });
 };
 
@@ -89,7 +96,7 @@ router.get('/proveedores/buscar', verificarToken, (req, res) => {
 });
 
 router.post('/proveedores/fusionar', verificarToken, (req, res) => {
-  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!puedeFusion(req)) return res.status(403).json({ error: 'Sin permisos' });
   const { master_id, duplicados, datos } = req.body;
   if (!master_id || !Array.isArray(duplicados) || !duplicados.length)
     return res.status(400).json({ error: 'Parámetros incompletos' });
@@ -131,7 +138,7 @@ router.post('/proveedores/fusionar', verificarToken, (req, res) => {
 // ── GET: todos los nombres de proveedores de todos los módulos ────────────────
 // ── GET: detalle de documentos que referencian un nombre de proveedor ─────────
 router.get('/proveedores/fusiones/detalle', verificarToken, (req, res) => {
-  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!puedeFusion(req)) return res.status(403).json({ error: 'Sin permisos' });
   const { nombre } = req.query
   if (!nombre) return res.status(400).json({ error: 'nombre requerido' })
   const n = nombre.trim()
@@ -149,7 +156,7 @@ router.get('/proveedores/fusiones/detalle', verificarToken, (req, res) => {
 })
 
 router.get('/proveedores/fusiones/todos', verificarToken, (req, res) => {
-  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!puedeFusion(req)) return res.status(403).json({ error: 'Sin permisos' });
 
   // 1. Maestro (solo activos — los inactivos son duplicados ya procesados)
   const maestro = db.prepare('SELECT id, nombre, cuit, activo FROM proveedores WHERE activo=1').all()
@@ -242,7 +249,7 @@ router.get('/proveedores/fusiones/todos', verificarToken, (req, res) => {
 //   duplicados_ids: [ids de proveedores a desactivar y reasignar]
 //   nombres_texto: [nombres de texto libre a reasignar al canónico]
 router.post('/proveedores/fusiones/aplicar', verificarToken, (req, res) => {
-  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!puedeFusion(req)) return res.status(403).json({ error: 'Sin permisos' });
   let { master_id, nombre_canon, cuit, duplicados_ids = [], nombres_texto = [] } = req.body
   if (!nombre_canon?.trim()) return res.status(400).json({ error: 'nombre_canon requerido' })
   nombre_canon = nombre_canon.trim()
@@ -332,7 +339,7 @@ router.put('/proveedores/:id', verificarToken, (req, res) => {
 
 // ── POST: limpiar inactivos huérfanos (sin datos asociados) ──────────────────
 router.post('/proveedores/fusiones/limpiar-inactivos', verificarToken, (req, res) => {
-  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  if (!puedeFusion(req)) return res.status(403).json({ error: 'Sin permisos' });
 
   const inactivos = db.prepare('SELECT id, nombre, cuit FROM proveedores WHERE activo=0').all()
   let eliminados = 0
@@ -695,7 +702,7 @@ router.delete('/oc/:id', verificarToken, (req, res) => {
   res.json({ mensaje: 'OC eliminada' });
 });
 
-router.get('/exportar/oc', verificarToken, leerCompras, (req, res) => {
+router.get('/exportar/oc', verificarToken, leerInformesCompras, (req, res) => {
   const { estado } = req.query;
   const where = estado ? 'WHERE o.estado=?' : '';
   const ocs = db.prepare(`SELECT o.*, COUNT(i.id) as n_items FROM ordenes_compra o LEFT JOIN oc_items i ON o.id=i.oc_id ${where} GROUP BY o.id ORDER BY o.id DESC`).all(...(estado?[estado]:[]));

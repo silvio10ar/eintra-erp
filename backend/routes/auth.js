@@ -171,4 +171,76 @@ router.put('/usuarios/:id/permisos', verificarToken, (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Puestos: catálogo de plantillas de acceso, asignables 1 o más por usuario ──
+router.get('/puestos', verificarToken, (req, res) => {
+  if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
+  const puestos = db.prepare('SELECT * FROM puestos ORDER BY nombre').all();
+  const modulos = db.prepare('SELECT * FROM puesto_modulos').all();
+  res.json(puestos.map(p => ({
+    ...p,
+    modulos: Object.fromEntries(
+      modulos.filter(m => m.puesto_id === p.id)
+        .map(m => [m.modulo, { leer: !!m.puede_leer, escribir: !!m.puede_escribir }])
+    ),
+  })));
+});
+
+router.post('/puestos', verificarToken, body('nombre').trim().notEmpty(), (req, res) => {
+  if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
+  const errs = validationResult(req);
+  if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
+  try {
+    const r = db.prepare('INSERT INTO puestos (nombre) VALUES (?)').run(req.body.nombre.trim());
+    const ins = db.prepare('INSERT INTO puesto_modulos (puesto_id,modulo,puede_leer,puede_escribir) VALUES (?,?,?,?)');
+    for (const [modulo, p] of Object.entries(req.body.modulos || {})) {
+      if (p && typeof p === 'object' && MODULOS.includes(modulo) && (p.leer || p.escribir))
+        ins.run(r.lastInsertRowid, modulo, p.leer ? 1 : 0, p.escribir ? 1 : 0);
+    }
+    res.status(201).json({ id: r.lastInsertRowid });
+  } catch(e) {
+    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Ya existe un puesto con ese nombre' });
+    throw e;
+  }
+});
+
+router.put('/puestos/:id', verificarToken, body('nombre').trim().notEmpty(), (req, res) => {
+  if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
+  const errs = validationResult(req);
+  if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
+  db.transaction(() => {
+    db.prepare('UPDATE puestos SET nombre=? WHERE id=?').run(req.body.nombre.trim(), req.params.id);
+    db.prepare('DELETE FROM puesto_modulos WHERE puesto_id=?').run(req.params.id);
+    const ins = db.prepare('INSERT INTO puesto_modulos (puesto_id,modulo,puede_leer,puede_escribir) VALUES (?,?,?,?)');
+    for (const [modulo, p] of Object.entries(req.body.modulos || {})) {
+      if (p && typeof p === 'object' && MODULOS.includes(modulo) && (p.leer || p.escribir))
+        ins.run(req.params.id, modulo, p.leer ? 1 : 0, p.escribir ? 1 : 0);
+    }
+  })();
+  res.json({ ok: true });
+});
+
+router.delete('/puestos/:id', verificarToken, (req, res) => {
+  if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
+  db.prepare('DELETE FROM puestos WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+router.get('/usuarios/:id/puestos', verificarToken, (req, res) => {
+  if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
+  const rows = db.prepare('SELECT puesto_id FROM usuario_puestos WHERE usuario_id=?').all(req.params.id);
+  res.json(rows.map(r => r.puesto_id));
+});
+
+router.put('/usuarios/:id/puestos', verificarToken, (req, res) => {
+  if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
+  const puestoIds = Array.isArray(req.body.puesto_ids) ? req.body.puesto_ids : [];
+  const del = db.prepare('DELETE FROM usuario_puestos WHERE usuario_id=?');
+  const ins = db.prepare('INSERT INTO usuario_puestos (usuario_id,puesto_id) VALUES (?,?)');
+  db.transaction(() => {
+    del.run(req.params.id);
+    for (const puestoId of puestoIds) ins.run(req.params.id, puestoId);
+  })();
+  res.json({ ok: true });
+});
+
 module.exports = router;

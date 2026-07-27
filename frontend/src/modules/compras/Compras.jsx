@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import api from '../../api/client'
-import { puedeEscribir } from '../../store/authStore'
+import { puedeEscribir, puedeLeer } from '../../store/authStore'
 import Form49 from './Form49'
 import DateInput from '../../components/DateInput'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
@@ -63,6 +63,8 @@ function calcFinal(p, b1, b2, b3, b4) {
 
 export default function Compras() {
   const canWrite = puedeEscribir('compras')
+  const canFusion = puedeEscribir('compras_fusion')
+  const canInformes = puedeLeer('compras_informes')
   const location  = useLocation()
   const [tab, setTab] = useState('oc')
 
@@ -571,19 +573,19 @@ export default function Compras() {
           )}
           <input className="form-control form-control-sm" style={{width:240}} placeholder="Buscar proveedor…"
             value={buscarProv} onChange={e => setBuscarProv(e.target.value)}/>
-          {selProvs.size >= 2 && (
+          {canFusion && selProvs.size >= 2 && (
             <button className="btn btn-sm btn-warning ms-auto" onClick={abrirFusion}>
               <i className="bi bi-intersect me-1"/>Fusionar {selProvs.size} proveedores
             </button>
           )}
-          {selProvs.size > 0 && (
+          {canFusion && selProvs.size > 0 && (
             <button className="btn btn-sm btn-outline-secondary" onClick={() => setSelProvs(new Set())}>
               Limpiar selección
             </button>
           )}
         </div>
 
-        {selProvs.size > 0 && selProvs.size < 2 && (
+        {canFusion && selProvs.size > 0 && selProvs.size < 2 && (
           <div className="alert alert-info py-2 small mb-2">
             <i className="bi bi-info-circle me-1"/>Seleccioná al menos 2 proveedores para fusionarlos.
           </div>
@@ -596,7 +598,7 @@ export default function Compras() {
                 <table className="table table-hover table-sm mb-0" style={{fontSize:'0.83rem'}}>
                   <thead className="table-dark sticky-top">
                     <tr>
-                      <th style={{width:32}}/>
+                      {canFusion && <th style={{width:32}}/>}
                       <th>NOMBRE</th><th>CUIT</th><th>CONTACTO</th><th>TELÉFONO</th>
                       <th>EMAIL</th><th>LOCALIDAD</th><th>COND. PAGO</th>
                       {canWrite && <th/>}
@@ -604,7 +606,7 @@ export default function Compras() {
                   </thead>
                   <tbody>
                     {provs.length === 0
-                      ? <tr><td colSpan={canWrite?9:8} className="text-center text-muted py-4">Sin proveedores</td></tr>
+                      ? <tr><td colSpan={(canFusion?1:0)+(canWrite?1:0)+7} className="text-center text-muted py-4">Sin proveedores</td></tr>
                       : (() => {
                           const nc = {}, cc = {}
                           for (const p of provs) {
@@ -619,10 +621,12 @@ export default function Compras() {
                           const rc = isDupC ? 'table-danger' : isDupN ? 'table-warning' : selProvs.has(p.id) ? 'table-active' : ''
                           return (
                           <tr key={p.id} className={rc}>
-                            <td className="text-center">
-                              <input type="checkbox" className="form-check-input mt-0"
-                                checked={selProvs.has(p.id)} onChange={() => toggleSelProv(p.id)}/>
-                            </td>
+                            {canFusion && (
+                              <td className="text-center">
+                                <input type="checkbox" className="form-check-input mt-0"
+                                  checked={selProvs.has(p.id)} onChange={() => toggleSelProv(p.id)}/>
+                              </td>
+                            )}
                             <td className="fw-semibold">
                               {p.nombre}
                               {isDupN && <span className="badge bg-warning text-dark ms-1" style={{fontSize:'0.6rem'}}>dup.</span>}
