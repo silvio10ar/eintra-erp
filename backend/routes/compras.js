@@ -2,10 +2,21 @@ const express = require('express');
 const XLSX    = require('xlsx');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
-const { verificarToken, ESCRITURA_COMPRAS, ESCRITURA_STOCK } = require('../middleware/auth');
+const { verificarToken } = require('../middleware/auth');
 const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
+
+// Datos de precios/OC: alcanza con permiso de lectura en Compras o Finanzas
+const leerCompras = (req, res, next) => {
+  if (req.usuario?.rol === 'admin' || req.permisos?.compras?.leer || req.permisos?.finanzas?.leer) return next();
+  return res.status(403).json({ error: 'Sin permisos de lectura' });
+};
+// Igual que leerCompras, pero también permite a Codificación (necesita ver items de OC sin código)
+const leerComprasOCodif = (req, res, next) => {
+  if (req.usuario?.rol === 'admin' || req.permisos?.compras?.leer || req.permisos?.codificacion?.leer || req.permisos?.finanzas?.leer) return next();
+  return res.status(403).json({ error: 'Sin permisos de lectura' });
+};
 
 // ── Plazo de entrega: OC única o por ítem, calculado en días desde la fecha de OC ──
 function sumarDias(fechaISO, dias) {
@@ -411,7 +422,7 @@ function nextNumeroOC() {
   return '000001';
 }
 
-router.get('/oc', verificarToken, (req, res) => {
+router.get('/oc', verificarToken, leerCompras, (req, res) => {
   const { estado, proveedor_id, desde, hasta, buscar, page=1, limit=50 } = req.query;
   const conds=[], params=[];
   if (estado)       { conds.push('o.estado=?');          params.push(estado); }
@@ -431,7 +442,7 @@ router.get('/oc', verificarToken, (req, res) => {
   res.json({ total, pagina: parseInt(page), datos });
 });
 
-router.get('/ultimo-precio', verificarToken, (req, res) => {
+router.get('/ultimo-precio', verificarToken, leerCompras, (req, res) => {
   const { producto_id, descripcion, proveedor_id } = req.query;
   if (!producto_id && !descripcion) return res.json(null);
 
@@ -473,7 +484,7 @@ router.get('/ultimo-precio', verificarToken, (req, res) => {
   } : null);
 });
 
-router.get('/oc/:id', verificarToken, (req, res) => {
+router.get('/oc/:id', verificarToken, leerCompras, (req, res) => {
   const oc = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(req.params.id);
   if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
   const items = db.prepare(`
@@ -485,7 +496,7 @@ router.get('/oc/:id', verificarToken, (req, res) => {
 });
 
 // Items sin codificar — para revisión del admin
-router.get('/oc/items-sin-codificar', verificarToken, (req, res) => {
+router.get('/oc/items-sin-codificar', verificarToken, leerComprasOCodif, (req, res) => {
   const rows = db.prepare(`
     SELECT i.id, i.oc_id, i.item_num, i.descripcion, i.unidad, i.cantidad, i.precio_final,
            o.numero as oc_numero, o.fecha as oc_fecha, o.proveedor_nombre, o.moneda
@@ -684,7 +695,7 @@ router.delete('/oc/:id', verificarToken, (req, res) => {
   res.json({ mensaje: 'OC eliminada' });
 });
 
-router.get('/exportar/oc', verificarToken, (req, res) => {
+router.get('/exportar/oc', verificarToken, leerCompras, (req, res) => {
   const { estado } = req.query;
   const where = estado ? 'WHERE o.estado=?' : '';
   const ocs = db.prepare(`SELECT o.*, COUNT(i.id) as n_items FROM ordenes_compra o LEFT JOIN oc_items i ON o.id=i.oc_id ${where} GROUP BY o.id ORDER BY o.id DESC`).all(...(estado?[estado]:[]));
@@ -699,7 +710,7 @@ router.get('/exportar/oc', verificarToken, (req, res) => {
 });
 
 // ── Exportar OC individual a Excel ────────────────────────────────────────────
-router.get('/oc/:id/exportar', verificarToken, (req, res) => {
+router.get('/oc/:id/exportar', verificarToken, leerCompras, (req, res) => {
   const oc    = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(req.params.id);
   if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
   const items = db.prepare('SELECT * FROM oc_items WHERE oc_id=? ORDER BY item_num').all(oc.id);
@@ -857,7 +868,7 @@ function nextNumeroF49() {
   return 'F49-000001';
 }
 
-router.get('/form49', verificarToken, (req, res) => {
+router.get('/form49', verificarToken, leerCompras, (req, res) => {
   const { buscar, desde, hasta, page=1, limit=50 } = req.query;
   const conds=[], params=[];
   if (buscar) { const b = buscarCondicion(buscar, ['f.numero','f.proveedor_nombre','f.proyecto']); conds.push(b.cond); params.push(...b.params); }
@@ -872,7 +883,7 @@ router.get('/form49', verificarToken, (req, res) => {
   res.json({ total, datos });
 });
 
-router.get('/form49/stock-por-proveedor', verificarToken, (req, res) => {
+router.get('/form49/stock-por-proveedor', verificarToken, leerCompras, (req, res) => {
   const { proveedor_id, proveedor_nombre } = req.query;
   if (!proveedor_id && !proveedor_nombre?.trim())
     return res.status(400).json({ error: 'Falta proveedor' });
@@ -933,7 +944,7 @@ router.post('/form49/generar-oc-proveedor', verificarToken, (req, res) => {
   res.status(201).json({ oc_numero: numero, oc_id });
 });
 
-router.get('/form49/:id', verificarToken, (req, res) => {
+router.get('/form49/:id', verificarToken, leerCompras, (req, res) => {
   const f = db.prepare('SELECT * FROM form49_ingresos WHERE id=?').get(req.params.id);
   if (!f) return res.status(404).json({ error: 'No encontrado' });
   const items = db.prepare('SELECT * FROM form49_items WHERE form49_id=? ORDER BY id').all(f.id);
