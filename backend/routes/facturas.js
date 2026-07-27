@@ -6,6 +6,14 @@ const { verificarToken } = require('../middleware/auth')
 
 const router = express.Router()
 
+const leerFacturas   = (req, res, next) => {
+  if (req.usuario?.rol === 'admin' || req.permisos?.compras?.leer || req.permisos?.finanzas?.leer) return next()
+  return res.status(403).json({ error: 'Sin permisos de lectura' })
+}
+const puedeCompras = req => req.usuario?.rol === 'admin' || !!req.permisos?.compras?.escribir
+const puedeVentas  = req => req.usuario?.rol === 'admin' || !!req.permisos?.ventas?.escribir
+const puedeFacturar = req => puedeCompras(req) || puedeVentas(req)
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 },
@@ -39,6 +47,7 @@ Precios sin puntos de miles ni símbolos. Si un campo no está, usá null o "".`
 
 // ── POST /facturas/procesar ────────────────────────────────────────────────────
 router.post('/procesar', verificarToken, upload.single('factura'), async (req, res) => {
+  if (!puedeFacturar(req)) return res.status(403).json({ error: 'Sin permisos' })
   if (!req.file) return res.status(400).json({ error: 'Falta archivo (JPG, PNG, PDF hasta 15 MB)' })
 
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -76,7 +85,7 @@ router.post('/procesar', verificarToken, upload.single('factura'), async (req, r
 })
 
 // ── POST /facturas/buscar-oc ───────────────────────────────────────────────────
-router.get('/buscar-oc', verificarToken, (req, res) => {
+router.get('/buscar-oc', verificarToken, leerFacturas, (req, res) => {
   const { numero } = req.query
   if (!numero?.trim()) return res.json(null)
   const oc = db.prepare(`SELECT id, numero, proveedor_nombre, estado, moneda, fecha FROM ordenes_compra WHERE LOWER(TRIM(numero))=LOWER(TRIM(?)) LIMIT 1`).get(numero.trim())
@@ -85,6 +94,7 @@ router.get('/buscar-oc', verificarToken, (req, res) => {
 
 // ── POST /facturas/guardar-compra ─────────────────────────────────────────────
 router.post('/guardar-compra', verificarToken, (req, res) => {
+  if (!puedeCompras(req)) return res.status(403).json({ error: 'Sin permisos' })
   const {
     tipo_factura = 'A', numero, fecha = '', proveedor_nombre = '',
     proveedor_id, cuit = '', oc_id, oc_numero = '',
@@ -95,58 +105,63 @@ router.post('/guardar-compra', verificarToken, (req, res) => {
 
   if (!numero?.trim()) return res.status(400).json({ error: 'Falta número de factura' })
 
-  const r = db.prepare(`
-    INSERT INTO facturas_compra
-      (tipo_factura,numero,fecha,proveedor_id,proveedor_nombre,cuit,oc_id,oc_numero,
-       neto_gravado,iva_21,importe,moneda,tasa_cambio,observaciones,created_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).run(tipo_factura, numero.trim(), fecha, proveedor_id || null, proveedor_nombre,
-    cuit, oc_id || null, oc_numero,
-    parseFloat(neto_gravado) || 0, parseFloat(iva_21) || 0, parseFloat(importe) || 0,
-    moneda, parseFloat(tasa_cambio) || 1, observaciones, req.usuario.id)
+  const { facturaId, f49_numero } = db.transaction(() => {
+    const r = db.prepare(`
+      INSERT INTO facturas_compra
+        (tipo_factura,numero,fecha,proveedor_id,proveedor_nombre,cuit,oc_id,oc_numero,
+         neto_gravado,iva_21,importe,moneda,tasa_cambio,observaciones,created_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(tipo_factura, numero.trim(), fecha, proveedor_id || null, proveedor_nombre,
+      cuit, oc_id || null, oc_numero,
+      parseFloat(neto_gravado) || 0, parseFloat(iva_21) || 0, parseFloat(importe) || 0,
+      moneda, parseFloat(tasa_cambio) || 1, observaciones, req.usuario.id)
 
-  // Actualizar OC vinculada
-  if (oc_id) {
-    db.prepare(`UPDATE ordenes_compra SET nro_factura=?, importe_facturado=?, estado=
-      CASE WHEN estado='Emitida' THEN 'Recibida' ELSE estado END WHERE id=?`)
-      .run(numero.trim(), parseFloat(importe) || 0, oc_id)
-  }
-
-  // Crear Form49 si no hay OC
-  let f49_numero = null
-  if (crear_f49 && f49_items.length) {
-    const lastF49 = db.prepare('SELECT numero FROM form49_ingresos ORDER BY id DESC LIMIT 1').get()
-    let nextN = 1
-    if (lastF49) { try { nextN = parseInt(lastF49.numero.replace('F49-', '')) + 1 } catch (_) {} }
-    f49_numero = `F49-${String(nextN).padStart(6, '0')}`
-
-    const fRow = db.prepare(`
-      INSERT INTO form49_ingresos
-        (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,condicion_pago,
-         moneda,tasa_cambio,observaciones,created_by)
-      VALUES (?,?,?,?,?,?,?,?,?,?)
-    `).run(f49_numero, fecha, proveedor_id || null, proveedor_nombre, cuit,
-      condicion_pago, moneda, parseFloat(tasa_cambio) || 1,
-      `Generado desde factura ${numero.trim()}`, req.usuario.id)
-
-    const fid = fRow.lastInsertRowid
-    const ins = db.prepare(`
-      INSERT INTO form49_items
-        (form49_id,descripcion,cantidad,unidad,precio_unitario,precio_final,plazo,destino,producto_id,producto_codigo)
-      VALUES (?,?,?,?,?,?,?,?,?,?)
-    `)
-    for (const it of f49_items) {
-      ins.run(fid, it.descripcion || '', parseFloat(it.cantidad) || 0, it.unidad || 'UND.',
-        parseFloat(it.precio_unitario) || 0, parseFloat(it.precio_final) || 0,
-        'INMEDIATO', it.destino || 'stock', it.producto_id || null, it.producto_codigo || '')
+    // Actualizar OC vinculada
+    if (oc_id) {
+      db.prepare(`UPDATE ordenes_compra SET nro_factura=?, importe_facturado=?, estado=
+        CASE WHEN estado='Emitida' THEN 'Recibida' ELSE estado END WHERE id=?`)
+        .run(numero.trim(), parseFloat(importe) || 0, oc_id)
     }
-  }
 
-  res.status(201).json({ id: r.lastInsertRowid, f49_numero })
+    // Crear Form49 si no hay OC
+    let f49_numero = null
+    if (crear_f49 && f49_items.length) {
+      const lastF49 = db.prepare('SELECT numero FROM form49_ingresos ORDER BY id DESC LIMIT 1').get()
+      let nextN = 1
+      if (lastF49) { try { nextN = parseInt(lastF49.numero.replace('F49-', '')) + 1 } catch (_) {} }
+      f49_numero = `F49-${String(nextN).padStart(6, '0')}`
+
+      const fRow = db.prepare(`
+        INSERT INTO form49_ingresos
+          (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,condicion_pago,
+           moneda,tasa_cambio,observaciones,created_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+      `).run(f49_numero, fecha, proveedor_id || null, proveedor_nombre, cuit,
+        condicion_pago, moneda, parseFloat(tasa_cambio) || 1,
+        `Generado desde factura ${numero.trim()}`, req.usuario.id)
+
+      const fid = fRow.lastInsertRowid
+      const ins = db.prepare(`
+        INSERT INTO form49_items
+          (form49_id,descripcion,cantidad,unidad,precio_unitario,precio_final,plazo,destino,producto_id,producto_codigo)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+      `)
+      for (const it of f49_items) {
+        ins.run(fid, it.descripcion || '', parseFloat(it.cantidad) || 0, it.unidad || 'UND.',
+          parseFloat(it.precio_unitario) || 0, parseFloat(it.precio_final) || 0,
+          'INMEDIATO', it.destino || 'stock', it.producto_id || null, it.producto_codigo || '')
+      }
+    }
+
+    return { facturaId: r.lastInsertRowid, f49_numero }
+  })()
+
+  res.status(201).json({ id: facturaId, f49_numero })
 })
 
 // ── POST /facturas/guardar-venta ──────────────────────────────────────────────
 router.post('/guardar-venta', verificarToken, (req, res) => {
+  if (!puedeVentas(req)) return res.status(403).json({ error: 'Sin permisos' })
   const {
     tipo_factura = 'A', numero, fecha = '', cliente_nombre = '', cliente_id,
     oc = '', importe = 0, moneda = 'PESO', tasa_cambio = 1, observaciones = '',

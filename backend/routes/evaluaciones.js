@@ -1,8 +1,10 @@
 const router = require('express').Router();
 const { db } = require('../db/database');
-const { verificarToken } = require('../middleware/auth');
+const { verificarToken, puede } = require('../middleware/auth');
 
 router.use(verificarToken);
+router.use(puede.leer('compras'));
+const puedeE = req => req.usuario?.rol === 'admin' || !!req.permisos?.compras?.escribir;
 
 // Criterios por tipo
 const CRITERIOS = {
@@ -55,6 +57,7 @@ router.get('/:id', (req, res) => {
 
 // POST /evaluaciones
 router.post('/', (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' });
   try {
     const { proveedor_id, tipo, anio, fecha, observaciones, criterios } = req.body;
     if (!proveedor_id || !tipo || !anio) return res.status(400).json({ error: 'Faltan campos requeridos' });
@@ -87,6 +90,7 @@ router.post('/', (req, res) => {
 
 // PUT /evaluaciones/:id
 router.put('/:id', (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' });
   try {
     const ev = db.prepare(`SELECT * FROM evaluaciones_proveedor WHERE id = ?`).get(req.params.id);
     if (!ev) return res.status(404).json({ error: 'No encontrado' });
@@ -116,6 +120,7 @@ router.put('/:id', (req, res) => {
 
 // DELETE /evaluaciones/:id
 router.delete('/:id', (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' });
   try {
     const ev = db.prepare(`SELECT id FROM evaluaciones_proveedor WHERE id = ?`).get(req.params.id);
     if (!ev) return res.status(404).json({ error: 'No encontrado' });

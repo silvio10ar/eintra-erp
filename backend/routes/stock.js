@@ -2,15 +2,16 @@ const express = require('express');
 const XLSX    = require('xlsx');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
-const { verificarToken } = require('../middleware/auth');
+const { verificarToken, puede: permisoModulo } = require('../middleware/auth');
 const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
 const puede = req => !!(req.permisos?.stock?.escribir);
+const leerStock = permisoModulo.leer('stock');
 
 // ── Productos ──────────────────────────────────────────────────────────────────
 
-router.get('/productos', verificarToken, (req, res) => {
+router.get('/productos', verificarToken, leerStock, (req, res) => {
   const { buscar, categoria, ubicacion, alerta } = req.query;
   const conds = ['p.activo=1'], params = [];
   if (buscar)   { const b = buscarCondicion(buscar, ['p.codigo','p.descripcion','p.proveedor','p.codigo_proveedor']); conds.push(b.cond); params.push(...b.params); }
@@ -23,15 +24,15 @@ router.get('/productos', verificarToken, (req, res) => {
   res.json(rows);
 });
 
-router.get('/productos/categorias', verificarToken, (req, res) => {
+router.get('/productos/categorias', verificarToken, leerStock, (req, res) => {
   res.json(db.prepare("SELECT DISTINCT categoria FROM productos WHERE categoria!='' AND activo=1 ORDER BY categoria").all().map(r=>r.categoria));
 });
 
-router.get('/productos/ubicaciones', verificarToken, (req, res) => {
+router.get('/productos/ubicaciones', verificarToken, leerStock, (req, res) => {
   res.json(db.prepare("SELECT DISTINCT ubicacion FROM productos WHERE ubicacion!='' AND activo=1 ORDER BY ubicacion").all().map(r=>r.ubicacion));
 });
 
-router.get('/movimientos/valores', verificarToken, (req, res) => {
+router.get('/movimientos/valores', verificarToken, leerStock, (req, res) => {
   const { campo } = req.query;
   const cols = { proveedor:'proveedor', proyecto:'proyecto', cliente_interno:'cliente_interno', codigo:'codigo', descripcion:'descripcion' };
   if (!cols[campo]) return res.json([]);
@@ -44,7 +45,7 @@ router.get('/movimientos/valores', verificarToken, (req, res) => {
   res.json(db.prepare(sql).all().map(r=>r.v));
 });
 
-router.get('/productos/:id', verificarToken, (req, res) => {
+router.get('/productos/:id', verificarToken, leerStock, (req, res) => {
   const p = db.prepare('SELECT * FROM productos WHERE id=?').get(req.params.id);
   if (!p) return res.status(404).json({ error: 'Producto no encontrado' });
   const movs = db.prepare('SELECT * FROM movimientos_stock WHERE producto_id=? ORDER BY created_at DESC LIMIT 50').all(p.id);
@@ -99,7 +100,7 @@ router.delete('/productos/:id', verificarToken, (req, res) => {
 
 // ── Movimientos ────────────────────────────────────────────────────────────────
 
-router.get('/movimientos', verificarToken, (req, res) => {
+router.get('/movimientos', verificarToken, leerStock, (req, res) => {
   const { producto_id, tipo, desde, hasta, campo, valor, page=1, limit=200 } = req.query;
   const conds = [], params = [];
   if (producto_id) { conds.push('m.producto_id=?');  params.push(producto_id); }
@@ -156,7 +157,7 @@ router.post('/movimientos', verificarToken,
 );
 
 // ── Exportar productos ─────────────────────────────────────────────────────────
-router.get('/exportar', verificarToken, (req, res) => {
+router.get('/exportar', verificarToken, leerStock, (req, res) => {
   const { buscar, categoria, ubicacion, alerta, tipo_export } = req.query;
 
   if (tipo_export === 'entradas' || tipo_export === 'salidas') {
@@ -203,7 +204,7 @@ router.get('/exportar', verificarToken, (req, res) => {
 });
 
 // ── Exportar historial filtrado ────────────────────────────────────────────────
-router.get('/exportar-historial', verificarToken, (req, res) => {
+router.get('/exportar-historial', verificarToken, leerStock, (req, res) => {
   const { tipo, desde, hasta, campo, valor } = req.query;
   const conds = [], params = [];
   if (tipo)  { conds.push('m.tipo=?');  params.push(tipo); }
@@ -330,7 +331,7 @@ router.delete('/movimientos/:id', verificarToken, (req, res) => {
 
 // ── Ingresos pendientes ────────────────────────────────────────────────────────
 
-router.get('/ingresos-pendientes', verificarToken, (req, res) => {
+router.get('/ingresos-pendientes', verificarToken, leerStock, (req, res) => {
   const rows = db.prepare(`
     SELECT ip.*, p.stock_actual
     FROM ingresos_pendientes ip
@@ -370,7 +371,7 @@ router.delete('/ingresos-pendientes/:id', verificarToken, (req, res) => {
 
 // ── Ingresos pendientes SIN OC ────────────────────────────────────────────────
 
-router.get('/ingresos-sin-oc-pendientes', verificarToken, (req, res) => {
+router.get('/ingresos-sin-oc-pendientes', verificarToken, leerStock, (req, res) => {
   const rows = db.prepare(`
     SELECT ip.*, p.stock_actual, p.codigo as producto_codigo_actual, p.descripcion as producto_desc_actual
     FROM ingresos_sin_oc_pendientes ip

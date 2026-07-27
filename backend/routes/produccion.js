@@ -1,10 +1,11 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
-const { verificarToken, ESCRITURA_PRODUCCION } = require('../middleware/auth');
+const { verificarToken, puede } = require('../middleware/auth');
 const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
+const leerProduccion = puede.leer('produccion');
 
 function nextNumeroOT() {
   const r = db.prepare("SELECT numero FROM ordenes_trabajo ORDER BY CAST(numero AS INTEGER) DESC LIMIT 1").get();
@@ -14,7 +15,7 @@ function nextNumeroOT() {
 
 // ── Órdenes de Trabajo ────────────────────────────────────────────────────────
 
-router.get('/', verificarToken, (req, res) => {
+router.get('/', verificarToken, leerProduccion, (req, res) => {
   const { estado, prioridad, proyecto_id, buscar, page=1, limit=50 } = req.query;
   const conds=[], params=[];
   if (estado)      { conds.push('ot.estado=?');       params.push(estado); }
@@ -37,7 +38,7 @@ router.get('/', verificarToken, (req, res) => {
   res.json({ total, datos });
 });
 
-router.get('/:id', verificarToken, (req, res) => {
+router.get('/:id', verificarToken, leerProduccion, (req, res) => {
   const ot = db.prepare('SELECT * FROM ordenes_trabajo WHERE id=?').get(req.params.id);
   if (!ot) return res.status(404).json({ error: 'OT no encontrada' });
   const tareas = db.prepare('SELECT * FROM ot_tareas WHERE ot_id=? ORDER BY orden,id').all(ot.id);

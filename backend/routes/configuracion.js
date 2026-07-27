@@ -200,15 +200,16 @@ cp -r "\$SCRIPT_DIR/frontend" "\$RUTA/"
 # ── .env inicial (solo si no existe) ───────────
 if [ ! -f "\$RUTA/backend/.env" ]; then
   echo "[env] Creando .env..."
-  cat > "\$RUTA/backend/.env" << 'ENVEOF'
+  JWT_RANDOM=\$(openssl rand -hex 32 2>/dev/null || head -c 48 /dev/urandom | base64 | tr -d '/+=' | head -c 64)
+  cat > "\$RUTA/backend/.env" << ENVEOF
 PORT=3002
-JWT_SECRET=eintra_erp_secret_CAMBIAR_EN_PRODUCCION
+JWT_SECRET=\${JWT_RANDOM}
 JWT_EXPIRES_IN=10h
 DB_PATH=./db/eintra_erp.db
 UPLOADS_PATH=../uploads
 NODE_ENV=production
 ENVEOF
-  echo "[env] IMPORTANTE: cambiar JWT_SECRET en \$RUTA/backend/.env"
+  echo "[env] JWT_SECRET generado automáticamente"
 fi
 
 # ── Dependencias backend ────────────────────────

@@ -1,11 +1,12 @@
 'use strict'
 const express = require('express')
 const { db }  = require('../db/database')
-const { verificarToken } = require('../middleware/auth')
+const { verificarToken, puede } = require('../middleware/auth')
 const { buscarCondicion } = require('../helpers/buscar')
 
 const router = express.Router()
 router.use(verificarToken)
+router.use(puede.leer('calidad'))
 
 const puedeE = req => !!req.permisos?.calidad?.escribir
 
