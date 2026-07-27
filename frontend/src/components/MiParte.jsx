@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import api from '../api/client'
 import { getUser } from '../store/authStore'
 import DateInput from './DateInput'
+import { fmtHorasDecimal as fmtH } from '../utils/horas'
 
 const GRUPOS = [
   { grupo: 'Granallado',              color: '#6c757d' },
@@ -21,9 +22,6 @@ function calcHoras(ini, fin) {
   return mins > 0 ? +(mins / 60).toFixed(2) : null
 }
 
-function fmtH(h) {
-  return h ? `${parseFloat((+h).toFixed(1))}h` : '—'
-}
 
 export default function MiParte({ show, onClose }) {
   const user = getUser()

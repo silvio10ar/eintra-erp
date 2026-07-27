@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import api from '../../api/client'
 import { puedeEscribir, getUser } from '../../store/authStore'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
@@ -226,27 +226,32 @@ export default function Mantenimiento() {
     setSelectedEquipos(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
   }
 
-  function exportarExcel() {
+  async function exportarExcel() {
     const fechaHoy = new Date().toLocaleDateString('es-AR')
     const selAlerts = alertas.filter(a => selectedEquipos.has(a.equipo_id))
 
     // Agrupar por equipo para formato de planilla por secciones
-    const PRIO = { vencida: 6, critica: 5, proxima: 4, atencion: 3, nunca_ejecutada: 2, manual: 1, al_dia: 0 }
     const mapaEq = {}
     selAlerts.forEach(a => {
       if (!mapaEq[a.equipo_id]) mapaEq[a.equipo_id] = { ...a, tareas: [] }
       mapaEq[a.equipo_id].tareas.push(a)
     })
 
-    const aoa = []
-    aoa.push([`PLAN PREVENTIVO — E-INTRA SRL — ${fechaHoy}`])
-    aoa.push([])
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('Plan Preventivo')
+    ws.columns = [
+      { width: 20 }, { width: 30 }, { width: 10 }, { width: 12 },
+      { width: 14 }, { width: 6  }, { width: 14 }, { width: 12 }, { width: 12 },
+      { width: 25 }, { width: 12 },
+    ]
+    ws.addRow([`PLAN PREVENTIVO — E-INTRA SRL — ${fechaHoy}`])
+    ws.addRow([])
 
     for (const eq of Object.values(mapaEq)) {
-      aoa.push([`${eq.codigo}  ${eq.nombre}`, '', eq.ubicacion || '', '', '', '', '', '', '', '', ''])
-      aoa.push(['Componente', 'Acción', 'Tipo', 'Frecuencia', 'Última ejec.', 'Días', 'Vence en', 'Estado', 'Resultado', 'Observaciones', 'Firma'])
+      ws.addRow([`${eq.codigo}  ${eq.nombre}`, '', eq.ubicacion || ''])
+      ws.addRow(['Componente', 'Acción', 'Tipo', 'Frecuencia', 'Última ejec.', 'Días', 'Vence en', 'Estado', 'Resultado', 'Observaciones', 'Firma'])
       for (const t of eq.tareas) {
-        aoa.push([
+        ws.addRow([
           t.componente,
           t.accion,
           t.tipo,
@@ -260,18 +265,17 @@ export default function Mantenimiento() {
           '',  // Firma
         ])
       }
-      aoa.push([])
+      ws.addRow([])
     }
 
-    const ws = XLSX.utils.aoa_to_sheet(aoa)
-    ws['!cols'] = [
-      { wch: 20 }, { wch: 30 }, { wch: 10 }, { wch: 12 },
-      { wch: 14 }, { wch: 6  }, { wch: 14 }, { wch: 12 }, { wch: 12 },
-      { wch: 25 }, { wch: 12 },
-    ]
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Plan Preventivo')
-    XLSX.writeFile(wb, `plan_preventivo_${new Date().toISOString().slice(0,10)}.xlsx`)
+    const buf = await wb.xlsx.writeBuffer()
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `plan_preventivo_${new Date().toISOString().slice(0,10)}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   // ══════════════════════════════════════════════════════════════════════════

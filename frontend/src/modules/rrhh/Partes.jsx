@@ -2,17 +2,13 @@ import { useState, useEffect } from 'react'
 import api from '../../api/client'
 import { getUser, puedeEscribir } from '../../store/authStore'
 import DateInput from '../../components/DateInput'
+import { fmtHorasDecimal as fmtH } from '../../utils/horas'
 
 function fmtCod(c) {
   if (!c) return ''
   if (c.includes('/')) return c.replace('/', '')
   if (!/\d$/.test(c))  return c + '0'
   return c
-}
-
-function fmtH(h) {
-  if (!h && h !== 0) return '—'
-  return `${parseFloat((+h).toFixed(1))}h`
 }
 
 function fmtDia(iso) {

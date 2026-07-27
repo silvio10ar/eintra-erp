@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { getToken } from '../store/authStore'
+import { getToken, clearAuth } from '../store/authStore'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -16,9 +16,13 @@ api.interceptors.response.use(
   res => res,
   err => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('erp_token')
-      localStorage.removeItem('erp_user')
+      clearAuth()
       window.location.href = '/login'
+    }
+    if (err.response?.status === 403) {
+      // No se corta el flujo (cada pantalla ya muestra su propio mensaje de "sin permisos"),
+      // pero queda visible en consola para diagnosticar rápido un reclamo de acceso.
+      console.warn(`[403] ${err.config?.method?.toUpperCase()} ${err.config?.url}`, err.response?.data)
     }
     return Promise.reject(err)
   }
