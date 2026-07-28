@@ -33,6 +33,7 @@ export default function Usuarios() {
   const [permisosForm, setPermisosForm]       = useState({})
   const [puestosAsignados, setPuestosAsignados] = useState(new Set())
   const [savingPermisos, setSavingPermisos]   = useState(false)
+  const [mostrarAvanzado, setMostrarAvanzado] = useState(false)
 
   // Catálogo de puestos (plantillas de acceso, asignables 1 o más por usuario)
   const [puestos, setPuestos]             = useState([])
@@ -155,6 +156,7 @@ export default function Usuarios() {
       escribir: directos[m]?.escribir ?? false,
     }])))
     setPuestosAsignados(new Set(respPuestos.data))
+    setMostrarAvanzado(false)
     setUserPermisos(u)
   }
 
@@ -179,6 +181,20 @@ export default function Usuarios() {
       }
     }
     return map
+  }
+
+  // Resumen del acceso total (puestos + permisos individuales activos) — para mostrar en lenguaje simple
+  const resumenAcceso = () => {
+    const map = {}
+    for (const [m, v] of Object.entries(modulosDesdePuestos())) map[m] = { leer: v.leer, escribir: v.escribir }
+    for (const [m, v] of Object.entries(permisosForm)) {
+      if (!v.activo) continue
+      const cur = map[m] || { leer: false, escribir: false }
+      map[m] = { leer: cur.leer || v.leer, escribir: cur.escribir || v.escribir }
+    }
+    return Object.entries(map)
+      .map(([m, v]) => ({ label: modulos.find(mod => mod.id === m)?.label ?? m, ...v }))
+      .sort((a, b) => a.label.localeCompare(b.label))
   }
 
   /* ── Guardar permisos (puestos asignados + permisos individuales) ── */
@@ -319,40 +335,52 @@ export default function Usuarios() {
                   <td className="text-muted small">{formatFecha(u.ultimo_login)}</td>
                   <td className="text-end">
                     <div className="d-flex gap-2 justify-content-end">
-                      <button className="btn btn-sm btn-outline-secondary" title="Historial de conexiones"
-                        onClick={() => abrirHistorial(u)}>
-                        <i className="bi bi-clock-history" />
-                      </button>
-                      {u.activo && (
-                        <button className="btn btn-sm btn-outline-info" title={`Operar como ${u.username}`}
-                          onClick={() => impersonar(u)}>
-                          <i className="bi bi-box-arrow-in-right" />
-                        </button>
-                      )}
                       {u.rol !== 'admin' && (
                         <button className="btn btn-sm btn-outline-primary" title="Permisos"
                           onClick={() => abrirPermisos(u)}>
-                          <i className="bi bi-shield-check" />
+                          <i className="bi bi-shield-check me-1" />Permisos
                         </button>
                       )}
                       <button className="btn btn-sm btn-outline-secondary" title="Editar"
                         onClick={() => abrirEdit(u)}>
-                        <i className="bi bi-pencil" />
+                        <i className="bi bi-pencil me-1" />Editar
                       </button>
-                      <button className="btn btn-sm btn-outline-secondary" title="Cambiar contraseña"
-                        onClick={() => { setUserPass(u); setNuevaPass(''); setErrPass('') }}>
-                        <i className="bi bi-key" />
-                      </button>
-                      <button
-                        className={`btn btn-sm btn-outline-${u.activo ? 'warning' : 'success'}`}
-                        title={u.activo ? 'Desactivar' : 'Activar'}
-                        onClick={() => handleActivo(u)}>
-                        <i className={`bi bi-${u.activo ? 'person-dash' : 'person-check'}`} />
-                      </button>
-                      <button className="btn btn-sm btn-outline-danger" title="Eliminar"
-                        onClick={() => handleEliminar(u)}>
-                        <i className="bi bi-trash" />
-                      </button>
+                      <div className="dropdown">
+                        <button className="btn btn-sm btn-outline-secondary" data-bs-toggle="dropdown" title="Más acciones">
+                          <i className="bi bi-three-dots-vertical" />
+                        </button>
+                        <ul className="dropdown-menu dropdown-menu-end">
+                          <li>
+                            <button className="dropdown-item" onClick={() => abrirHistorial(u)}>
+                              <i className="bi bi-clock-history me-2" />Historial de conexiones
+                            </button>
+                          </li>
+                          {u.activo && (
+                            <li>
+                              <button className="dropdown-item" onClick={() => impersonar(u)}>
+                                <i className="bi bi-box-arrow-in-right me-2" />Operar como {u.username}
+                              </button>
+                            </li>
+                          )}
+                          <li>
+                            <button className="dropdown-item" onClick={() => { setUserPass(u); setNuevaPass(''); setErrPass('') }}>
+                              <i className="bi bi-key me-2" />Cambiar contraseña
+                            </button>
+                          </li>
+                          <li>
+                            <button className="dropdown-item" onClick={() => handleActivo(u)}>
+                              <i className={`bi bi-${u.activo ? 'person-dash' : 'person-check'} me-2`} />
+                              {u.activo ? 'Desactivar' : 'Activar'}
+                            </button>
+                          </li>
+                          <li><hr className="dropdown-divider" /></li>
+                          <li>
+                            <button className="dropdown-item text-danger" onClick={() => handleEliminar(u)}>
+                              <i className="bi bi-trash me-2" />Eliminar
+                            </button>
+                          </li>
+                        </ul>
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -375,7 +403,7 @@ export default function Usuarios() {
                 <button type="button" className="btn-close" onClick={() => setUserPermisos(null)} />
               </div>
               <div className="px-3 pt-3">
-                <div className="d-flex justify-content-between align-items-center mb-1">
+                <div className="d-flex justify-content-between align-items-center mb-2">
                   <label className="form-label small fw-medium mb-0">Puestos asignados</label>
                   <button type="button" className="btn btn-link btn-sm p-0" onClick={() => setShowPuestosAdmin(true)}>
                     <i className="bi bi-gear me-1" />Gestionar puestos
@@ -384,20 +412,38 @@ export default function Usuarios() {
                 {puestos.length === 0
                   ? <p className="text-muted small fst-italic">No hay puestos definidos todavía — creá uno con "Gestionar puestos".</p>
                   : (
-                    <div className="d-flex flex-wrap gap-2 mb-1">
-                      {puestos.map(p => (
-                        <div key={p.id} className="form-check form-check-inline border rounded px-2 py-1 m-0"
-                          style={{ background: puestosAsignados.has(p.id) ? '#e7f1ff' : 'transparent' }}>
-                          <input className="form-check-input" type="checkbox" id={`puesto-${p.id}`}
-                            checked={puestosAsignados.has(p.id)} onChange={() => togglePuesto(p.id)} />
-                          <label className="form-check-label small" htmlFor={`puesto-${p.id}`}>{p.nombre}</label>
-                        </div>
-                      ))}
+                    <div className="d-flex flex-wrap gap-2 mb-2">
+                      {puestos.map(p => {
+                        const on = puestosAsignados.has(p.id)
+                        return (
+                          <button type="button" key={p.id} onClick={() => togglePuesto(p.id)}
+                            className={`btn btn-sm ${on ? 'btn-primary' : 'btn-outline-secondary'}`}>
+                            {on && <i className="bi bi-check-lg me-1" />}{p.nombre}
+                          </button>
+                        )
+                      })}
                     </div>
                   )}
-                <div className="form-text">Un empleado puede tener uno o más puestos a la vez — sus accesos se suman. Además podés ajustar permisos individuales módulo por módulo abajo.</div>
+                <div className="form-text mb-3">Un empleado puede tener uno o más puestos a la vez — sus accesos se suman.</div>
+
+                <label className="form-label small fw-medium">Acceso efectivo</label>
+                <div className="d-flex flex-wrap gap-2 mb-2">
+                  {resumenAcceso().length === 0
+                    ? <span className="text-muted small fst-italic">Sin acceso a ningún módulo todavía.</span>
+                    : resumenAcceso().map(({ label, leer, escribir }) => (
+                        <span key={label} className="badge bg-light text-dark border fw-normal">
+                          {label} <span className="text-muted">({escribir ? 'lectura y escritura' : leer ? 'solo lectura' : 'sin acceso'})</span>
+                        </span>
+                      ))}
+                </div>
+
+                <button type="button" className="btn btn-link btn-sm px-0 mb-2"
+                  onClick={() => setMostrarAvanzado(v => !v)}>
+                  <i className={`bi bi-chevron-${mostrarAvanzado ? 'down' : 'right'} me-1`} />
+                  Ajustar permisos individuales (avanzado)
+                </button>
               </div>
-              <div className="modal-body p-0">
+              <div className="modal-body p-0" style={{ display: mostrarAvanzado ? 'block' : 'none' }}>
                 <table className="table table-sm align-middle mb-0">
                   <thead className="table-light">
                     <tr>
@@ -505,7 +551,7 @@ export default function Usuarios() {
               <div className="modal-header">
                 <h5 className="modal-title">
                   <i className="bi bi-briefcase me-2 text-primary" />
-                  Puestos (catálogo de accesos)
+                  Puestos de trabajo
                 </h5>
                 <button type="button" className="btn-close" onClick={() => { setShowPuestosAdmin(false); setPuestoForm(null) }} />
               </div>
@@ -521,7 +567,7 @@ export default function Usuarios() {
                       <thead className="table-light">
                         <tr>
                           <th>Puesto</th>
-                          <th>Módulos</th>
+                          <th>Accesos</th>
                           <th className="text-end">Acciones</th>
                         </tr>
                       </thead>
@@ -529,31 +575,34 @@ export default function Usuarios() {
                         {puestos.length === 0 && (
                           <tr><td colSpan={3} className="text-center text-muted py-3">Sin puestos definidos</td></tr>
                         )}
-                        {puestos.map(p => (
-                          <tr key={p.id}>
-                            <td className="fw-medium">{p.nombre}</td>
-                            <td>
-                              {Object.keys(p.modulos).length === 0
-                                ? <span className="text-muted fst-italic small">sin módulos</span>
-                                : Object.entries(p.modulos).map(([m, v]) => (
-                                    <span key={m} className="badge bg-light text-dark border me-1 mb-1 fw-normal">
-                                      {modulos.find(mod => mod.id === m)?.label ?? m}
-                                      <span className="text-muted"> ({v.leer ? 'L' : ''}{v.escribir ? 'E' : ''})</span>
-                                    </span>
-                                  ))}
-                            </td>
-                            <td className="text-end">
-                              <button className="btn btn-sm btn-outline-secondary me-1" title="Editar"
-                                onClick={() => editarPuestoForm(p)}>
-                                <i className="bi bi-pencil" />
-                              </button>
-                              <button className="btn btn-sm btn-outline-danger" title="Eliminar"
-                                onClick={() => eliminarPuesto(p)}>
-                                <i className="bi bi-trash" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                        {puestos.map(p => {
+                          const nMod = Object.keys(p.modulos).length
+                          return (
+                            <tr key={p.id}>
+                              <td>
+                                <div className="fw-medium">{p.nombre}</div>
+                                <div className="text-muted small">
+                                  {[p.area, p.mision].filter(Boolean).join(' — ') || <span className="fst-italic">Sin descripción</span>}
+                                </div>
+                              </td>
+                              <td>
+                                {nMod === 0
+                                  ? <span className="text-muted fst-italic small">sin módulos</span>
+                                  : <span className="badge bg-light text-dark border fw-normal">{nMod} módulo{nMod !== 1 ? 's' : ''}</span>}
+                              </td>
+                              <td className="text-end">
+                                <button className="btn btn-sm btn-outline-secondary me-1" title="Editar"
+                                  onClick={() => editarPuestoForm(p)}>
+                                  <i className="bi bi-pencil" />
+                                </button>
+                                <button className="btn btn-sm btn-outline-danger" title="Eliminar"
+                                  onClick={() => eliminarPuesto(p)}>
+                                  <i className="bi bi-trash" />
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </>
