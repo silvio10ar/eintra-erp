@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
 import DateInput from '../../components/DateInput'
+import CRM from '../crm/CRM'
 
 const fmtN = n => n != null ? new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n) : '—'
 const fmtF = s => s ? s.slice(0,10).split('-').reverse().join('/') : '—'
@@ -541,6 +542,7 @@ export default function Ventas() {
           { key: 'resumen',      icon: 'graph-up',          label: 'Resumen'       },
           { key: 'presupuestos', icon: 'file-earmark-text', label: 'Presupuestos'  },
           { key: 'clientes',     icon: 'people',            label: 'Clientes'      },
+          { key: 'crm',          icon: 'diagram-3',         label: 'CRM'           },
         ].map(t => (
           <li key={t.key} className="nav-item">
             <button className={`nav-link ${tab === t.key ? 'active' : ''}`}
@@ -702,6 +704,9 @@ export default function Ventas() {
           <div className="text-muted mt-2" style={{ fontSize: '0.8rem' }}>{clientes.length} clientes</div>
         </div>
       )}
+
+      {/* ═══════════════ CRM ═══════════════ */}
+      {tab === 'crm' && <CRM />}
 
       {/* ═══════════════ MODAL CLIENTE ═══════════════ */}
       {modalCli && (

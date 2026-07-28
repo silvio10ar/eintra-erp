@@ -286,13 +286,10 @@ export default function CRM() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div style={{ padding: '1.5rem' }}>
+    <div>
 
-      {/* Header */}
-      <div className="d-flex align-items-center justify-content-between mb-3">
-        <h4 className="mb-0" style={{ fontWeight: 700 }}>
-          <i className="bi bi-people me-2 text-primary" />CRM — Ventas
-        </h4>
+      {/* Acciones */}
+      <div className="d-flex align-items-center justify-content-end mb-3">
         <div className="d-flex gap-2">
           {tab !== 'empresas' && (
             <button className="btn btn-primary btn-sm" onClick={abrirNuevaCot}>

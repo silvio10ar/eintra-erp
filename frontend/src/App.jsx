@@ -17,7 +17,6 @@ import Materiales from './modules/compras/Materiales'
 import ConfiguracionSistema from './modules/administracion/ConfiguracionSistema'
 import Proyectos from './modules/proyectos/Proyectos'
 import Mensajes from './modules/mensajes/Mensajes'
-import CRM from './modules/crm/CRM'
 import Ventas from './modules/ventas/Ventas'
 import ImprimirPresupuesto from './modules/ventas/ImprimirPresupuesto'
 import OfertaTecnica from './modules/ventas/OfertaTecnica'
@@ -46,7 +45,7 @@ export default function App() {
             <Route path="/compras"     element={<Compras />} />
             <Route path="/ventas"      element={<Ventas />} />
             <Route path="/ventas/presupuesto/:id/oferta-tecnica" element={<OfertaTecnica />} />
-            <Route path="/crm"         element={<CRM />} />
+            <Route path="/crm"         element={<Navigate to="/ventas" replace />} />
             <Route path="/proyectos"   element={<Proyectos />} />
             <Route path="/produccion"  element={<Produccion />} />
             <Route path="/finanzas"    element={<Finanzas />} />
