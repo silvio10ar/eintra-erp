@@ -1,14 +1,120 @@
 'use strict'
 const express = require('express')
+const path    = require('path')
+const fs      = require('fs')
+const multer  = require('multer')
 const { db }  = require('../db/database')
 const { verificarToken, puede } = require('../middleware/auth')
 const { buscarCondicion } = require('../helpers/buscar')
 
 const router = express.Router()
 router.use(verificarToken)
-router.use(puede.leer('calidad'))
 
 const puedeE = req => !!req.permisos?.calidad?.escribir
+
+// ── Documentos de Calidad (control de documentos ISO 9001:2015, cláusula 7.5) ──
+// Sin gate de calidad.leer/escribir en las lecturas: la Política de Calidad, en
+// particular, tiene que poder consultarla cualquier empleado autenticado —
+// por eso estas rutas van antes del router.use(puede.leer('calidad')) de abajo,
+// que sí aplica al resto del módulo (hojas de ruta, no conformidades, etc).
+const backendRoot = path.resolve(__dirname, '..')
+const rawUploads   = process.env.UPLOADS_PATH || './uploads'
+const uploadsDir   = path.isAbsolute(rawUploads) ? rawUploads : path.resolve(backendRoot, rawUploads)
+const DOCS_DIR      = path.join(uploadsDir, 'documentos_calidad')
+fs.mkdirSync(DOCS_DIR, { recursive: true })
+
+const uploadDoc = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, DOCS_DIR),
+    filename: (req, file, cb) => {
+      const codigo = (req.params.codigo || req.body.codigo || 'DOC').replace(/[^A-Za-z0-9_-]/g, '')
+      const ext = path.extname(file.originalname) || '.pdf'
+      cb(null, `${codigo}_${Date.now()}${ext}`)
+    },
+  }),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = ['application/pdf', 'image/jpeg', 'image/png'].includes(file.mimetype)
+    cb(null, ok)
+  },
+})
+
+router.get('/documentos', (req, res) => {
+  const rows = db.prepare(`
+    SELECT d.*,
+      (SELECT COUNT(*) FROM documentos_calidad h WHERE h.codigo = d.codigo) - 1 AS revisiones_anteriores
+    FROM documentos_calidad d
+    WHERE d.estado = 'Vigente'
+    ORDER BY d.categoria, d.codigo
+  `).all()
+  res.json(rows)
+})
+
+router.get('/documentos/:codigo/historial', (req, res) => {
+  const rows = db.prepare(`
+    SELECT * FROM documentos_calidad WHERE codigo = ? ORDER BY revision DESC
+  `).all(req.params.codigo)
+  res.json(rows)
+})
+
+router.get('/documentos/:id/archivo', (req, res) => {
+  const doc = db.prepare('SELECT * FROM documentos_calidad WHERE id=?').get(req.params.id)
+  if (!doc) return res.status(404).json({ error: 'No encontrado' })
+  const full = path.join(DOCS_DIR, path.basename(doc.archivo_path))
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Archivo no encontrado en el servidor' })
+  res.download(full, doc.archivo_nombre_original || path.basename(full))
+})
+
+router.post('/documentos', uploadDoc.single('archivo'), (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const { codigo, titulo, categoria, aprobado_por, fecha_aprobacion, observaciones } = req.body
+  if (!codigo?.trim() || !titulo?.trim()) return res.status(400).json({ error: 'Código y título son requeridos' })
+  if (!req.file) return res.status(400).json({ error: 'Falta el archivo (PDF, JPG o PNG)' })
+  const existe = db.prepare('SELECT 1 FROM documentos_calidad WHERE codigo=?').get(codigo.trim())
+  if (existe) return res.status(409).json({ error: `Ya existe un documento con código "${codigo.trim()}"` })
+  const r = db.prepare(`
+    INSERT INTO documentos_calidad
+      (codigo,titulo,categoria,revision,archivo_path,archivo_nombre_original,aprobado_por,fecha_aprobacion,observaciones,created_by)
+    VALUES (?,?,?,0,?,?,?,?,?,?)
+  `).run(codigo.trim(), titulo.trim(), categoria || 'Procedimiento', req.file.filename,
+         req.file.originalname, aprobado_por || '', fecha_aprobacion || '', observaciones || '', req.usuario.id)
+  res.status(201).json({ id: r.lastInsertRowid })
+})
+
+router.post('/documentos/:codigo/revision', uploadDoc.single('archivo'), (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const vigente = db.prepare("SELECT * FROM documentos_calidad WHERE codigo=? AND estado='Vigente'").get(req.params.codigo)
+  if (!vigente) return res.status(404).json({ error: 'No existe un documento vigente con ese código' })
+  if (!req.file) return res.status(400).json({ error: 'Falta el archivo (PDF, JPG o PNG)' })
+  const { aprobado_por, fecha_aprobacion, observaciones, titulo, categoria } = req.body
+  const nuevaRev = vigente.revision + 1
+  const id = db.transaction(() => {
+    db.prepare("UPDATE documentos_calidad SET estado='Obsoleto' WHERE id=?").run(vigente.id)
+    const r = db.prepare(`
+      INSERT INTO documentos_calidad
+        (codigo,titulo,categoria,revision,archivo_path,archivo_nombre_original,aprobado_por,fecha_aprobacion,observaciones,documento_anterior_id,created_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `).run(vigente.codigo, titulo || vigente.titulo, categoria || vigente.categoria, nuevaRev,
+           req.file.filename, req.file.originalname, aprobado_por || '', fecha_aprobacion || '',
+           observaciones || '', vigente.id, req.usuario.id)
+    return r.lastInsertRowid
+  })()
+  res.status(201).json({ id, revision: nuevaRev })
+})
+
+router.put('/documentos/:id', (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const doc = db.prepare('SELECT * FROM documentos_calidad WHERE id=?').get(req.params.id)
+  if (!doc) return res.status(404).json({ error: 'No encontrado' })
+  const { titulo, categoria, aprobado_por, fecha_aprobacion, observaciones } = req.body
+  db.prepare(`
+    UPDATE documentos_calidad SET titulo=?,categoria=?,aprobado_por=?,fecha_aprobacion=?,observaciones=? WHERE id=?
+  `).run(titulo ?? doc.titulo, categoria ?? doc.categoria, aprobado_por ?? doc.aprobado_por,
+         fecha_aprobacion ?? doc.fecha_aprobacion, observaciones ?? doc.observaciones, req.params.id)
+  res.json({ ok: true })
+})
+
+router.use(puede.leer('calidad'))
 
 const ETAPAS_DEFAULT = [
   'Corte de materiales',
