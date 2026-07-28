@@ -8,7 +8,8 @@ const jwt = require('jsonwebtoken')
 
 // Pruebas de integración de punta a punta: levantan el server real contra una
 // base descartable (nunca la de desarrollo/producción) y lo apagan al terminar.
-const DB_PATH    = path.join(__dirname, '_test_api.db')
+const DB_PATH      = path.join(__dirname, '_test_api.db')
+const UPLOADS_PATH = path.join(__dirname, '_test_uploads')
 const PORT       = 3199
 const JWT_SECRET = 'test_secret_solo_para_pruebas'
 const BASE       = `http://localhost:${PORT}/api/v1`
@@ -23,13 +24,14 @@ function limpiarDb() {
   for (const ext of ['', '-wal', '-shm']) {
     try { fs.unlinkSync(DB_PATH + ext) } catch (_) {}
   }
+  try { fs.rmSync(UPLOADS_PATH, { recursive: true, force: true }) } catch (_) {}
 }
 
 before(async () => {
   limpiarDb()
   proc = spawn(process.execPath, ['server.js'], {
     cwd: path.resolve(__dirname, '..'),
-    env: { ...process.env, DB_PATH, JWT_SECRET, NODE_ENV: 'test', PORT: String(PORT) },
+    env: { ...process.env, DB_PATH, UPLOADS_PATH, JWT_SECRET, NODE_ENV: 'test', PORT: String(PORT) },
     stdio: 'pipe',
   })
   for (let i = 0; i < 40; i++) {
@@ -128,6 +130,58 @@ test('Mi Parte: un usuario sin permiso de rrhh/partes igual puede leer categoria
     const r = await fetch(`${BASE}/rrhh/${ruta}`, { headers: { Authorization: `Bearer ${t}` } })
     assert.equal(r.status, 200, `GET /rrhh/${ruta} debería ser 200 sin permiso de módulo`)
   }
+})
+
+test('control de documentos de calidad: crear, subir revision, historial y descarga', async () => {
+  const admin = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
+  const contenidoV0 = '%PDF-1.4 contenido rev0 de prueba'
+  const contenidoV1 = '%PDF-1.4 contenido rev1 corregido'
+
+  const fd0 = new FormData()
+  fd0.append('codigo', 'TEST-DOC')
+  fd0.append('titulo', 'Documento de prueba')
+  fd0.append('categoria', 'Procedimiento')
+  fd0.append('archivo', new Blob([contenidoV0], { type: 'application/pdf' }), 'v0.pdf')
+  const rCrear = await fetch(`${BASE}/calidad/documentos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}` }, body: fd0,
+  })
+  assert.equal(rCrear.status, 201)
+  const { id: idV0 } = await rCrear.json()
+
+  const fd1 = new FormData()
+  fd1.append('observaciones', 'corrección de prueba')
+  fd1.append('archivo', new Blob([contenidoV1], { type: 'application/pdf' }), 'v1.pdf')
+  const rRevision = await fetch(`${BASE}/calidad/documentos/TEST-DOC/revision`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}` }, body: fd1,
+  })
+  assert.equal(rRevision.status, 201)
+  const { id: idV1, revision } = await rRevision.json()
+  assert.equal(revision, 1)
+
+  const listado = await fetch(`${BASE}/calidad/documentos`, { headers: { Authorization: `Bearer ${admin}` } }).then(r => r.json())
+  const vigente = listado.find(d => d.codigo === 'TEST-DOC')
+  assert.equal(vigente.revision, 1)
+  assert.equal(vigente.revisiones_anteriores, 1)
+
+  const historial = await fetch(`${BASE}/calidad/documentos/TEST-DOC/historial`, { headers: { Authorization: `Bearer ${admin}` } }).then(r => r.json())
+  assert.equal(historial.find(h => h.id === idV0).estado, 'Obsoleto')
+  assert.equal(historial.find(h => h.id === idV1).estado, 'Vigente')
+
+  const archivo = await fetch(`${BASE}/calidad/documentos/${idV1}/archivo`, { headers: { Authorization: `Bearer ${admin}` } })
+  assert.equal(await archivo.text(), contenidoV1)
+
+  // Lectura abierta a cualquier autenticado, escritura sí requiere calidad.escribir
+  const sinPermiso = tok({ id: 999996, username: 'sin_calidad', nombre: 'Sin Calidad', rol: 'solo_lectura' })
+  const lecturaAbierta = await fetch(`${BASE}/calidad/documentos`, { headers: { Authorization: `Bearer ${sinPermiso}` } })
+  assert.equal(lecturaAbierta.status, 200)
+  const fdBloqueado = new FormData()
+  fdBloqueado.append('codigo', 'OTRO')
+  fdBloqueado.append('titulo', 'No debería crearse')
+  fdBloqueado.append('archivo', new Blob(['x'], { type: 'application/pdf' }), 'x.pdf')
+  const escrituraBloqueada = await fetch(`${BASE}/calidad/documentos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${sinPermiso}` }, body: fdBloqueado,
+  })
+  assert.equal(escrituraBloqueada.status, 403)
 })
 
 test('estructura organizacional: puesto con jerarquia y organigrama sin exponer permisos', async () => {

@@ -1588,6 +1588,29 @@ function inicializar() {
   try { db.prepare("ALTER TABLE hoja_ruta_etapa ADD COLUMN criterios TEXT DEFAULT ''").run() } catch {}
   try { db.prepare("ALTER TABLE hoja_ruta_etapa ADD COLUMN medicion  TEXT DEFAULT ''").run() } catch {}
 
+  // ── Control de documentos de Calidad (ISO 9001:2015, cláusula 7.5) ────────────
+  migrar('crear_documentos_calidad', () => {
+    db.exec(`
+      CREATE TABLE documentos_calidad (
+        id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+        codigo                  TEXT NOT NULL,
+        titulo                  TEXT NOT NULL,
+        categoria               TEXT NOT NULL DEFAULT 'Procedimiento' CHECK(categoria IN ('Manual','Política','Procedimiento','Instructivo','Registro')),
+        revision                INTEGER NOT NULL DEFAULT 0,
+        estado                  TEXT NOT NULL DEFAULT 'Vigente' CHECK(estado IN ('Vigente','Obsoleto')),
+        archivo_path            TEXT NOT NULL,
+        archivo_nombre_original TEXT DEFAULT '',
+        aprobado_por            TEXT DEFAULT '',
+        fecha_aprobacion        TEXT DEFAULT '',
+        observaciones           TEXT DEFAULT '',
+        documento_anterior_id   INTEGER REFERENCES documentos_calidad(id),
+        created_by              INTEGER REFERENCES usuarios(id),
+        created_at              TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX idx_doc_calidad_codigo ON documentos_calidad(codigo);
+    `)
+  })
+
   // ── Formularios de Calidad ─────────────────────────────────────────────────
   db.exec(`
     CREATE TABLE IF NOT EXISTS form21 (

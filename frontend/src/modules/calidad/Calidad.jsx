@@ -9,6 +9,7 @@ import FormCapacitacion from './FormCapacitacion'
 import FormEPP          from './FormEPP'
 import FormPackingList  from './FormPackingList'
 import FormChapaID      from './FormChapaID'
+import FormDocumentos   from './FormDocumentos'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -277,6 +278,7 @@ export default function Calidad() {
               { key: 'no_conformidades',  icon: 'exclamation-diamond', label: 'No Conformidades'  },
               { key: 'inspecciones',      icon: 'clipboard2-check',   label: 'Inspecciones'      },
               { key: 'formularios',       icon: 'journal-text',        label: 'Formularios'       },
+              { key: 'documentos',        icon: 'file-earmark-lock2',  label: 'Documentos'        },
             ].map(t => (
               <li key={t.key} className="nav-item">
                 <button className={`nav-link${tab === t.key ? ' active' : ''}`} onClick={() => setTab(t.key)}>
@@ -562,6 +564,13 @@ export default function Calidad() {
                 {subForm === 'packing' && <FormPackingList hojasList={hojasList} canWrite={canWrite} />}
                 {subForm === 'form37'  && <FormChapaID     hojasList={hojasList} canWrite={canWrite} />}
               </div>
+            </div>
+          )}
+
+          {/* ════ DOCUMENTOS DE CALIDAD ═══════════════════════════════════════ */}
+          {tab === 'documentos' && (
+            <div className="p-3">
+              <FormDocumentos canWrite={canWrite} />
             </div>
           )}
 
