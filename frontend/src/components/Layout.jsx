@@ -4,24 +4,31 @@ import { getUser, clearAuth, getPermisos, getToken } from '../store/authStore'
 import MiParte from './MiParte'
 import logo from '../assets/logo.avif'
 
+// Orden de las secciones tal como se muestran en el menú
+const GRUPOS_ORDEN = ['Comercial', 'Operaciones', 'Cadena de Suministro', 'Personas', 'Gerencia']
+
 const TODOS_LOS_ITEMS = [
-  // ── Dashboard (siempre primero) ────────────────────
-  { to: '/dashboard',      label: 'Dashboard',       icon: 'speedometer2',      modulo: null              },
-  // ── Módulos principales (orden alfabético) ─────────
-  { to: '/administracion', label: 'Administración',  icon: 'building-gear',     modulo: 'administracion'  },
-  { to: '/calidad',        label: 'Calidad',         icon: 'clipboard2-check',  modulo: 'calidad'         },
-  { to: '/compras',        label: 'Compras',         icon: 'cart3',             modulo: 'compras'         },
-  { to: '/materiales',     label: 'Materiales',      icon: 'boxes',             modulo: 'materiales',     padre: 'compras' },
-  { to: '/crm',            label: 'CRM',             icon: 'people',            modulo: 'ventas'          },
-  { to: '/finanzas',       label: 'Finanzas',        icon: 'cash-stack',        modulo: 'finanzas'        },
-  { to: '/mantenimiento',  label: 'Mantenimiento',   icon: 'wrench-adjustable', modulo: 'mantenimiento'   },
-  { to: '/mensajes',       label: 'Mensajes',        icon: 'envelope',          modulo: null              },
-  { to: '/produccion',     label: 'Producción',      icon: 'tools',             modulo: 'produccion'      },
-  { to: '/proyectos',      label: 'Proyectos',       icon: 'kanban',            modulo: 'proyectos'       },
-  { to: '/rrhh',           label: 'RRHH',            icon: 'people-fill',       modulo: 'rrhh'            },
-  { to: '/partes',         label: 'Partes',          icon: 'file-earmark-text', modulo: 'partes',         padre: 'rrhh'  },
-  { to: '/stock',          label: 'Stock',           icon: 'box-seam',          modulo: 'stock'           },
-  { to: '/ventas',         label: 'Ventas',          icon: 'briefcase',         modulo: 'ventas'          },
+  // ── Dashboard (siempre primero, sin sección) ───────
+  { to: '/dashboard',      label: 'Dashboard',       icon: 'speedometer2',      modulo: null,             grupo: null },
+  // ── Comercial ───────────────────────────────────────
+  { to: '/ventas',         label: 'Ventas',          icon: 'briefcase',         modulo: 'ventas',         grupo: 'Comercial' },
+  // ── Operaciones ─────────────────────────────────────
+  { to: '/proyectos',      label: 'Proyectos',       icon: 'kanban',           modulo: 'proyectos',      grupo: 'Operaciones' },
+  { to: '/produccion',     label: 'Producción',      icon: 'tools',            modulo: 'produccion',     grupo: 'Operaciones' },
+  { to: '/mantenimiento',  label: 'Mantenimiento',   icon: 'wrench-adjustable', modulo: 'mantenimiento', grupo: 'Operaciones' },
+  { to: '/calidad',        label: 'Calidad',         icon: 'clipboard2-check', modulo: 'calidad',        grupo: 'Operaciones' },
+  // ── Cadena de Suministro ────────────────────────────
+  { to: '/compras',        label: 'Compras',         icon: 'cart3',            modulo: 'compras',        grupo: 'Cadena de Suministro' },
+  { to: '/materiales',     label: 'Materiales',      icon: 'boxes',            modulo: 'materiales',     padre: 'compras' },
+  { to: '/codificacion',   label: 'Codificación',    icon: 'upc-scan',         modulo: 'codificacion',   padre: 'compras' },
+  { to: '/codificacion/futura', label: 'Codificación futura', icon: 'upc',     modulo: 'codificacion',   padre: 'compras' },
+  { to: '/stock',          label: 'Stock',           icon: 'box-seam',        modulo: 'stock',           grupo: 'Cadena de Suministro' },
+  // ── Personas ────────────────────────────────────────
+  { to: '/rrhh',           label: 'RRHH',            icon: 'people-fill',      modulo: 'rrhh',           grupo: 'Personas' },
+  { to: '/partes',         label: 'Partes',          icon: 'file-earmark-text', modulo: 'partes',        padre: 'rrhh'  },
+  // ── Gerencia (información sensible de la empresa) ──
+  { to: '/finanzas',       label: 'Finanzas',        icon: 'cash-stack',       modulo: 'finanzas',       grupo: 'Gerencia' },
+  { to: '/administracion', label: 'Administración',  icon: 'building-gear',    modulo: 'administracion', grupo: 'Gerencia' },
   // ── Sistema (solo admin) ───────────────────────────
   { to: '/configuracion',  label: 'Configuración',   icon: 'gear',              modulo: '__admin__'       },
   { to: '/usuarios',       label: 'Usuarios',        icon: 'people-gear',       modulo: '__admin__'       },
@@ -91,6 +98,48 @@ export default function Layout() {
     navigate('/login', { replace: true })
   }
 
+  const renderItem = item => {
+    const hijos      = NAV_ITEMS.filter(c => c.padre === item.modulo)
+    const tieneHijos = hijos.length > 0
+    const expandido  = expandidos.has(item.modulo)
+    return (
+      <div key={item.to}>
+        <div style={{ display: 'flex', alignItems: 'stretch' }}>
+          <NavLink to={item.to} className="nav-link" style={{ flex: 1, minWidth: 0 }}>
+            <i className={`bi bi-${item.icon}`} />
+            {item.label}
+          </NavLink>
+          {tieneHijos && (
+            <button
+              onClick={() => toggleExpand(item.modulo)}
+              title={expandido ? 'Contraer' : 'Expandir'}
+              style={{
+                background: 'none', border: 'none',
+                padding: '0 0.75rem', flexShrink: 0,
+                color: '#5a7090', cursor: 'pointer',
+                display: 'flex', alignItems: 'center',
+                transition: 'color 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.color = '#8b9ab0' }}
+              onMouseLeave={e => { e.currentTarget.style.color = '#5a7090' }}
+            >
+              <i className={`bi bi-chevron-${expandido ? 'down' : 'right'}`}
+                 style={{ fontSize: '0.72rem' }} />
+            </button>
+          )}
+        </div>
+        {tieneHijos && expandido && hijos.map(hijo => (
+          <NavLink key={hijo.to} to={hijo.to} className="nav-link"
+            style={{ paddingLeft: '2.25rem', fontSize: '0.82rem', opacity: 0.88 }}>
+            <span style={{ marginRight: '0.5rem', color: '#4a6080', fontSize: '0.7rem' }}>└</span>
+            <i className={`bi bi-${hijo.icon}`} />
+            {hijo.label}
+          </NavLink>
+        ))}
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex' }}>
       {/* ── Sidebar ─────────────────────────────────── */}
@@ -103,50 +152,15 @@ export default function Layout() {
         </div>
 
         <nav>
-          <div className="nav-section">Principal</div>
-          {topLevel.filter(i => i.modulo !== '__admin__').map(item => {
-            const hijos      = NAV_ITEMS.filter(c => c.padre === item.modulo)
-            const tieneHijos = hijos.length > 0
-            const expandido  = expandidos.has(item.modulo)
+          {topLevel.filter(i => !i.grupo && i.modulo !== '__admin__').map(item => renderItem(item))}
+
+          {GRUPOS_ORDEN.map(grupo => {
+            const items = topLevel.filter(i => i.grupo === grupo)
+            if (items.length === 0) return null
             return (
-              <div key={item.to}>
-                <div style={{ display: 'flex', alignItems: 'stretch' }}>
-                  <NavLink to={item.to} className="nav-link" style={{ flex: 1, minWidth: 0 }}>
-                    <i className={`bi bi-${item.icon}`} />
-                    {item.label}
-                    {item.to === '/mensajes' && msgCount > 0 && (
-                      <span className="badge bg-danger ms-1" style={{ fontSize: '0.62rem', verticalAlign: 'middle' }}>
-                        {msgCount}
-                      </span>
-                    )}
-                  </NavLink>
-                  {tieneHijos && (
-                    <button
-                      onClick={() => toggleExpand(item.modulo)}
-                      title={expandido ? 'Contraer' : 'Expandir'}
-                      style={{
-                        background: 'none', border: 'none',
-                        padding: '0 0.75rem', flexShrink: 0,
-                        color: '#5a7090', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center',
-                        transition: 'color 0.15s',
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.color = '#8b9ab0' }}
-                      onMouseLeave={e => { e.currentTarget.style.color = '#5a7090' }}
-                    >
-                      <i className={`bi bi-chevron-${expandido ? 'down' : 'right'}`}
-                         style={{ fontSize: '0.72rem' }} />
-                    </button>
-                  )}
-                </div>
-                {tieneHijos && expandido && hijos.map(hijo => (
-                  <NavLink key={hijo.to} to={hijo.to} className="nav-link"
-                    style={{ paddingLeft: '2.25rem', fontSize: '0.82rem', opacity: 0.88 }}>
-                    <span style={{ marginRight: '0.5rem', color: '#4a6080', fontSize: '0.7rem' }}>└</span>
-                    <i className={`bi bi-${hijo.icon}`} />
-                    {hijo.label}
-                  </NavLink>
-                ))}
+              <div key={grupo}>
+                <div className="nav-section" style={{ marginTop: '0.5rem' }}>{grupo}</div>
+                {items.map(item => renderItem(item))}
               </div>
             )
           })}
@@ -181,6 +195,16 @@ export default function Layout() {
             <span style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1a3a5c' }}>Sistema de Gestión E-INTRA</span>
           </div>
           <div className="d-flex align-items-center gap-3">
+            <button className="btn btn-sm btn-outline-secondary position-relative" title="Mensajes"
+              onClick={() => navigate('/mensajes')}>
+              <i className="bi bi-envelope" />
+              {msgCount > 0 && (
+                <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                  style={{ fontSize: '0.62rem' }}>
+                  {msgCount}
+                </span>
+              )}
+            </button>
             <button className="btn btn-sm btn-primary" onClick={() => setShowMiParte(true)}>
               <i className="bi bi-file-earmark-text me-1" />Mi Parte
             </button>
