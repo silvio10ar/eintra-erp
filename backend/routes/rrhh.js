@@ -361,7 +361,9 @@ router.delete('/empleado-puestos/:id', verificarToken, (req, res) => {
 });
 
 // ── Proyectos (vista de solo lectura desde módulo principal) ──────────────────
-router.get('/proyectos', verificarToken, leerRRHH, (req, res) => {
+// Sin gate de módulo: además de la pantalla de RRHH, la usa "Mi Parte" (autoservicio
+// de cualquier empleado) para elegir en qué proyecto cargó horas — no expone costos.
+router.get('/proyectos', verificarToken, (req, res) => {
   const rows = db.prepare(`
     SELECT p.id, p.codigo, p.nombre, p.estado, p.cliente_nombre,
            COALESCE((SELECT SUM(horas) FROM rrhh_registros r WHERE r.proyecto_id = p.id), 0) AS total_horas
@@ -379,7 +381,8 @@ try { db.exec(`ALTER TABLE rrhh_proyectos ADD COLUMN revisado INTEGER DEFAULT 0`
 try { db.exec(`CREATE TABLE IF NOT EXISTS rrhh_actividades (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, activo INTEGER DEFAULT 1)`) } catch {}
 try { db.exec(`ALTER TABLE rrhh_registros ADD COLUMN actividad_id INTEGER`) } catch {}
 
-router.get('/actividades', verificarToken, leerRRHHOParte, (req, res) => {
+// Sin gate de módulo por el mismo motivo que /proyectos: la usa "Mi Parte" de cualquier empleado.
+router.get('/actividades', verificarToken, (req, res) => {
   const rows = db.prepare(`SELECT * FROM rrhh_actividades ORDER BY activo DESC, nombre`).all();
   res.json(rows);
 });
@@ -432,7 +435,8 @@ router.post('/proyectos-legado/:id/conservar', verificarToken, (req, res) => {
 });
 
 // ── Categorías ────────────────────────────────────────────────────────────────
-router.get('/categorias', verificarToken, leerRRHHOParte, (req, res) => {
+// Sin gate de módulo por el mismo motivo que /proyectos: la usa "Mi Parte" de cualquier empleado.
+router.get('/categorias', verificarToken, (req, res) => {
   const rows = db.prepare(`SELECT * FROM rrhh_categorias WHERE activo=1 ORDER BY grupo, codigo`).all();
   res.json(rows);
 });

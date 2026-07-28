@@ -120,6 +120,16 @@ test('alta de factura de compra con Form49: queda todo o nada (transacción)', a
   assert.ok(body.f49_numero)
 })
 
+test('Mi Parte: un usuario sin permiso de rrhh/partes igual puede leer categorias/proyectos/actividades', async () => {
+  // Regresión: estas rutas alimentan el autoservicio "Mi Parte" de cualquier
+  // empleado y no deben depender del permiso de módulo rrhh/partes.
+  const t = tok({ id: 999998, username: 'sin_rrhh', nombre: 'Sin RRHH', rol: 'solo_lectura' })
+  for (const ruta of ['categorias', 'proyectos', 'actividades']) {
+    const r = await fetch(`${BASE}/rrhh/${ruta}`, { headers: { Authorization: `Bearer ${t}` } })
+    assert.equal(r.status, 200, `GET /rrhh/${ruta} debería ser 200 sin permiso de módulo`)
+  }
+})
+
 test('estructura organizacional: puesto con jerarquia y organigrama sin exponer permisos', async () => {
   const t = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
   const gerente = await fetch(`${BASE}/auth/puestos`, {

@@ -266,24 +266,6 @@ export default function Dashboard() {
             <i className="bi bi-grid me-1" />Accesos rápidos
           </p>
           <div className="row g-3 mb-4">
-            {/* Mi Parte */}
-            <div className="col-6 col-md-4">
-              <div className="card border-0 shadow-sm h-100"
-                style={{ cursor: 'pointer' }}
-                onClick={() => navigate('/partes')}
-                onMouseEnter={e => e.currentTarget.classList.add('shadow')}
-                onMouseLeave={e => e.currentTarget.classList.remove('shadow')}>
-                <div className="card-body text-center py-4 px-3">
-                  <div className="rounded-circle bg-primary bg-opacity-10 d-inline-flex align-items-center justify-content-center mb-3"
-                    style={{ width: 56, height: 56 }}>
-                    <i className="bi bi-clipboard2-check text-primary" style={{ fontSize: '1.5rem' }} />
-                  </div>
-                  <div className="fw-semibold mb-1">Mi Parte</div>
-                  <div className="text-muted" style={{ fontSize: '0.82rem' }}>Cargar horas del día</div>
-                </div>
-              </div>
-            </div>
-
             {/* Proyectos */}
             {tieneAcceso('proyectos') && (
               <div className="col-6 col-md-4">
