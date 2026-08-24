@@ -1,21 +1,22 @@
 import { useState, useEffect } from 'react'
 import api from '../api/client'
 
-let _cache = null
-
+// Sin caché entre pantallas a propósito: una lista compartida por toda la app
+// que solo se pide una vez por sesión queda desactualizada en cuanto alguien
+// da de alta, edita o da de baja un empleado en RRHH. El endpoint es liviano
+// (solo id + nombre), así que pedirlo de nuevo en cada pantalla no pesa.
 export function useEmpleados() {
-  const [empleados, setEmpleados] = useState(_cache || [])
+  const [empleados, setEmpleados] = useState([])
 
   useEffect(() => {
-    if (_cache) return
-    api.get('/rrhh/empleados')
+    api.get('/rrhh/empleados-basico')
       .then(r => {
-        _cache = (Array.isArray(r.data) ? r.data : [])
+        const lista = (Array.isArray(r.data) ? r.data : [])
           .filter(e => e.activo !== 0)
           .sort((a, b) => a.nombre.localeCompare(b.nombre))
-        setEmpleados(_cache)
+        setEmpleados(lista)
       })
-      .catch(() => {})
+      .catch(e => console.error(e))
   }, [])
 
   return { empleados }

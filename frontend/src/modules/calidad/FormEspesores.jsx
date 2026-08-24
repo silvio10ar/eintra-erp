@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -152,7 +153,7 @@ export default function FormEspesores({ hojasList = [], canWrite }) {
                           {med[cara].map((v, i) => (
                             <div key={i} style={{ width: 70 }}>
                               <label className="form-label mb-0 text-muted" style={{ fontSize: '0.7rem' }}>Pt. {i+1}</label>
-                              <input type="number" className="form-control form-control-sm text-center p-1" style={{ fontSize: '0.78rem' }} value={v} onChange={e => setMedPoint(cara, i, e.target.value)} />
+                              <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm text-center p-1" style={{ fontSize: '0.78rem' }} value={v} onChange={e => setMedPoint(cara, i, e.target.value)} />
                             </div>
                           ))}
                         </div>

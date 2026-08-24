@@ -3,6 +3,9 @@ import api from '../../api/client'
 import { getUser, puedeEscribir } from '../../store/authStore'
 import DateInput from '../../components/DateInput'
 import { fmtHorasDecimal as fmtH } from '../../utils/horas'
+import { AREAS as GRUPOS, COLOR_AREA as COLOR_GRUPO } from '../../utils/areas'
+import { hoyLocal, fechaLocalHace } from '../../utils/fecha'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 function fmtCod(c) {
   if (!c) return ''
@@ -25,30 +28,18 @@ function calcHoras(ini, fin) {
   return mins > 0 ? +(mins / 60).toFixed(2) : null
 }
 
-const GRUPOS = [
-  { grupo: 'Granallado',             color: '#6c757d' },
-  { grupo: 'Mano de obra Herreria',  color: '#795548' },
-  { grupo: 'Terminaciones y Montaje',color: '#dc3545' },
-  { grupo: 'Electrico',              color: '#0d6efd' },
-  { grupo: 'Infraestructura',        color: '#198754' },
-  { grupo: 'Ingenieria',             color: '#6f42c1' },
-  { grupo: 'General',                color: '#20c997' },
-]
-
-const COLOR_GRUPO = Object.fromEntries(GRUPOS.map(g => [g.grupo, g.color]))
-
 export default function Partes() {
   const user         = getUser()
   const canManageAll = user?.rol === 'admin' || puedeEscribir('rrhh') || puedeEscribir('partes')
 
-  const [tab, setTab] = useState('cargar')
+  const [tab, setTab] = useState(canManageAll ? 'cargar' : 'semana')
 
   const [categorias,       setCategorias]       = useState([])
   const [empleados,        setEmpleados]        = useState([])
   const [proyectosLista,   setProyectosLista]   = useState([])
   const [actividadesLista, setActividadesLista] = useState([])
   const [parteEmp,    setParteEmp]    = useState(canManageAll ? '' : (user?.rrhh_empleado_id ? String(user.rrhh_empleado_id) : ''))
-  const [parteDate,   setParteDate]   = useState(new Date().toISOString().split('T')[0])
+  const [parteDate,   setParteDate]   = useState(hoyLocal())
   const [parteFilas,  setParteFilas]  = useState([])
   const [savingParte, setSavingParte] = useState(false)
 
@@ -70,12 +61,12 @@ export default function Partes() {
     Promise.allSettled([
       api.get('/rrhh/categorias'),
       api.get('/rrhh/empleados'),
-      api.get('/proyectos?estado=Activo'),
+      api.get('/rrhh/proyectos'),
       api.get('/rrhh/actividades'),
     ]).then(([c, e, p, a]) => {
       if (c.status === 'fulfilled') setCategorias(c.value.data)
       if (e.status === 'fulfilled') setEmpleados(e.value.data.filter(x => x.activo))
-      if (p.status === 'fulfilled') setProyectosLista(p.value.data)
+      if (p.status === 'fulfilled') setProyectosLista(p.value.data.filter(x => x.estado === 'Activo'))
       if (a.status === 'fulfilled') setActividadesLista(a.value.data.filter(x => x.activo))
     })
   }, [])
@@ -84,7 +75,7 @@ export default function Partes() {
     setLoadingSemana(true)
     api.get(`/rrhh/partes/semana?dias=${diasVer}`)
       .then(r => setSemana(r.data))
-      .catch(() => {})
+      .catch(e => console.error(e))
       .finally(() => setLoadingSemana(false))
   }
 
@@ -97,9 +88,8 @@ export default function Partes() {
   // ── Tab: Últimos 7 días (listado plano para detectar/corregir partes mal hechos) ──
   function cargarUltimos7() {
     setLoading7(true)
-    const hasta = new Date().toISOString().slice(0, 10)
-    const d = new Date(); d.setDate(d.getDate() - (diasVer - 1))
-    const desde = d.toISOString().slice(0, 10)
+    const hasta = hoyLocal()
+    const desde = fechaLocalHace(diasVer - 1)
     api.get('/rrhh/registros', { params: { desde, hasta } })
       .then(r => setRegs7(r.data))
       .catch(() => setRegs7([]))
@@ -159,7 +149,7 @@ export default function Partes() {
         r.data.forEach(p => { exp[p.id] = true })
         setProyExpanded(exp)
       })
-      .catch(() => {})
+      .catch(e => console.error(e))
       .finally(() => setLoadingProy(false))
   }, [tab, diasProy])
 
@@ -203,7 +193,7 @@ export default function Partes() {
   async function guardarParte() {
     if (!parteEmp)  { alert('Seleccioná un empleado'); return }
     if (!parteDate) { alert('Seleccioná una fecha');   return }
-    const hoy = new Date().toISOString().slice(0, 10)
+    const hoy = hoyLocal()
     if (parteDate > hoy) { alert('La fecha no puede ser posterior a hoy'); return }
     const validas = parteFilas.filter(f => f.cat_id && f.ini && f.fin && parseFloat(f.horas) > 0)
     if (validas.length === 0) {
@@ -642,15 +632,17 @@ export default function Partes() {
                     <td className="text-truncate" style={{ maxWidth: 160 }} title={r.proyecto_nombre}>{r.proyecto_nombre || '—'}</td>
                     <td className="text-truncate" style={{ maxWidth: 160 }} title={r.descripcion}>{r.descripcion || '—'}</td>
                     <td className="text-nowrap">
-                      <button className="btn btn-sm btn-outline-primary py-0 me-1" onClick={() => setModalReg7({
-                        ...r,
-                        asignacion: r.actividad_id ? `a:${r.actividad_id}` : r.proyecto_id ? `p:${r.proyecto_id}` : '',
-                      })}>
-                        <i className="bi bi-pencil" />
-                      </button>
-                      <button className="btn btn-sm btn-outline-danger py-0" onClick={() => eliminarReg7(r.id)}>
-                        <i className="bi bi-trash" />
-                      </button>
+                      {canManageAll && <>
+                        <button className="btn btn-sm btn-outline-primary py-0 me-1" onClick={() => setModalReg7({
+                          ...r,
+                          asignacion: r.actividad_id ? `a:${r.actividad_id}` : r.proyecto_id ? `p:${r.proyecto_id}` : '',
+                        })}>
+                          <i className="bi bi-pencil" />
+                        </button>
+                        <button className="btn btn-sm btn-outline-danger py-0" onClick={() => eliminarReg7(r.id)}>
+                          <i className="bi bi-trash" />
+                        </button>
+                      </>}
                     </td>
                   </tr>
                 ))}
@@ -744,7 +736,7 @@ export default function Partes() {
                     </div>
                     <div className="col-md-4">
                       <label className="form-label fw-semibold">Horas *</label>
-                      <input type="number" className="form-control form-control-sm" step="0.01" min="0" max="24"
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" step="0.01" min="0" max="24"
                         value={modalReg7.horas || ''} onChange={e => setModalReg7(x => ({ ...x, horas: e.target.value }))} />
                     </div>
                     <div className="col-12">
@@ -905,7 +897,7 @@ export default function Partes() {
           { id: 'semana',    icon: 'calendar3',          label: 'Estado 7 días' },
           { id: 'ultimos7',  icon: 'list-check',         label: 'Corregir partes' },
           { id: 'proyectos', icon: 'kanban',              label: 'Proyectos' },
-        ].map(t => (
+        ].filter(t => canManageAll || t.id === 'semana').map(t => (
           <li key={t.id} className="nav-item">
             <button className={`nav-link ${tab === t.id ? 'active' : ''}`}
               onClick={() => setTab(t.id)}>
@@ -915,10 +907,10 @@ export default function Partes() {
         ))}
       </ul>
 
-      {tab === 'cargar'    && TabCargar()}
+      {tab === 'cargar'    && canManageAll && TabCargar()}
       {tab === 'semana'    && TabSemana()}
-      {tab === 'ultimos7'  && TabUltimos7()}
-      {tab === 'proyectos' && TabProyectos()}
+      {tab === 'ultimos7'  && canManageAll && TabUltimos7()}
+      {tab === 'proyectos' && canManageAll && TabProyectos()}
     </div>
   )
 }

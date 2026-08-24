@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import ExcelJS from 'exceljs'
 import api from '../../api/client'
 import { puedeEscribir, getUser } from '../../store/authStore'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
 import DateInput from '../../components/DateInput'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -101,7 +101,7 @@ export default function Mantenimiento() {
   // ══════════════════════════════════════════════════════════════════════════
 
   useEffect(() => {
-    api.get('/mantenimiento/meta').then(r => setMeta(r.data)).catch(() => {})
+    api.get('/mantenimiento/meta').then(r => setMeta(r.data)).catch(e => console.error(e))
   }, [])
 
   const cargarDashboard = useCallback(() => {
@@ -168,7 +168,7 @@ export default function Mantenimiento() {
   }
 
   function verDetalleEquipo(eq) {
-    api.get(`/mantenimiento/equipos/${eq.id}/perfil`).then(r => setPerfilEquipo(r.data)).catch(() => {})
+    api.get(`/mantenimiento/equipos/${eq.id}/perfil`).then(r => setPerfilEquipo(r.data)).catch(e => console.error(e))
   }
 
   async function guardarEquipo() {
@@ -227,6 +227,9 @@ export default function Mantenimiento() {
   }
 
   async function exportarExcel() {
+    // Carga diferida: exceljs pesa ~900KB, no tiene sentido bajarlo hasta que
+    // alguien realmente aprieta "Exportar a Excel".
+    const { default: ExcelJS } = await import('exceljs')
     const fechaHoy = new Date().toLocaleDateString('es-AR')
     const selAlerts = alertas.filter(a => selectedEquipos.has(a.equipo_id))
 
@@ -287,7 +290,7 @@ export default function Mantenimiento() {
     if (txt.length < 2) { setSugsEq([]); return }
     api.get('/mantenimiento/equipos', { params: { buscar: txt } })
       .then(r => setSugsEq(r.data.filter(e => e.estado !== 'baja').slice(0, 6)))
-      .catch(() => {})
+      .catch(e => console.error(e))
   }
 
   async function guardarCorrectiva() {
@@ -1066,7 +1069,7 @@ export default function Mantenimiento() {
                   <td><span className={`badge bg-${BADGE_RESULTADO[c.resultado]||'secondary'}`}>{c.resultado}</span></td>
                   <td className="text-center">
                     <button className="btn btn-sm btn-outline-info py-0" title="Ver ficha del equipo"
-                      onClick={() => api.get(`/mantenimiento/equipos/${c.equipo_id}/perfil`).then(r => setPerfilEquipo(r.data)).catch(() => {})}>
+                      onClick={() => api.get(`/mantenimiento/equipos/${c.equipo_id}/perfil`).then(r => setPerfilEquipo(r.data)).catch(e => console.error(e))}>
                       <i className="bi bi-info-circle" />
                     </button>
                   </td>
@@ -1214,7 +1217,7 @@ export default function Mantenimiento() {
                     )}
                     <div className="col-md-4">
                       <label className="form-label">Costo (ARS)</label>
-                      <input type="number" className="form-control" value={formCierre.costo} onChange={e => setFormCierre(f => ({ ...f, costo: e.target.value }))} />
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control" value={formCierre.costo} onChange={e => setFormCierre(f => ({ ...f, costo: e.target.value }))} />
                     </div>
                     <div className="col-md-8">
                       <label className="form-label">Repuestos usados</label>
@@ -1560,7 +1563,7 @@ export default function Mantenimiento() {
                             </div>
                             <div className="col-md-3">
                               <label className="form-label small fw-medium">Días</label>
-                              <input type="number" className="form-control form-control-sm"
+                              <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm"
                                 value={formTarea.frecuencia_dias}
                                 min={0}
                                 onChange={e => setFormTarea(f => ({ ...f, frecuencia_dias: parseInt(e.target.value) || 0 }))} />

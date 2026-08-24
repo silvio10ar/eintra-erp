@@ -4,6 +4,7 @@ const { body, validationResult } = require('express-validator')
 const { db }  = require('../db/database')
 const { verificarToken } = require('../middleware/auth')
 const { buscarCondicion } = require('../helpers/buscar')
+const { hoyArgentina } = require('../helpers/fecha')
 
 const router = express.Router()
 
@@ -181,11 +182,16 @@ router.put('/:id', verificarToken, (req, res) => {
   const p = db.prepare('SELECT * FROM proyectos WHERE id=?').get(req.params.id)
   if (!p) return res.status(404).json({ error: 'No encontrado' })
   const { codigo, nombre, cliente_id, cliente_nombre, descripcion, fecha_inicio, fecha_fin_est, fecha_cierre, estado, presupuesto_venta, responsable } = req.body
-  db.prepare(`UPDATE proyectos SET codigo=?,nombre=?,cliente_id=?,cliente_nombre=?,descripcion=?,fecha_inicio=?,fecha_fin_est=?,fecha_cierre=?,estado=?,presupuesto_venta=?,responsable=?,updated_at=datetime('now','localtime') WHERE id=?`)
-    .run(codigo ?? p.codigo, nombre ?? p.nombre, cliente_id ?? p.cliente_id, cliente_nombre ?? p.cliente_nombre,
-         descripcion ?? p.descripcion, fecha_inicio ?? p.fecha_inicio, fecha_fin_est ?? p.fecha_fin_est,
-         fecha_cierre ?? p.fecha_cierre, estado ?? p.estado, presupuesto_venta ?? p.presupuesto_venta,
-         responsable ?? p.responsable, req.params.id)
+  try {
+    db.prepare(`UPDATE proyectos SET codigo=?,nombre=?,cliente_id=?,cliente_nombre=?,descripcion=?,fecha_inicio=?,fecha_fin_est=?,fecha_cierre=?,estado=?,presupuesto_venta=?,responsable=?,updated_at=datetime('now','localtime') WHERE id=?`)
+      .run(codigo ?? p.codigo, nombre ?? p.nombre, cliente_id ?? p.cliente_id, cliente_nombre ?? p.cliente_nombre,
+           descripcion ?? p.descripcion, fecha_inicio ?? p.fecha_inicio, fecha_fin_est ?? p.fecha_fin_est,
+           fecha_cierre ?? p.fecha_cierre, estado ?? p.estado, presupuesto_venta ?? p.presupuesto_venta,
+           responsable ?? p.responsable, req.params.id)
+  } catch(e) {
+    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'El código ya existe' })
+    throw e
+  }
   res.json(db.prepare('SELECT * FROM proyectos WHERE id=?').get(req.params.id))
 })
 
@@ -197,7 +203,7 @@ router.post('/:id/costos', verificarToken, (req, res) => {
   const precio = parseFloat(precio_unit) || 0
   const r = db.prepare('INSERT INTO proyecto_costos (proyecto_id,tipo,descripcion,cantidad,precio_unit,total,fecha,origen,created_by) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(req.params.id, tipo || 'Material', descripcion || '', cant, precio, cant * precio,
-         fecha || new Date().toISOString().slice(0, 10), 'manual', req.usuario.id)
+         fecha || hoyArgentina(), 'manual', req.usuario.id)
   res.status(201).json(db.prepare('SELECT * FROM proyecto_costos WHERE id=?').get(r.lastInsertRowid))
 })
 

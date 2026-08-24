@@ -1,9 +1,49 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
-import { puedeEscribir } from '../../store/authStore'
+import { puedeEscribir, getToken } from '../../store/authStore'
 import DateInput from '../../components/DateInput'
+import SelectorColumnas from '../../components/SelectorColumnas'
+import { useColumnasOcultas } from '../../hooks/useColumnasOcultas'
 import FinanzasDashboard from './FinanzasDashboard'
 import FinanzasOCClientes from './FinanzasOCClientes'
+import { estadoFila, ESTADO_LABEL, pctFacturado, pctCobrado, diasAtrasoOC } from './estadoOCClientes'
+import { hoyLocal } from '../../utils/fecha'
+import { formatCuit } from '../../utils/cuit'
+import { manejarPegadoNumero } from '../../utils/numero'
+
+// Columnas ocultables de las tablas más anchas — en pantallas chicas obligaban
+// a scrollear mucho para llegar a las últimas. El usuario elige cuáles ver;
+// queda guardado por navegador (useColumnasOcultas).
+const COLS_FACT_COMPRA = [
+  { key: 'fecha', label: 'Fecha' }, { key: 'tipo', label: 'Tipo' },
+  { key: 'numero', label: 'N° Factura' }, { key: 'proveedor', label: 'Proveedor' },
+  { key: 'cuit', label: 'CUIT' }, { key: 'neto', label: 'Neto Grav.' },
+  { key: 'no_grav', label: 'No Grav/Exento' }, { key: 'iva21', label: 'IVA 21%' },
+  { key: 'iva105', label: 'IVA 10.5%' }, { key: 'iva27', label: 'IVA 27%' },
+  { key: 'otros_imp', label: 'Otros Imp.' }, { key: 'perc_iva', label: 'Perc. IVA' },
+  { key: 'perc_iibb', label: 'Perc. IIBB' }, { key: 'total', label: 'Total' },
+  { key: 'observaciones', label: 'Observaciones' }, { key: 'pago', label: 'Pago' },
+]
+
+const COLS_FACT_VENTA = [
+  { key: 'fecha', label: 'Fecha' }, { key: 'tipo', label: 'Tipo' },
+  { key: 'numero', label: 'N° Factura' }, { key: 'cliente', label: 'Cliente' },
+  { key: 'cuit', label: 'CUIT' }, { key: 'concepto', label: 'Concepto' },
+  { key: 'oc', label: 'OC' }, { key: 'neto', label: 'Neto Grav.' },
+  { key: 'iva', label: 'IVA' }, { key: 'total', label: 'Total Fact.' },
+  { key: 'total_cobrado', label: 'Total Cobrado' }, { key: 'f_pago', label: 'F. Pago' },
+  { key: 'cobro', label: 'Cobro' },
+]
+
+const COLS_SEG_COMPRAS = [
+  { key: 'oc', label: 'OC' }, { key: 'proveedor', label: 'Proveedor' },
+  { key: 'fecha', label: 'Fecha' }, { key: 'entrega', label: 'Entrega est.' },
+  { key: 'recepcion', label: 'Recepción' }, { key: 'neto', label: 'Neto OC' },
+  { key: 'facturacion', label: 'Facturación' }, { key: 'pct_facturado', label: '% Facturado' },
+  { key: 'pago', label: 'Pago' }, { key: 'pct_pagado', label: '% Pagado' },
+  { key: 'ultima_factura', label: 'Última factura' },
+]
 
 const fmtF = s => {
   if (!s) return '—'
@@ -18,17 +58,45 @@ const fmtM = (n, mon) => {
   return sym + v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+// Si la moneda de la factura ya es PESO, `importe` YA está en pesos (ej. una
+// factura vinculada a una OC en dólares guarda el neto convertido, pero
+// conserva la tasa_cambio de la OC como referencia) — multiplicar de nuevo
+// por esa tasa duplica la conversión. Solo corresponde convertir cuando la
+// factura está realmente en moneda extranjera.
+const totalEnPesos = f => {
+  const esPeso = f.moneda === 'PESO' || f.moneda === 'PESOS' || !f.moneda
+  return esPeso ? (parseFloat(f.importe) || 0) : (parseFloat(f.importe) || 0) * (parseFloat(f.tasa_cambio) || 1)
+}
+
+// Mismo criterio que totalEnPesos, pero para una OC de compras (el monto
+// viene en `total_usd`, que pese al nombre está en la moneda propia de la OC).
+// `tc_resuelto` (calculado en el backend) ya resuelve el TC con el mismo
+// fallback que usa Control OC (manual → tipo_cambio del sistema a la fecha
+// de la OC → tasa_cambio propia) — muchas OC viejas quedaron con
+// tasa_cambio=0 y sin ese fallback no había forma de convertirlas.
+const ocTcValido    = oc => oc.moneda === 'PESO' || oc.moneda === 'PESOS' || !oc.moneda || (parseFloat(oc.tc_resuelto) || 0) > 0
+const ocTotalPesos  = oc => {
+  const esPeso = oc.moneda === 'PESO' || oc.moneda === 'PESOS' || !oc.moneda
+  const total = parseFloat(oc.total_usd) || 0
+  return esPeso ? total : total * (parseFloat(oc.tc_resuelto) || 0)
+}
+
 const MONEDAS = ['PESO', 'DÓLAR', 'EURO']
+// Renderizar miles de filas de una sola vez en el DOM es lo que hacía lenta
+// la pantalla (medido: ~4s solo de render con listas históricas grandes) —
+// se sigue trayendo todo el listado filtrado del servidor (los conteos/badges
+// no cambian), pero en pantalla se pagina de a PAGE_SIZE filas por vez.
+const PAGE_SIZE = 50
 
 const esNC = tipo => typeof tipo === 'string' && tipo.startsWith('NC')
 
-const FORM_PAGO = { tipo: 'parcial', forma_pago: 'transferencia', entidad: '', importe: '', moneda: 'PESO', fecha: new Date().toISOString().slice(0,10), fecha_acreditacion: '', observaciones: '', ret_iibb: '', ret_iva: '', ret_gcia: '', ret_contratista: '', ret_ss: '' }
+const FORM_PAGO = { tipo: 'parcial', forma_pago: 'transferencia', entidad: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha: hoyLocal(), fecha_acreditacion: '', observaciones: '', ret_iibb: '', ret_iva: '', ret_gcia: '', ret_contratista: '', ret_ss: '' }
 
 const FORMAS_PAGO = ['transferencia','cheque','cheque_diferido','e-cheq','efectivo','deposito']
 const TIPOS_PAGO  = ['anticipo','parcial','final']
 
-const FORM_C = { tipo_factura: 'A', numero: '', fecha: '', proveedor_id: '', proveedor_nombre: '', cuit: '', oc_id: '', oc_numero: '', neto_gravado: '', no_grav_exento: '', iva_21: '', iva_10_5: '', iva_27: '', otros_imp: '', perc_iva: '', perc_iibb: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha_vencimiento: '', observaciones: '' }
-const FORM_V = { tipo_factura: 'A', numero: '', fecha: '', cliente_id: '', cliente_nombre: '', presupuesto_id: '', presupuesto_ref: '', concepto: '', oc: '', oc_pct: '', proyecto_id: '', proyecto: '', neto_gravado: '', iva_21: '', ret_iibb: '', ret_iva: '', ret_gcia: '', ret_contratista: '', ret_ss: '', dif_cambio: '', total_cobrado: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha_vencimiento: '', fecha_pago: '', observaciones: '' }
+const FORM_C = { tipo_factura: 'A', numero: '', fecha: '', proveedor_id: '', proveedor_nombre: '', cuit: '', oc_id: '', oc_numero: '', neto_gravado: '', no_grav_exento: '', iva_21: '', iva_10_5: '', iva_27: '', otros_imp: '', perc_iva: '', perc_iibb: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha_vencimiento: '', observaciones: '', nc_factura_id: '' }
+const FORM_V = { tipo_factura: 'A', numero: '', fecha: '', cliente_id: '', cliente_nombre: '', presupuesto_id: '', presupuesto_ref: '', concepto: '', oc: '', oc_pct: '', proyecto_id: '', proyecto: '', neto_gravado: '', iva_21: '', iva_10_5: '', ret_iibb: '', ret_iva: '', ret_gcia: '', ret_contratista: '', ret_ss: '', dif_cambio: '', total_cobrado: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha_vencimiento: '', fecha_pago: '', observaciones: '', nc_factura_id: '' }
 
 function ProyectoSelector({ value, onChange }) {
   const [query,   setQuery]   = useState(value || '')
@@ -53,13 +121,32 @@ function ProyectoSelector({ value, onChange }) {
     onChange(p)
   }
 
+  // No toda factura corresponde a un proyecto (abonos mensuales, ventas
+  // generales) — hace falta poder sacarlo, no solo cambiarlo por otro.
+  const quitar = () => {
+    setQuery('')
+    setAbierto(false)
+    onChange(null)
+  }
+
+  // Si se tipeó algo sin elegir una opción de la lista, se descarta al salir
+  // del campo (evita que un texto de búsqueda a medio escribir borre el
+  // proyecto ya guardado) — para vaciarlo de verdad está el botón "Quitar".
+  const cancelarTexto = () => setTimeout(() => { setAbierto(false); setQuery(value || '') }, 180)
+
   return (
-    <div className="position-relative">
+    <div className="position-relative d-flex gap-1">
       <input className="form-control form-control-sm" value={query}
         placeholder="Buscar por código o nombre de proyecto..."
         onChange={e => buscar(e.target.value)}
-        onBlur={() => setTimeout(() => setAbierto(false), 180)}
+        onBlur={cancelarTexto}
         autoComplete="off" />
+      {value && (
+        <button type="button" className="btn btn-sm btn-outline-secondary flex-shrink-0" title="Quitar proyecto"
+          onMouseDown={e => e.preventDefault()} onClick={quitar}>
+          <i className="bi bi-x" />
+        </button>
+      )}
       {abierto && opciones.length > 0 && (
         <div className="border rounded bg-white shadow-sm position-absolute w-100" style={{ zIndex: 1080, top: '100%', maxHeight: 220, overflowY: 'auto' }}>
           {opciones.map(p => (
@@ -153,8 +240,167 @@ function OcClienteSelector({ value, onChange }) {
   )
 }
 
+const OC_PENDIENTE_COMPRA = { id: '', numero: 'PENDIENTE' }
+
+// Mismo patrón que OcClienteSelector (buscar + opción PENDIENTE), pero contra
+// la lista de Órdenes de Compra a proveedores ya cargada en `ocs` (filtro en
+// el cliente, no hace falta pedirle al server en cada tecla como con OC Clientes).
+function OcCompraSelector({ value, ocs, onChange, disabled }) {
+  const [query,   setQuery]   = useState(value || '')
+  const [abierto, setAbierto] = useState(false)
+
+  useEffect(() => { setQuery(value || '') }, [value])
+
+  const q = query.trim().toLowerCase()
+  const opciones = (q
+    ? ocs.filter(o => o.numero.toLowerCase().includes(q) || (o.proveedor_nombre || '').toLowerCase().includes(q))
+    : ocs
+  ).slice(0, 12)
+
+  const seleccionar = oc => { setQuery(oc.numero); setAbierto(false); onChange(oc) }
+  const cancelarTexto = () => setTimeout(() => { setAbierto(false); setQuery(value || '') }, 180)
+
+  return (
+    <div className="position-relative">
+      <input className="form-control form-control-sm" value={query} disabled={disabled}
+        placeholder={disabled ? 'Elegí un proveedor primero...' : 'Buscar OC por número o proveedor...'}
+        onChange={e => { setQuery(e.target.value); setAbierto(true) }}
+        onFocus={() => !disabled && setAbierto(true)}
+        onBlur={cancelarTexto}
+        autoComplete="off" />
+      {abierto && !disabled && (
+        <div className="border rounded bg-white shadow-sm position-absolute w-100" style={{ zIndex: 1080, top: '100%', maxHeight: 260, overflowY: 'auto' }}>
+          <div className="px-2 py-1 border-bottom" style={{ cursor: 'pointer', fontSize: '0.83rem', background: '#fff8e6' }}
+            onMouseDown={() => seleccionar(OC_PENDIENTE_COMPRA)}>
+            <i className="bi bi-exclamation-circle me-1 text-warning" />
+            <span className="fw-semibold">PENDIENTE</span>
+            <span className="text-muted ms-2" style={{ fontSize: '0.72rem' }}>— completar después</span>
+          </div>
+          {opciones.length === 0 ? (
+            <div className="text-muted text-center py-2" style={{ fontSize: '0.75rem' }}>Sin OC que coincidan</div>
+          ) : opciones.map(o => {
+            const esPesoOC = o.moneda === 'PESO' || o.moneda === 'PESOS' || !o.moneda
+            return (
+              <div key={o.id} className="px-2 py-1 border-bottom" style={{ cursor: 'pointer', fontSize: '0.83rem' }}
+                onMouseDown={() => seleccionar(o)}>
+                <div>
+                  <span className="fw-semibold text-primary">{o.numero}</span>
+                  <span className="text-muted ms-2" style={{ fontSize: '0.75rem' }}>{o.proveedor_nombre}</span>
+                  <span className="text-muted ms-2" style={{ fontSize: '0.72rem' }}>{fmtF(o.fecha)}</span>
+                </div>
+                <div style={{ fontSize: '0.72rem' }}>
+                  {esPesoOC ? (
+                    <span className="text-muted">{fmtM(o.total_usd, 'PESO')}</span>
+                  ) : ocTcValido(o) ? (
+                    <span className="text-muted">{fmtM(o.total_usd, o.moneda)} · {fmtM(ocTotalPesos(o), 'PESO')}</span>
+                  ) : (
+                    <span className="text-danger" title="Sin tasa de cambio cargada en la OC">
+                      <i className="bi bi-exclamation-triangle-fill me-1" />{fmtM(o.total_usd, o.moneda)} (sin TC)
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Buscador de la factura que una Nota de Crédito anula (total o parcial) —
+// misma tabla (compra o venta), excluye otras NC y a la factura en edición.
+function FacturaAnulaSelector({ tabla, value, valueLabel, excludeId, onChange }) {
+  const [query,    setQuery]    = useState('')
+  const [opciones, setOpc]      = useState([])
+  const [abierto,  setAbierto]  = useState(false)
+  const [buscando, setBuscando] = useState(false)
+  const debRef = useRef(null)
+
+  const buscar = q => {
+    setQuery(q)
+    if (debRef.current) clearTimeout(debRef.current)
+    debRef.current = setTimeout(async () => {
+      setBuscando(true)
+      try {
+        const r = await api.get(`/finanzas/facturas-${tabla}`, { params: q ? { buscar: q } : {} })
+        const rows = r.data
+          .filter(f => !esNC(f.tipo_factura) && f.id !== excludeId)
+          .slice(0, 10)
+        setOpc(rows)
+      } catch { setOpc([]) }
+      setBuscando(false)
+    }, 300)
+  }
+
+  const seleccionar = f => { setAbierto(false); setQuery(''); onChange(f) }
+  const cancelarTexto = () => setTimeout(() => setAbierto(false), 180)
+  const nombreDe = f => tabla === 'venta' ? f.cliente_nombre : f.proveedor_nombre
+
+  return (
+    <div className="position-relative">
+      {value ? (
+        <div className="input-group input-group-sm">
+          <span className="form-control form-control-sm bg-light">{valueLabel || value}</span>
+          <button type="button" className="btn btn-outline-danger" title="Quitar vínculo" onClick={() => onChange(null)}>
+            <i className="bi bi-x-lg" />
+          </button>
+        </div>
+      ) : (
+        <>
+          <input className="form-control form-control-sm" value={query}
+            placeholder="Buscar factura por número o nombre..."
+            onChange={e => buscar(e.target.value)}
+            onFocus={() => { setAbierto(true); if (!opciones.length) buscar('') }}
+            onBlur={cancelarTexto}
+            autoComplete="off" />
+          {abierto && (
+            <div className="border rounded bg-white shadow-sm position-absolute w-100" style={{ zIndex: 1080, top: '100%', maxHeight: 240, overflowY: 'auto' }}>
+              {buscando ? (
+                <div className="text-muted text-center py-2" style={{ fontSize: '0.75rem' }}>Buscando...</div>
+              ) : opciones.length === 0 ? (
+                <div className="text-muted text-center py-2" style={{ fontSize: '0.75rem' }}>Sin facturas que coincidan</div>
+              ) : opciones.map(f => (
+                <div key={f.id} className="px-2 py-1 border-bottom" style={{ cursor: 'pointer', fontSize: '0.83rem' }}
+                  onMouseDown={() => seleccionar(f)}>
+                  <span className="fw-semibold text-primary">{f.numero}</span>
+                  <span className="text-muted ms-2" style={{ fontSize: '0.75rem' }}>{nombreDe(f)}</span>
+                  <span className="text-muted ms-2" style={{ fontSize: '0.72rem' }}>{fmtM(f.importe, f.moneda)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function Paginador({ pagina, setPagina, total, porPagina = PAGE_SIZE }) {
+  const totalPaginas = Math.max(1, Math.ceil(total / porPagina))
+  if (totalPaginas <= 1) return null
+  const desde = (pagina - 1) * porPagina + 1
+  const hasta = Math.min(total, pagina * porPagina)
+  return (
+    <div className="d-flex align-items-center justify-content-between border-top pt-2 mt-2 flex-shrink-0">
+      <span className="text-muted small">Mostrando {desde}–{hasta} de {total}</span>
+      <div className="d-flex align-items-center gap-2">
+        <button className="btn btn-sm btn-outline-secondary" disabled={pagina <= 1}
+          onClick={() => setPagina(p => Math.max(1, p - 1))}>
+          <i className="bi bi-chevron-left" />
+        </button>
+        <span className="small text-muted">Página {pagina} de {totalPaginas}</span>
+        <button className="btn btn-sm btn-outline-secondary" disabled={pagina >= totalPaginas}
+          onClick={() => setPagina(p => Math.min(totalPaginas, p + 1))}>
+          <i className="bi bi-chevron-right" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function FiltroBarra({ filt, setFilt }) {
-  const activo = filt.buscar || filt.desde || filt.hasta || filt.moneda || filt.pago !== ''
+  const activo = filt.buscar || filt.desde || filt.hasta || filt.moneda || filt.pago !== '' || filt.conOc
   return (
     <div className="d-flex flex-wrap gap-2 align-items-center">
       <input className="form-control form-control-sm" style={{ width: 210 }}
@@ -176,9 +422,15 @@ function FiltroBarra({ filt, setFilt }) {
         <option value="1">Pagada/Cobrada</option>
         <option value="0">Pendiente</option>
       </select>
+      <select className="form-select form-select-sm" style={{ width: 110 }}
+        value={filt.conOc || ''} onChange={e => setFilt(p => ({ ...p, conOc: e.target.value }))}>
+        <option value="">Con/Sin OC</option>
+        <option value="con">Con OC</option>
+        <option value="sin">Sin OC</option>
+      </select>
       {activo && (
         <button className="btn btn-sm btn-outline-secondary py-0 px-2"
-          onClick={() => setFilt({ buscar: '', desde: '', hasta: '', moneda: '', pago: '' })}>
+          onClick={() => setFilt({ buscar: '', desde: '', hasta: '', moneda: '', pago: '', conOc: '' })}>
           <i className="bi bi-x" />
         </button>
       )}
@@ -186,13 +438,33 @@ function FiltroBarra({ filt, setFilt }) {
   )
 }
 
-export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
+export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded, activeTab, onCounts } = {}) {
   const canWrite = canWriteProp !== undefined ? canWriteProp : puedeEscribir('finanzas')
-  const [tab, setTab] = useState(noDashboard ? 'compras' : 'dashboard')
+  // Confirmar un pago (e-cheq/cheque diferido) es una función de tesorería
+  // más restrictiva que el resto: no alcanza con el canWrite "amplio" que
+  // llega embebido desde Administración (compras/administracion.escribir),
+  // solo Finanzas puede hacerlo — igual que ya lo exige el backend.
+  const canConfirmarPago = puedeEscribir('finanzas')
+  const navigate = useNavigate()
+  const [tab, setTab] = useState(activeTab || (noDashboard ? 'compras' : 'dashboard'))
+  const [abrirOcClienteId, setAbrirOcClienteId] = useState(null)
+
+  const colsFactC   = useColumnasOcultas('finanzas_facturas_compra')
+  const colsFactV   = useColumnasOcultas('finanzas_facturas_venta')
+  const colsSegComp = useColumnasOcultas('finanzas_seguimiento_compras')
+
+  // Cuando se embebe en otro módulo, la solapa activa la controla el padre
+  // (su propia barra de tabs plana), no la barra de tabs interna de Finanzas.
+  useEffect(() => {
+    if (activeTab && activeTab !== tab) setTab(activeTab)
+  }, [activeTab])
 
   const [factC, setFactC] = useState([])
-  const [filtC, setFiltC] = useState({ buscar: '', desde: '', hasta: '', moneda: '', pago: '' })
+  const [filtC, setFiltC] = useState({ buscar: '', desde: '', hasta: '', moneda: '', pago: '', conOc: '' })
   const [loadC, setLoadC] = useState(false)
+  const [pagC, setPagC] = useState(1)
+  useEffect(() => { setPagC(1) }, [filtC])
+  const factCPagina = useMemo(() => factC.slice((pagC - 1) * PAGE_SIZE, pagC * PAGE_SIZE), [factC, pagC])
   const [modalC, setModalC] = useState(null)
   const [formC, setFormC] = useState(FORM_C)
   const [savC, setSavC] = useState(false)
@@ -201,12 +473,15 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
   const [anticipoModal, setAnticipoModal] = useState(null) // solo compras
   const [anticipoForm, setAnticipoForm] = useState({ anticipo: '', fecha_anticipo: '' })
 
+  const pagosReqIdV = useRef(0)
+  const pagosReqIdC = useRef(0)
   const [pagosModal,   setPagosModal]   = useState(null)
   const [pagos,        setPagos]        = useState([])
   const [pagosLoad,    setPagosLoad]    = useState(false)
   const [pagoForm,     setPagoForm]     = useState(FORM_PAGO)
   const [pagoSaving,   setPagoSaving]   = useState(false)
   const [mostrarForm,  setMostrarForm]  = useState(false)
+  const [editandoPago, setEditandoPago] = useState(null)
 
   const [pagosModalC,  setPagosModalC]  = useState(null)
   const [pagosC,       setPagosC]       = useState([])
@@ -214,17 +489,21 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
   const [pagoFormC,    setPagoFormC]    = useState(FORM_PAGO)
   const [pagoSavingC,  setPagoSavingC]  = useState(false)
   const [mostrarFormC, setMostrarFormC] = useState(false)
+  const [editandoPagoC, setEditandoPagoC] = useState(null)
 
   const [factV, setFactV] = useState([])
-  const [filtV, setFiltV] = useState({ buscar: '', desde: '', hasta: '', moneda: '', pago: '' })
+  const [filtV, setFiltV] = useState({ buscar: '', desde: '', hasta: '', moneda: '', pago: '', conOc: '' })
   const [loadV, setLoadV] = useState(false)
+  const [pagV, setPagV] = useState(1)
+  useEffect(() => { setPagV(1) }, [filtV])
+  const factVPagina = useMemo(() => factV.slice((pagV - 1) * PAGE_SIZE, pagV * PAGE_SIZE), [factV, pagV])
   const [modalV, setModalV] = useState(null)
   const [formV, setFormV] = useState(FORM_V)
   const [ocSel, setOcSel] = useState(null)  // fila completa de la OC elegida (null si es PENDIENTE o no hay OC)
   const [savV, setSavV] = useState(false)
 
   // ── Saldo bancario ───────────────────────────────────────────────────────────
-  const BANCOS = ['Banco ICBC', 'Banco Galicia', 'Banco Santander Río']
+  const BANCOS = ['Banco ICBC', 'Banco Galicia']
   const FORM_SALDO = { entidad: 'Banco ICBC', monto: '', moneda: 'PESO' }
   const [saldos,     setSaldos]     = useState([])
   const [loadSaldos, setLoadSaldos] = useState(false)
@@ -232,8 +511,9 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
   const [savSaldo,   setSavSaldo]   = useState(false)
 
   const [tcBNA,     setTcBNA]     = useState([])
-  const [formTC,    setFormTC]    = useState({ valor: '', fecha: new Date().toISOString().slice(0,10) })
+  const [formTC,    setFormTC]    = useState({ moneda: 'DÓLAR', valor: '', fecha: hoyLocal() })
   const [savTC,     setSavTC]     = useState(false)
+  const [actualizandoBNA, setActualizandoBNA] = useState(false)
 
   const cargarSaldos = useCallback(async () => {
     setLoadSaldos(true)
@@ -270,7 +550,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     if (!formTC.valor || isNaN(parseFloat(formTC.valor))) return alert('Ingresá el valor')
     setSavTC(true)
     try {
-      const r = await api.post('/finanzas/tipo-cambio', { moneda: 'DÓLAR', valor: formTC.valor, fuente: 'BNA', fecha: formTC.fecha })
+      const r = await api.post('/finanzas/tipo-cambio', { moneda: formTC.moneda, valor: formTC.valor, fuente: 'BNA', fecha: formTC.fecha })
       setTcBNA(prev => [r.data, ...prev])
       setFormTC(p => ({ ...p, valor: '' }))
     } catch(e) { alert(e.response?.data?.error || 'Error') }
@@ -283,22 +563,59 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     setTcBNA(prev => prev.filter(x => x.id !== t.id))
   }
 
+  // Trae del BNA (cotización Divisas) dólar y euro de hoy en un solo clic —
+  // reemplaza tener que ir a mirar la web del banco y tipear el número a mano.
+  const actualizarBNA = async () => {
+    setActualizandoBNA(true)
+    try {
+      const { data } = await api.post('/finanzas/tipo-cambio/bna-hoy')
+      setTcBNA(prev => [data.dolar, data.euro, ...prev])
+    } catch (e) {
+      alert(e.response?.data?.error || 'No se pudo traer la cotización del BNA')
+    } finally { setActualizandoBNA(false) }
+  }
+
   // ── Servicios ────────────────────────────────────────────────────────────────
+  // "servicios" = catálogo de servicios recurrentes (EDENOR, METROGAS...), para
+  // el selector de "Cargar pago". "servCuotas" = la lista real de pagos (cada
+  // fila es un pago pendiente o pagado que alguien cargó a mano) — nunca hay
+  // filas fabricadas en blanco, así que no hace falta grisar nada.
   const PERIODICIDADES = ['mensual','bimestral','trimestral','semestral','anual']
-  const FORM_SERV = { descripcion: '', usuario: '', info_pago: '', periodicidad: 'mensual', vencimiento_inicial: '' }
-  const [servicios,     setServicios]     = useState([])
+  const FORM_SERV = { descripcion: '', usuario: '', info_pago: '', periodicidad: 'mensual' }
+  const FORM_PAGO_SERVICIO = { servicio_id: '', monto: '', vencimiento: '', pagado: false, fecha_pagada: '' }
+  const [servicios,     setServicios]     = useState([])   // catálogo
+  const [servCuotas,    setServCuotas]    = useState([])   // pagos reales (pendientes + pagados)
   const [loadServ,      setLoadServ]      = useState(false)
-  const [modalServ,     setModalServ]     = useState(null)  // null | 'new' | obj
+  const [modalServ,     setModalServ]     = useState(null)  // null | obj — editar datos del servicio (catálogo)
   const [formServ,      setFormServ]      = useState(FORM_SERV)
   const [savServ,       setSavServ]       = useState(false)
-  const [montoEdit,     setMontoEdit]     = useState({})    // { cuota_id: valor_string }
+  const [modalPago,     setModalPago]     = useState(false) // "Cargar pago"
+  const [formPago,      setFormPago]      = useState(FORM_PAGO_SERVICIO)
+  const [savPago,       setSavPago]       = useState(false)
+  const [nuevoServ,     setNuevoServ]     = useState(false) // dentro del modal de pago: mostrar mini-form de alta
+  const [nuevoServForm, setNuevoServForm] = useState(FORM_SERV)
   const [pagandoId,     setPagandoId]     = useState(null)
   const [filtServ,      setFiltServ]      = useState({ estado: 'todos', periodicidad: '', buscar: '' })
+  const [modalCuota,    setModalCuota]    = useState(null)  // null | cuota — editar monto/vencimiento de ESE pago puntual (el precio puede variar de un período a otro)
+  const [formCuota,     setFormCuota]     = useState({ monto: '', vencimiento: '' })
+  const [savCuota,      setSavCuota]      = useState(false)
 
   const [ctrlOC,    setCtrlOC]    = useState([])
   const [loadCtrlOC, setLoadCtrlOC] = useState(false)
   const [editTC,    setEditTC]    = useState(null) // { oc_id, oc_numero, valor }
   const [savingTC,  setSavingTC]  = useState(false)
+
+  // Cuando se embebe, expone los mismos conteos que hoy muestra en su propia
+  // barra de tabs, para que el padre los replique en la suya.
+  useEffect(() => {
+    if (!onCounts) return
+    onCounts({
+      compras:   factC.length,
+      ventas:    factV.length,
+      servicios: servCuotas.filter(c => c.estado === 'pendiente').length,
+      control:   ctrlOC.length,
+    })
+  }, [factC, factV, servCuotas, ctrlOC, onCounts])
 
   const cargarCtrlOC = useCallback(async () => {
     setLoadCtrlOC(true)
@@ -320,48 +637,176 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     } finally { setSavingTC(false) }
   }
 
-  const cargarServicios = useCallback(async () => {
-    setLoadServ(true)
+  // Autocorregir: si la diferencia es solo por tipo de cambio, calcula el TC
+  // que hace coincidir exactamente lo facturado con el neto de la OC (en vez
+  // de tener que tipearlo a mano) y lo guarda como TC manual de esa OC.
+  async function autocorregirTC(r) {
+    if (!r.oc_neto_orig) return
+    const tcImplicito = r.facturas_neto_total / r.oc_neto_orig
+    setSavingTC(true)
+    try {
+      await api.put(`/finanzas/control-oc/${r.oc_id}/tc-manual`, { valor: tcImplicito })
+      cargarCtrlOC()
+    } catch (e) {
+      alert(e.response?.data?.error || 'Error al guardar')
+    } finally { setSavingTC(false) }
+  }
+
+  // ── Seguimiento OC Compras (solo lectura) ───────────────────────────────────
+  const [segCompras,     setSegCompras]     = useState([])
+  const [loadSegCompras, setLoadSegCompras] = useState(false)
+  const [pagSegCompras,  setPagSegCompras]  = useState(1)
+  const [filtSegCompras, setFiltSegCompras] = useState({ estado: '', estado_facturacion: '', estado_pago: '', buscar: '' })
+
+  const cargarSegCompras = useCallback(async () => {
+    setLoadSegCompras(true)
+    try {
+      const p = {}
+      if (filtSegCompras.estado)             p.estado = filtSegCompras.estado
+      if (filtSegCompras.estado_facturacion) p.estado_facturacion = filtSegCompras.estado_facturacion
+      if (filtSegCompras.estado_pago)        p.estado_pago = filtSegCompras.estado_pago
+      if (filtSegCompras.buscar)              p.buscar = filtSegCompras.buscar
+      const r = await api.get('/finanzas/seguimiento-oc-compras', { params: p })
+      setSegCompras(r.data)
+    } catch (e) { console.error(e) }
+    finally { setLoadSegCompras(false) }
+  }, [filtSegCompras])
+
+  useEffect(() => {
+    if (tab !== 'seguimiento-compras') return
+    const t = setTimeout(() => cargarSegCompras(), 300)
+    return () => clearTimeout(t)
+  }, [tab, cargarSegCompras])
+  useEffect(() => { setPagSegCompras(1) }, [filtSegCompras])
+  const segComprasPagina = useMemo(() => segCompras.slice((pagSegCompras - 1) * PAGE_SIZE, pagSegCompras * PAGE_SIZE), [segCompras, pagSegCompras])
+
+  // ── Seguimiento OC Ventas (solo lectura) ────────────────────────────────────
+  const [segVentas,     setSegVentas]     = useState([])
+  const [loadSegVentas, setLoadSegVentas] = useState(false)
+  const [pagSegVentas,  setPagSegVentas]  = useState(1)
+  const [filtSegVentas, setFiltSegVentas] = useState('')
+
+  const cargarSegVentas = useCallback(async () => {
+    setLoadSegVentas(true)
+    try { const r = await api.get('/finanzas/oc-clientes'); setSegVentas(r.data) }
+    catch (e) { console.error(e) }
+    finally { setLoadSegVentas(false) }
+  }, [])
+
+  useEffect(() => { if (tab === 'seguimiento-ventas') cargarSegVentas() }, [tab, cargarSegVentas])
+  useEffect(() => { setPagSegVentas(1) }, [filtSegVentas])
+  const segVentasFiltradas = useMemo(() => {
+    if (!filtSegVentas) return segVentas
+    return segVentas.filter(r => estadoFila(r) === filtSegVentas)
+  }, [segVentas, filtSegVentas])
+  const segVentasPagina = useMemo(() => segVentasFiltradas.slice((pagSegVentas - 1) * PAGE_SIZE, pagSegVentas * PAGE_SIZE), [segVentasFiltradas, pagSegVentas])
+
+  const cargarServiciosCatalogo = useCallback(async () => {
     try { const r = await api.get('/finanzas/servicios'); setServicios(r.data) }
+    catch (e) { console.error(e) }
+  }, [])
+
+  const cargarServCuotas = useCallback(async () => {
+    setLoadServ(true)
+    try { const r = await api.get('/finanzas/servicios-cuotas'); setServCuotas(r.data) }
+    catch (e) { console.error(e) }
     finally { setLoadServ(false) }
   }, [])
 
-  useEffect(() => { if (tab === 'servicios') cargarServicios() }, [tab, cargarServicios])
+  useEffect(() => {
+    if (tab !== 'servicios') return
+    cargarServiciosCatalogo()
+    cargarServCuotas()
+  }, [tab, cargarServiciosCatalogo, cargarServCuotas])
 
+  // Editar los datos del servicio en el catálogo (descripción, periodicidad,
+  // usuario, datos de pago) — ya no crea ni toca ninguna cuota.
   const guardarServ = async () => {
     if (!formServ.descripcion.trim()) return alert('La descripción es requerida')
     setSavServ(true)
     try {
-      if (modalServ === 'new') await api.post('/finanzas/servicios', formServ)
-      else await api.put(`/finanzas/servicios/${modalServ.id}`, formServ)
+      await api.put(`/finanzas/servicios/${modalServ.id}`, formServ)
       setModalServ(null)
-      cargarServicios()
+      cargarServiciosCatalogo()
+      cargarServCuotas()
     } catch(e) { alert(e.response?.data?.error || 'Error') }
     finally { setSavServ(false) }
   }
 
-  const eliminarServ = async s => {
-    if (!confirm(`¿Desactivar "${s.descripcion}"?`)) return
+  const desactivarServ = async s => {
+    if (!confirm(`¿Desactivar "${s.descripcion}"? Ya no va a aparecer para elegir en "Cargar pago" (los pagos ya cargados se mantienen).`)) return
     await api.delete(`/finanzas/servicios/${s.id}`)
-    cargarServicios()
+    cargarServiciosCatalogo()
   }
 
-  const pagarCuota = async s => {
-    if (!s.cuota_id) return
-    setPagandoId(s.cuota_id)
+  const pagarCuota = async c => {
+    setPagandoId(c.id)
     try {
-      const fecha = new Date().toISOString().slice(0, 10)
-      await api.post(`/finanzas/servicios-cuotas/${s.cuota_id}/pagar`, { fecha_pagada: fecha })
-      cargarServicios()
+      const fecha = hoyLocal()
+      await api.post(`/finanzas/servicios-cuotas/${c.id}/pagar`, { fecha_pagada: fecha })
+      cargarServCuotas()
     } catch(e) { alert(e.response?.data?.error || 'Error') }
     finally { setPagandoId(null) }
   }
 
-  const guardarMonto = async (cuotaId, monto) => {
-    if (!monto || isNaN(parseFloat(monto))) return
-    await api.put(`/finanzas/servicios-cuotas/${cuotaId}`, { monto: parseFloat(monto) })
-    setMontoEdit(p => { const n = {...p}; delete n[cuotaId]; return n })
-    cargarServicios()
+  const eliminarCuota = async c => {
+    if (!confirm(`¿Eliminar este pago de "${c.descripcion}"?`)) return
+    await api.delete(`/finanzas/servicios-cuotas/${c.id}`)
+    cargarServCuotas()
+  }
+
+  // Editar monto/vencimiento de ESTE pago puntual — a diferencia de "Editar
+  // servicio" (que solo toca el catálogo), esto corrige el precio real de un
+  // período, que suele variar de una factura a la siguiente (luz, gas, etc.).
+  const abrirEditarCuota = c => {
+    setFormCuota({ monto: c.monto, vencimiento: c.vencimiento || '' })
+    setModalCuota(c)
+  }
+
+  const guardarCuota = async () => {
+    if (!formCuota.monto || isNaN(parseFloat(formCuota.monto))) return alert('Cargá el monto')
+    setSavCuota(true)
+    try {
+      await api.put(`/finanzas/servicios-cuotas/${modalCuota.id}`, formCuota)
+      setModalCuota(null)
+      cargarServCuotas()
+    } catch(e) { alert(e.response?.data?.error || 'Error al guardar') }
+    finally { setSavCuota(false) }
+  }
+
+  // ── Cargar pago (elegir servicio existente o cargar uno nuevo al vuelo) ─────
+  const abrirCargarPago = () => {
+    setFormPago(FORM_PAGO_SERVICIO)
+    setNuevoServ(false)
+    setNuevoServForm(FORM_SERV)
+    setModalPago(true)
+  }
+
+  const crearServicioYUsarlo = async () => {
+    if (!nuevoServForm.descripcion.trim()) return alert('La descripción es requerida')
+    setSavServ(true)
+    try {
+      const r = await api.post('/finanzas/servicios', nuevoServForm)
+      setServicios(p => [...p, r.data].sort((a, b) => a.descripcion.localeCompare(b.descripcion)))
+      setFormPago(p => ({ ...p, servicio_id: String(r.data.id) }))
+      setNuevoServ(false)
+    } catch(e) { alert(e.response?.data?.error || 'Error al crear el servicio') }
+    finally { setSavServ(false) }
+  }
+
+  const guardarPago = async () => {
+    if (!formPago.servicio_id) return alert('Elegí un servicio (o cargá uno nuevo)')
+    if (!formPago.monto || isNaN(parseFloat(formPago.monto))) return alert('Cargá el monto')
+    setSavPago(true)
+    try {
+      await api.post(`/finanzas/servicios/${formPago.servicio_id}/cuotas`, {
+        monto: formPago.monto, vencimiento: formPago.vencimiento,
+        pagado: formPago.pagado, fecha_pagada: formPago.fecha_pagada,
+      })
+      setModalPago(false)
+      cargarServCuotas()
+    } catch(e) { alert(e.response?.data?.error || 'Error al guardar') }
+    finally { setSavPago(false) }
   }
 
   const [proveedores, setProveedores] = useState([])
@@ -378,6 +823,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
       if (filtC.hasta)  p.hasta  = filtC.hasta
       if (filtC.moneda) p.moneda = filtC.moneda
       if (filtC.pago !== '') p.pago = filtC.pago
+      if (filtC.conOc) p.conOc = filtC.conOc
       const r = await api.get('/finanzas/facturas-compra', { params: p })
       setFactC(r.data)
     } finally { setLoadC(false) }
@@ -392,19 +838,22 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
       if (filtV.hasta)  p.hasta  = filtV.hasta
       if (filtV.moneda) p.moneda = filtV.moneda
       if (filtV.pago !== '') p.pago = filtV.pago
+      if (filtV.conOc) p.conOc = filtV.conOc
       const r = await api.get('/finanzas/facturas-venta', { params: p })
       setFactV(r.data)
     } finally { setLoadV(false) }
   }, [filtV])
 
-  useEffect(() => { cargarC() }, [cargarC])
-  useEffect(() => { cargarV() }, [cargarV])
+  useEffect(() => { const t = setTimeout(() => cargarC(), 300); return () => clearTimeout(t) }, [cargarC])
+  useEffect(() => { const t = setTimeout(() => cargarV(), 300); return () => clearTimeout(t) }, [cargarV])
 
   useEffect(() => {
-    api.get('/compras/proveedores').then(r => setProveedores(r.data || [])).catch(() => {})
-    api.get('/compras/oc', { params: { limit: 500 } }).then(r => setOcs(r.data?.datos || [])).catch(() => {})
-    api.get('/ventas/clientes').then(r => setClientes(r.data || [])).catch(() => {})
-    api.get('/ventas/presupuestos', { params: { limit: 500 } }).then(r => setPresupuestos(r.data?.datos || [])).catch(() => {})
+    api.get('/compras/proveedores').then(r => setProveedores(r.data || [])).catch(e => console.error(e))
+    // Para elegir OC en una factura: todas las que todavía no completaron su
+    // ciclo (ya facturadas por el total de su neto no aportan nada para elegir).
+    api.get('/compras/oc', { params: { excluirFacturadas: 1, limit: 5000 } }).then(r => setOcs(r.data?.datos || [])).catch(e => console.error(e))
+    api.get('/ventas/clientes').then(r => setClientes(r.data || [])).catch(e => console.error(e))
+    api.get('/ventas/presupuestos', { params: { limit: 500 } }).then(r => setPresupuestos(r.data?.datos || [])).catch(e => console.error(e))
   }, [])
 
   const vctoColor = (fecha, pagado) => {
@@ -426,13 +875,66 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
   const calcIvaC = (neto, rate) => Math.round((parseFloat(neto) || 0) * rate * 100) / 100
 
+  // Mismo criterio que ocElegida (ventas): el gate solo aplica a facturas NUEVAS,
+  // para no dejar sin editar una factura ya guardada sin OC (anteriores a esta
+  // función, o cargadas a propósito sin OC).
+  const ocElegidaC = modalC === 'new' ? !!formC.oc_numero : true
+
   const onNetoGravadoC = val => setFormC(p => ({ ...p, neto_gravado: val }))
 
   const abrirNuevaC = () => {
     setFormC(FORM_C); setAddProvC(false); setModalC('new')
   }
+
+  const [mesExportarC, setMesExportarC] = useState(hoyLocal().slice(0, 7))
+  const [exportandoC,  setExportandoC]  = useState(false)
+  const exportarFacturasCompraMes = async () => {
+    const [y, m] = mesExportarC.split('-').map(Number)
+    const desde = `${mesExportarC}-01`
+    const hasta = `${mesExportarC}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`
+    setExportandoC(true)
+    try {
+      const resp = await fetch(`/api/v1/finanzas/facturas-compra/exportar?desde=${desde}&hasta=${hasta}`,
+        { headers: { Authorization: `Bearer ${getToken()}` } })
+      if (!resp.ok) throw new Error('No se pudo generar el Excel')
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `facturas_compra_${mesExportarC}.xlsx`; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert(e.message || 'Error al exportar')
+    } finally { setExportandoC(false) }
+  }
+
+  // ── Comparar contra ARCA ("Mis Comprobantes Recibidos") ─────────────────────
+  // Solo compara y lista diferencias — no carga nada automáticamente, cada
+  // factura faltante se sigue cargando a mano con "Nueva Factura".
+  const [modalArca, setModalArca] = useState(false)
+  const [archivoArca, setArchivoArca] = useState(null)
+  const [comparandoArca, setComparandoArca] = useState(false)
+  const [resultadoArca, setResultadoArca] = useState(null)
+  const [errorArca, setErrorArca] = useState('')
+
+  const abrirCompararArca = () => {
+    setArchivoArca(null); setResultadoArca(null); setErrorArca(''); setModalArca(true)
+  }
+
+  const compararArca = async () => {
+    if (!archivoArca) return setErrorArca('Elegí el archivo .xlsx de ARCA')
+    setComparandoArca(true); setErrorArca('')
+    try {
+      const fd = new FormData()
+      fd.append('archivo', archivoArca)
+      const r = await api.post('/finanzas/facturas-compra/comparar-arca', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      setResultadoArca(r.data)
+    } catch (e) {
+      setErrorArca(e.response?.data?.error || 'Error al comparar el archivo')
+    } finally { setComparandoArca(false) }
+  }
+
   const abrirEditC = f => {
-    setFormC({ ...FORM_C, ...f, importe: f.importe ?? '', tasa_cambio: f.tasa_cambio ?? 1 })
+    setFormC({ ...FORM_C, ...f, oc_numero: f.oc_numero || f.ref_doc || '', importe: f.importe ?? '', tasa_cambio: f.tasa_cambio ?? 1 })
     setAddProvC(false); setModalC(f)
   }
 
@@ -506,11 +1008,29 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
   // ── Pagos de compras ───────────────────────────────────────────────────────
   const abrirPagosC = async f => {
-    setPagosModalC(f); setMostrarFormC(false)
-    setPagoFormC({ ...FORM_PAGO, moneda: f.moneda || 'PESO' })
+    const reqId = ++pagosReqIdC.current
+    setPagosModalC(f); setMostrarFormC(false); setEditandoPagoC(null)
+    setPagoFormC({ ...FORM_PAGO, moneda: f.moneda || 'PESO', tasa_cambio: f.tasa_cambio || 1 })
     setPagosLoadC(true)
-    try { const r = await api.get(`/finanzas/facturas-compra/${f.id}/pagos`); setPagosC(r.data) }
-    finally { setPagosLoadC(false) }
+    try {
+      const r = await api.get(`/finanzas/facturas-compra/${f.id}/pagos`)
+      // Si mientras tanto se abrió otra factura, esta respuesta ya está vieja —
+      // sin este chequeo, podía pisar la lista de pagos con la de la factura anterior.
+      if (reqId !== pagosReqIdC.current) return
+      setPagosC(r.data)
+    } finally { if (reqId === pagosReqIdC.current) setPagosLoadC(false) }
+  }
+
+  const abrirEditarPagoC = pago => {
+    setPagoFormC({
+      tipo: pago.tipo, forma_pago: pago.forma_pago, entidad: pago.entidad || '',
+      importe: pago.importe, moneda: pago.moneda || 'PESO', tasa_cambio: pago.tasa_cambio || 1, fecha: pago.fecha || '',
+      fecha_acreditacion: pago.fecha_acreditacion || '', observaciones: pago.observaciones || '',
+      ret_iibb: pago.ret_iibb || '', ret_iva: pago.ret_iva || '', ret_gcia: pago.ret_gcia || '',
+      ret_contratista: pago.ret_contratista || '', ret_ss: pago.ret_ss || '',
+    })
+    setEditandoPagoC(pago)
+    setMostrarFormC(true)
   }
 
   const agregarPagoC = async () => {
@@ -518,15 +1038,23 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     if (!pagoFormC.fecha) return alert('Fecha requerida')
     setPagoSavingC(true)
     try {
-      const r = await api.post(`/finanzas/facturas-compra/${pagosModalC.id}/pagos`, pagoFormC)
-      setPagosC(p => [...p, r.data])
-      setPagoFormC({ ...FORM_PAGO, moneda: pagosModalC.moneda || 'PESO' })
+      let nuevos
+      if (editandoPagoC) {
+        const r = await api.patch(`/finanzas/facturas-compra/${pagosModalC.id}/pagos/${editandoPagoC.id}`, pagoFormC)
+        nuevos = pagosC.map(p => p.id === editandoPagoC.id ? r.data : p)
+      } else {
+        const r = await api.post(`/finanzas/facturas-compra/${pagosModalC.id}/pagos`, pagoFormC)
+        nuevos = [...pagosC, r.data]
+      }
+      setPagosC(nuevos)
+      setPagoFormC({ ...FORM_PAGO, moneda: pagosModalC.moneda || 'PESO', tasa_cambio: pagosModalC.tasa_cambio || 1 })
       setMostrarFormC(false)
-      const totalPagado = [...pagosC, r.data].filter(p => p.estado === 'confirmado').reduce((s, p) => s + p.importe, 0)
-      const saldo = Math.max(0, (pagosModalC.importe * (pagosModalC.tasa_cambio || 1)) - totalPagado)
+      setEditandoPagoC(null)
+      const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalEnPesos(p), 0)
+      const saldo = Math.max(0, totalEnPesos(pagosModalC) - totalPagado)
       const cobrada = saldo <= 0.01 ? 1 : 0
       setFactC(prev => prev.map(x => x.id === pagosModalC.id
-        ? { ...x, total_pagado: totalPagado, count_pagos: (x.count_pagos||0)+1, saldo_pendiente: saldo, pago_confirmado: cobrada }
+        ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: cobrada }
         : x))
       setPagosModalC(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: cobrada }))
     } catch(e) { alert(e.response?.data?.error || 'Error al guardar') }
@@ -534,11 +1062,14 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
   }
 
   const confirmarPagoC = async pago => {
-    const r = await api.patch(`/finanzas/facturas-compra/${pagosModalC.id}/pagos/${pago.id}`, { estado: 'confirmado' })
+    let r
+    try {
+      r = await api.patch(`/finanzas/facturas-compra/${pagosModalC.id}/pagos/${pago.id}/confirmar`)
+    } catch (e) { return alert(e.response?.data?.error || 'Error al confirmar') }
     const nuevos = pagosC.map(p => p.id === pago.id ? r.data : p)
     setPagosC(nuevos)
-    const totalPagado = nuevos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + p.importe, 0)
-    const saldo = Math.max(0, (pagosModalC.importe * (pagosModalC.tasa_cambio || 1)) - totalPagado)
+    const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalEnPesos(p), 0)
+    const saldo = Math.max(0, totalEnPesos(pagosModalC) - totalPagado)
     setFactC(prev => prev.map(x => x.id === pagosModalC.id
       ? { ...x, total_pagado: totalPagado, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }
       : x))
@@ -550,8 +1081,8 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     await api.delete(`/finanzas/facturas-compra/${pagosModalC.id}/pagos/${pago.id}`)
     const nuevos = pagosC.filter(p => p.id !== pago.id)
     setPagosC(nuevos)
-    const totalPagado = nuevos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + p.importe, 0)
-    const saldo = Math.max(0, (pagosModalC.importe * (pagosModalC.tasa_cambio || 1)) - totalPagado)
+    const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalEnPesos(p), 0)
+    const saldo = Math.max(0, totalEnPesos(pagosModalC) - totalPagado)
     setFactC(prev => prev.map(x => x.id === pagosModalC.id
       ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }
       : x))
@@ -569,7 +1100,12 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     setModalV(f)
   }
 
-  const ocElegida = !!formV.oc
+  // El gate de "elegí una OC antes de habilitar el resto" es para disciplinar
+  // la carga de facturas NUEVAS — no debe bloquear la edición de una factura ya
+  // guardada que no tiene OC (anteriores a esta función, o cargadas a propósito
+  // sin OC): si no, un error de tipeo en cualquier campo -incluido Proyecto-
+  // quedaba imposible de corregir sin antes forzar una OC que no corresponde.
+  const ocElegida = modalV === 'new' ? !!formV.oc : true
 
   // Muestra el equivalente en la otra moneda cuando se factura distinto a como está la OC (siempre en USD)
   const otraMoneda = valor => {
@@ -579,9 +1115,15 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     return `USD ${(v / tc).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
-  // Autocompletar concepto, neto, IVA y total a partir del % de la OC elegido
+  // Autocompletar concepto, neto, IVA y total a partir del % de la OC elegido.
+  // Si el usuario ya corrigió el neto a mano (redondeo, descuento, etc.) desde el
+  // último autocompletado, no se lo pisa aunque después toque moneda/TC — solo
+  // una OC nueva o un % distinto disparan un recálculo desde cero.
+  const lastOcIdRef = useRef(null)
+  const lastAutoNetoRef = useRef(null)
   useEffect(() => {
     if (!ocSel) return
+    if (ocSel.id !== lastOcIdRef.current) { lastOcIdRef.current = ocSel.id; lastAutoNetoRef.current = null }
     const pct = parseFloat(formV.oc_pct) || 0
     const montoUSD = (parseFloat(ocSel.monto_oc) || 0) * pct / 100
     const facturadoPrevio = (parseFloat(ocSel.monto_anticipo_usd) || 0) + (parseFloat(ocSel.monto_final_usd) || 0)
@@ -590,6 +1132,11 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     const neto  = formV.moneda === 'DÓLAR' ? montoUSD : montoUSD * (parseFloat(formV.tasa_cambio) || 0)
     const iva   = neto * 0.21
     const total = neto + iva
+    const netoRedondeado = montoUSD > 0 ? Math.round(neto * 100) / 100 : null
+    if (netoRedondeado != null && lastAutoNetoRef.current != null
+        && Math.abs((parseFloat(formV.neto_gravado) || 0) - lastAutoNetoRef.current) > 0.01) {
+      return
+    }
     setFormV(p => ({
       ...p,
       concepto: pct > 0 ? `${pct}% ${tipoConcepto}` : p.concepto,
@@ -597,14 +1144,22 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
       neto_gravado: montoUSD > 0 ? Math.round(neto * 100) / 100 : p.neto_gravado,
       iva_21: montoUSD > 0 ? Math.round(iva * 100) / 100 : p.iva_21,
     }))
+    lastAutoNetoRef.current = netoRedondeado
   }, [ocSel, formV.oc_pct, formV.moneda, formV.tasa_cambio])
 
   const guardarV = async () => {
     if (!formV.numero.trim()) return alert('El número de factura es requerido')
+    // La OC de cliente siempre está en USD (no tiene su propia tasa de cambio para
+    // copiar) — si se factura un % de una OC en pesos sin cargar un TC real, el
+    // autofill de arriba calcula el neto multiplicando por 1, dando un importe
+    // absurdamente bajo. Se bloquea el guardado en vez de dejarlo pasar silencioso.
+    if (ocSel && formV.moneda !== 'DÓLAR' && (parseFloat(formV.oc_pct) || 0) > 0 && (parseFloat(formV.tasa_cambio) || 0) <= 1) {
+      return alert('Falta cargar la Tasa de cambio real para convertir el % de la OC (en USD) a pesos.')
+    }
     setSavV(true)
     try {
       const importe = parseFloat(formV.importe) ||
-                      ((parseFloat(formV.neto_gravado)||0) + (parseFloat(formV.iva_21)||0))
+                      ((parseFloat(formV.neto_gravado)||0) + (parseFloat(formV.iva_21)||0) + (parseFloat(formV.iva_10_5)||0))
       const payload = { ...formV, importe }
       if (modalV === 'new') await api.post('/finanzas/facturas-venta', payload)
       else await api.put(`/finanzas/facturas-venta/${modalV.id}`, payload)
@@ -623,7 +1178,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
   const togglePagoV = async f => {
     const nuevoPago = !f.pago_confirmado
-    const fecha_pago = nuevoPago ? new Date().toISOString().slice(0, 10) : ''
+    const fecha_pago = nuevoPago ? hoyLocal() : ''
     await api.patch(`/finanzas/facturas-venta/${f.id}/pago`, { pago_confirmado: nuevoPago, fecha_pago })
     setFactV(prev => prev.map(x => x.id === f.id ? { ...x, pago_confirmado: nuevoPago ? 1 : 0, anticipo: 0, fecha_anticipo: '', fecha_pago } : x))
   }
@@ -636,31 +1191,55 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
   // ── Pagos de ventas ────────────────────────────────────────────────────────
   const abrirPagosV = async f => {
-    setPagosModal(f); setMostrarForm(false)
-    setPagoForm({ ...FORM_PAGO, moneda: f.moneda || 'PESO' })
+    const reqId = ++pagosReqIdV.current
+    setPagosModal(f); setMostrarForm(false); setEditandoPago(null)
+    setPagoForm({ ...FORM_PAGO, moneda: f.moneda || 'PESO', tasa_cambio: f.tasa_cambio || 1 })
     setPagosLoad(true)
-    try { const r = await api.get(`/finanzas/facturas-venta/${f.id}/pagos`); setPagos(r.data) }
-    finally { setPagosLoad(false) }
+    try {
+      const r = await api.get(`/finanzas/facturas-venta/${f.id}/pagos`)
+      if (reqId !== pagosReqIdV.current) return
+      setPagos(r.data)
+    } finally { if (reqId === pagosReqIdV.current) setPagosLoad(false) }
+  }
+
+  const abrirEditarPago = pago => {
+    setPagoForm({
+      tipo: pago.tipo, forma_pago: pago.forma_pago, entidad: pago.entidad || '',
+      importe: pago.importe, moneda: pago.moneda || 'PESO', tasa_cambio: pago.tasa_cambio || 1, fecha: pago.fecha || '',
+      fecha_acreditacion: pago.fecha_acreditacion || '', observaciones: pago.observaciones || '',
+      ret_iibb: pago.ret_iibb || '', ret_iva: pago.ret_iva || '', ret_gcia: pago.ret_gcia || '',
+      ret_contratista: pago.ret_contratista || '', ret_ss: pago.ret_ss || '',
+    })
+    setEditandoPago(pago)
+    setMostrarForm(true)
   }
 
   // Importe + retenciones que el cliente aplicó al pagar (cuentan como saldado)
-  const totalPago = p => (p.importe||0) + (p.ret_iibb||0) + (p.ret_iva||0) + (p.ret_gcia||0) + (p.ret_contratista||0) + (p.ret_ss||0)
+  const totalPago = p => totalEnPesos(p) + (p.ret_iibb||0) + (p.ret_iva||0) + (p.ret_gcia||0) + (p.ret_contratista||0) + (p.ret_ss||0)
 
   const agregarPago = async () => {
     if (!pagoForm.importe || parseFloat(pagoForm.importe) <= 0) return alert('Importe requerido')
     if (!pagoForm.fecha) return alert('Fecha requerida')
     setPagoSaving(true)
     try {
-      const r = await api.post(`/finanzas/facturas-venta/${pagosModal.id}/pagos`, pagoForm)
-      setPagos(p => [...p, r.data])
-      setPagoForm({ ...FORM_PAGO, moneda: pagosModal.moneda || 'PESO' })
+      let nuevos
+      if (editandoPago) {
+        const r = await api.patch(`/finanzas/facturas-venta/${pagosModal.id}/pagos/${editandoPago.id}`, pagoForm)
+        nuevos = pagos.map(p => p.id === editandoPago.id ? r.data : p)
+      } else {
+        const r = await api.post(`/finanzas/facturas-venta/${pagosModal.id}/pagos`, pagoForm)
+        nuevos = [...pagos, r.data]
+      }
+      setPagos(nuevos)
+      setPagoForm({ ...FORM_PAGO, moneda: pagosModal.moneda || 'PESO', tasa_cambio: pagosModal.tasa_cambio || 1 })
       setMostrarForm(false)
+      setEditandoPago(null)
       // Actualizar saldo en la lista
-      const totalPagado = [...pagos, r.data].filter(p => p.estado === 'confirmado').reduce((s, p) => s + totalPago(p), 0)
-      const saldo = Math.max(0, (pagosModal.importe * (pagosModal.tasa_cambio || 1)) - totalPagado)
+      const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalPago(p), 0)
+      const saldo = Math.max(0, totalEnPesos(pagosModal) - totalPagado)
       const cobrada = saldo <= 0.01 ? 1 : 0
       setFactV(prev => prev.map(x => x.id === pagosModal.id
-        ? { ...x, total_pagado: totalPagado, count_pagos: (x.count_pagos||0)+1, saldo_pendiente: saldo, pago_confirmado: cobrada }
+        ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: cobrada }
         : x))
       setPagosModal(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: cobrada }))
     } catch(e) { alert(e.response?.data?.error || 'Error al guardar') }
@@ -668,11 +1247,14 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
   }
 
   const confirmarPago = async pago => {
-    const r = await api.patch(`/finanzas/facturas-venta/${pagosModal.id}/pagos/${pago.id}`, { estado: 'confirmado' })
+    let r
+    try {
+      r = await api.patch(`/finanzas/facturas-venta/${pagosModal.id}/pagos/${pago.id}/confirmar`)
+    } catch (e) { return alert(e.response?.data?.error || 'Error al confirmar') }
     const nuevos = pagos.map(p => p.id === pago.id ? r.data : p)
     setPagos(nuevos)
-    const totalPagado = nuevos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + totalPago(p), 0)
-    const saldo = Math.max(0, (pagosModal.importe * (pagosModal.tasa_cambio || 1)) - totalPagado)
+    const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalPago(p), 0)
+    const saldo = Math.max(0, totalEnPesos(pagosModal) - totalPagado)
     const cobrada = saldo <= 0.01 ? 1 : 0
     setFactV(prev => prev.map(x => x.id === pagosModal.id
       ? { ...x, total_pagado: totalPagado, saldo_pendiente: saldo, pago_confirmado: cobrada }
@@ -685,8 +1267,8 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
     await api.delete(`/finanzas/facturas-venta/${pagosModal.id}/pagos/${pago.id}`)
     const nuevos = pagos.filter(p => p.id !== pago.id)
     setPagos(nuevos)
-    const totalPagado = nuevos.filter(p => p.estado === 'confirmado').reduce((s, p) => s + totalPago(p), 0)
-    const saldo = Math.max(0, (pagosModal.importe * (pagosModal.tasa_cambio || 1)) - totalPagado)
+    const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalPago(p), 0)
+    const saldo = Math.max(0, totalEnPesos(pagosModal) - totalPagado)
     setFactV(prev => prev.map(x => x.id === pagosModal.id
       ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }
       : x))
@@ -695,60 +1277,74 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="container-fluid d-flex flex-column" style={{ height: '100%', padding: '1rem 1.5rem' }}>
-      <div className="d-flex align-items-center mb-3">
-        <h5 className="fw-bold mb-0"><i className="bi bi-receipt me-2 text-primary" />Facturas</h5>
-      </div>
+    <div className={embedded ? 'd-flex flex-column flex-grow-1' : 'container-fluid d-flex flex-column'} style={embedded ? { minHeight: 0, flex: '1 1 auto' } : { height: '100%', padding: '1rem 1.5rem' }}>
+      {!embedded && (
+        <>
+          <div className="d-flex align-items-center mb-3">
+            <h5 className="fw-bold mb-0"><i className="bi bi-receipt me-2 text-primary" />Facturas</h5>
+          </div>
 
-      <ul className="nav nav-tabs mb-3">
-        {!noDashboard && (
-          <li className="nav-item">
-            <button className={`nav-link py-1 px-3 ${tab === 'dashboard' ? 'active' : ''}`} onClick={() => setTab('dashboard')}>
-              <i className="bi bi-speedometer2 me-1" />Dashboard
-            </button>
-          </li>
-        )}
-        <li className="nav-item">
-          <button className={`nav-link py-1 px-3 ${tab === 'compras' ? 'active' : ''}`} onClick={() => setTab('compras')}>
-            <i className="bi bi-cart3 me-1" />Compras
-            {factC.length > 0 && <span className="badge bg-secondary ms-1" style={{ fontSize: '0.65rem' }}>{factC.length}</span>}
-          </button>
-        </li>
-        <li className="nav-item">
-          <button className={`nav-link py-1 px-3 ${tab === 'ventas' ? 'active' : ''}`} onClick={() => setTab('ventas')}>
-            <i className="bi bi-shop me-1" />Ventas
-            {factV.length > 0 && <span className="badge bg-secondary ms-1" style={{ fontSize: '0.65rem' }}>{factV.length}</span>}
-          </button>
-        </li>
-        <li className="nav-item">
-          <button className={`nav-link py-1 px-3 ${tab === 'saldos' ? 'active' : ''}`} onClick={() => setTab('saldos')}>
-            <i className="bi bi-bank me-1" />Saldos
-          </button>
-        </li>
-        <li className="nav-item">
-          <button className={`nav-link py-1 px-3 ${tab === 'servicios' ? 'active' : ''}`} onClick={() => setTab('servicios')}>
-            <i className="bi bi-lightning-charge me-1" />Servicios
-            {servicios.filter(s => s.cuota_estado === 'pendiente').length > 0 && (
-              <span className="badge bg-warning text-dark ms-1" style={{ fontSize: '0.65rem' }}>
-                {servicios.filter(s => s.cuota_estado === 'pendiente').length}
-              </span>
+          <ul className="nav nav-tabs mb-3">
+            {!noDashboard && (
+              <li className="nav-item">
+                <button className={`nav-link py-1 px-3 ${tab === 'dashboard' ? 'active' : ''}`} onClick={() => setTab('dashboard')}>
+                  <i className="bi bi-speedometer2 me-1" />Dashboard
+                </button>
+              </li>
             )}
-          </button>
-        </li>
-        <li className="nav-item">
-          <button className={`nav-link py-1 px-3 ${tab === 'control' ? 'active' : ''}`} onClick={() => setTab('control')}>
-            <i className="bi bi-exclamation-triangle me-1" />Control OC
-            {ctrlOC.length > 0 && (
-              <span className="badge bg-danger ms-1" style={{ fontSize: '0.65rem' }}>{ctrlOC.length}</span>
-            )}
-          </button>
-        </li>
-        <li className="nav-item">
-          <button className={`nav-link py-1 px-3 ${tab === 'oc-clientes' ? 'active' : ''}`} onClick={() => setTab('oc-clientes')}>
-            <i className="bi bi-file-earmark-text me-1" />OC Clientes
-          </button>
-        </li>
-      </ul>
+            <li className="nav-item">
+              <button className={`nav-link py-1 px-3 ${tab === 'compras' ? 'active' : ''}`} onClick={() => setTab('compras')}>
+                <i className="bi bi-cart3 me-1" />Facturas de Compra
+                {factC.length > 0 && <span className="badge bg-secondary ms-1" style={{ fontSize: '0.65rem' }}>{factC.length}</span>}
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link py-1 px-3 ${tab === 'ventas' ? 'active' : ''}`} onClick={() => setTab('ventas')}>
+                <i className="bi bi-shop me-1" />Facturas de Venta
+                {factV.length > 0 && <span className="badge bg-secondary ms-1" style={{ fontSize: '0.65rem' }}>{factV.length}</span>}
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link py-1 px-3 ${tab === 'saldos' ? 'active' : ''}`} onClick={() => setTab('saldos')}>
+                <i className="bi bi-bank me-1" />Tesorería
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link py-1 px-3 ${tab === 'servicios' ? 'active' : ''}`} onClick={() => setTab('servicios')}>
+                <i className="bi bi-lightning-charge me-1" />Servicios
+                {servCuotas.filter(c => c.estado === 'pendiente').length > 0 && (
+                  <span className="badge bg-warning text-dark ms-1" style={{ fontSize: '0.65rem' }}>
+                    {servCuotas.filter(c => c.estado === 'pendiente').length}
+                  </span>
+                )}
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link py-1 px-3 ${tab === 'control' ? 'active' : ''}`} onClick={() => setTab('control')}>
+                <i className="bi bi-exclamation-triangle me-1" />Control OC
+                {ctrlOC.length > 0 && (
+                  <span className="badge bg-danger ms-1" style={{ fontSize: '0.65rem' }}>{ctrlOC.length}</span>
+                )}
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link py-1 px-3 ${tab === 'seguimiento-compras' ? 'active' : ''}`} onClick={() => setTab('seguimiento-compras')}>
+                <i className="bi bi-truck me-1" />Seguimiento OC Compras
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link py-1 px-3 ${tab === 'oc-clientes' ? 'active' : ''}`} onClick={() => setTab('oc-clientes')}>
+                <i className="bi bi-file-earmark-text me-1" />OC Clientes
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link py-1 px-3 ${tab === 'seguimiento-ventas' ? 'active' : ''}`} onClick={() => setTab('seguimiento-ventas')}>
+                <i className="bi bi-graph-up-arrow me-1" />Seguimiento OC Ventas
+              </button>
+            </li>
+          </ul>
+        </>
+      )}
 
       {/* ── TAB DASHBOARD ── */}
       {tab === 'dashboard' && <FinanzasDashboard />}
@@ -758,11 +1354,23 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
         <div className="flex-grow-1 d-flex flex-column overflow-hidden">
           <div className="d-flex justify-content-between align-items-center mb-3">
             <FiltroBarra filt={filtC} setFilt={setFiltC} />
-            {canWrite && (
-              <button className="btn btn-sm btn-primary ms-3 flex-shrink-0" onClick={abrirNuevaC}>
-                <i className="bi bi-plus-lg me-1" />Nueva Factura
+            <div className="d-flex align-items-center gap-2 ms-3 flex-shrink-0">
+              <SelectorColumnas columnas={COLS_FACT_COMPRA} visible={colsFactC.visible} onToggle={colsFactC.toggle} />
+              <input type="month" className="form-control form-control-sm" style={{ width: 145 }}
+                value={mesExportarC} onChange={e => setMesExportarC(e.target.value)} />
+              <button className="btn btn-sm btn-outline-success" onClick={() => exportarFacturasCompraMes()} disabled={exportandoC}>
+                {exportandoC ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-file-excel me-1" />}
+                Exportar mes
               </button>
-            )}
+              <button className="btn btn-sm btn-outline-secondary" onClick={abrirCompararArca}>
+                <i className="bi bi-file-earmark-diff me-1" />Comparar con ARCA
+              </button>
+              {canWrite && (
+                <button className="btn btn-sm btn-primary" onClick={abrirNuevaC}>
+                  <i className="bi bi-plus-lg me-1" />Nueva Factura
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex-grow-1 overflow-auto">
             {loadC ? (
@@ -775,73 +1383,92 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
               <table className="table table-sm table-hover align-middle mb-0" style={{ fontSize: '0.8rem' }}>
                 <thead className="table-light">
                   <tr>
-                    <th>Fecha</th>
-                    <th style={{ width: 55 }}>Tipo</th>
-                    <th>N° Factura</th>
-                    <th>Proveedor</th>
-                    <th>CUIT</th>
-                    <th className="text-end">Neto Grav.</th>
-                    <th className="text-end">No Grav/Exento</th>
-                    <th className="text-end">IVA 21%</th>
-                    <th className="text-end">IVA 10.5%</th>
-                    <th className="text-end">IVA 27%</th>
-                    <th className="text-end">Otros Imp.</th>
-                    <th className="text-end">Perc. IVA</th>
-                    <th className="text-end">Perc. IIBB</th>
-                    <th className="text-end">Total</th>
-                    <th>Período</th>
-                    <th>Pago</th>
+                    {colsFactC.visible('fecha') && <th>Fecha</th>}
+                    {colsFactC.visible('tipo') && <th style={{ width: 55 }}>Tipo</th>}
+                    {colsFactC.visible('numero') && <th>N° Factura</th>}
+                    {colsFactC.visible('proveedor') && <th>Proveedor</th>}
+                    {colsFactC.visible('cuit') && <th>CUIT</th>}
+                    {colsFactC.visible('neto') && <th className="text-end">Neto Grav.</th>}
+                    {colsFactC.visible('no_grav') && <th className="text-end">No Grav/Exento</th>}
+                    {colsFactC.visible('iva21') && <th className="text-end">IVA 21%</th>}
+                    {colsFactC.visible('iva105') && <th className="text-end">IVA 10.5%</th>}
+                    {colsFactC.visible('iva27') && <th className="text-end">IVA 27%</th>}
+                    {colsFactC.visible('otros_imp') && <th className="text-end">Otros Imp.</th>}
+                    {colsFactC.visible('perc_iva') && <th className="text-end">Perc. IVA</th>}
+                    {colsFactC.visible('perc_iibb') && <th className="text-end">Perc. IIBB</th>}
+                    {colsFactC.visible('total') && <th className="text-end">Total</th>}
+                    {colsFactC.visible('observaciones') && <th>Observaciones</th>}
+                    {colsFactC.visible('pago') && <th>Pago</th>}
                     {canWrite && <th style={{ width: 70 }} />}
                   </tr>
                 </thead>
                 <tbody>
-                  {factC.map(f => (
-                    <tr key={`${f.fuente}-${f.id}`}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{fmtF(f.fecha)}</td>
-                      <td><span className="badge bg-secondary">{f.tipo_factura || 'A'}</span></td>
-                      <td className="fw-semibold" style={{ whiteSpace: 'nowrap' }}>{f.numero}</td>
-                      <td style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.proveedor_nombre}>{f.proveedor_nombre || '—'}</td>
-                      <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>{f.cuit || '—'}</td>
-                      <td className="text-end">{f.neto_gravado ? fmtM(f.neto_gravado, f.moneda) : '—'}</td>
-                      <td className="text-end">{f.no_grav_exento ? fmtM(f.no_grav_exento, f.moneda) : '—'}</td>
-                      <td className="text-end">{f.iva_21 ? fmtM(f.iva_21, f.moneda) : '—'}</td>
-                      <td className="text-end">{f.iva_10_5 ? fmtM(f.iva_10_5, f.moneda) : '—'}</td>
-                      <td className="text-end">{f.iva_27 ? fmtM(f.iva_27, f.moneda) : '—'}</td>
-                      <td className="text-end">{f.otros_imp ? fmtM(f.otros_imp, f.moneda) : '—'}</td>
-                      <td className="text-end">{f.perc_iva ? fmtM(f.perc_iva, f.moneda) : '—'}</td>
-                      <td className="text-end">{f.perc_iibb ? fmtM(f.perc_iibb, f.moneda) : '—'}</td>
-                      <td className="text-end fw-semibold">{fmtM(f.importe, f.moneda)}</td>
-                      <td className="text-muted" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.observaciones}>{f.observaciones || '—'}</td>
-                      <td style={{ whiteSpace: 'nowrap', minWidth: 130 }}>
-                        {f.pago_confirmado ? (
-                          <div className="d-flex align-items-center gap-1">
-                            <span className="badge bg-success"><i className="bi bi-check2-circle me-1" />Pagada</span>
-                            {canWrite && (
-                              <button className="btn btn-sm btn-outline-warning py-0 px-1" style={{ fontSize: '0.65rem' }}
-                                title="Reabrir para corregir pagos" onClick={() => reabrirC(f)}>
-                                <i className="bi bi-arrow-counterclockwise" />
+                  {factCPagina.map(f => (
+                    <tr key={`${f.fuente}-${f.id}`} style={esNC(f.tipo_factura) ? { background: '#fff1f1', opacity: 0.85 } : {}}>
+                      {colsFactC.visible('fecha') && <td style={{ whiteSpace: 'nowrap' }}>{fmtF(f.fecha)}</td>}
+                      {colsFactC.visible('tipo') && <td><span className={`badge bg-${esNC(f.tipo_factura) ? 'danger' : 'secondary'}`}>{f.tipo_factura || 'A'}</span></td>}
+                      {colsFactC.visible('numero') && <td className="fw-semibold" style={{ whiteSpace: 'nowrap' }}>{f.numero}</td>}
+                      {colsFactC.visible('proveedor') && <td style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.proveedor_nombre}>{f.proveedor_nombre || '—'}</td>}
+                      {colsFactC.visible('cuit') && <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>{f.cuit || '—'}</td>}
+                      {colsFactC.visible('neto') && <td className="text-end">{f.neto_gravado ? fmtM(f.neto_gravado, f.moneda) : '—'}</td>}
+                      {colsFactC.visible('no_grav') && <td className="text-end">{f.no_grav_exento ? fmtM(f.no_grav_exento, f.moneda) : '—'}</td>}
+                      {colsFactC.visible('iva21') && <td className="text-end">{f.iva_21 ? fmtM(f.iva_21, f.moneda) : '—'}</td>}
+                      {colsFactC.visible('iva105') && <td className="text-end">{f.iva_10_5 ? fmtM(f.iva_10_5, f.moneda) : '—'}</td>}
+                      {colsFactC.visible('iva27') && <td className="text-end">{f.iva_27 ? fmtM(f.iva_27, f.moneda) : '—'}</td>}
+                      {colsFactC.visible('otros_imp') && <td className="text-end">{f.otros_imp ? fmtM(f.otros_imp, f.moneda) : '—'}</td>}
+                      {colsFactC.visible('perc_iva') && <td className="text-end">{f.perc_iva ? fmtM(f.perc_iva, f.moneda) : '—'}</td>}
+                      {colsFactC.visible('perc_iibb') && <td className="text-end">{f.perc_iibb ? fmtM(f.perc_iibb, f.moneda) : '—'}</td>}
+                      {colsFactC.visible('total') && <td className="text-end fw-semibold">{fmtM(f.importe, f.moneda)}</td>}
+                      {colsFactC.visible('observaciones') && <td className="text-muted" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.observaciones}>{f.observaciones || '—'}</td>}
+                      {colsFactC.visible('pago') && <td style={{ whiteSpace: 'nowrap', minWidth: 130 }}>
+                        {esNC(f.tipo_factura) ? (
+                          <span className="text-muted" style={{ fontSize: '0.72rem' }}>
+                            Anula: {f.nc_factura_numero || '—'}
+                          </span>
+                        ) : (
+                          <>
+                            {f.anulada ? (
+                              <span className="badge bg-danger" style={{ fontSize: '0.68rem' }} title={`NC: ${f.nc_numeros || ''}`}>
+                                <i className="bi bi-x-circle-fill me-1" />Anulada
+                              </span>
+                            ) : f.pago_confirmado ? (
+                              <div className="d-flex align-items-center gap-1">
+                                <span className="badge bg-success"><i className="bi bi-check2-circle me-1" />Pagada</span>
+                                {canWrite && (
+                                  <button className="btn btn-sm btn-outline-warning py-0 px-1" style={{ fontSize: '0.65rem' }}
+                                    title="Reabrir para corregir pagos" onClick={() => reabrirC(f)}>
+                                    <i className="bi bi-arrow-counterclockwise" />
+                                  </button>
+                                )}
+                              </div>
+                            ) : f.count_pagos > 0 || f.total_nc > 0 ? (
+                              <div style={{ fontSize: '0.72rem', lineHeight: 1.4 }}>
+                                {f.count_pagos > 0 && (
+                                  <div className="text-success fw-semibold">
+                                    <i className="bi bi-check2 me-1" />Pag: {fmtM(f.total_pagado, 'PESO')}
+                                  </div>
+                                )}
+                                {f.total_nc > 0 && (
+                                  <div className="text-danger fw-semibold" title={`NC: ${f.nc_numeros || ''}`}>
+                                    <i className="bi bi-file-earmark-minus me-1" />NC parcial: -{fmtM(f.total_nc, 'PESO')}
+                                  </div>
+                                )}
+                                <div className="text-danger fw-semibold">
+                                  <i className="bi bi-hourglass-split me-1" />Rest: {fmtM(f.saldo_pendiente, 'PESO')}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="badge bg-secondary"><i className="bi bi-clock me-1" />Pendiente</span>
+                            )}
+                            {canWrite && !f.anulada && (
+                              <button className="btn btn-sm btn-outline-primary py-0 px-1 ms-1" style={{ fontSize: '0.72rem' }}
+                                title="Ver/registrar pagos" onClick={() => abrirPagosC(f)}>
+                                <i className="bi bi-cash-coin" />
                               </button>
                             )}
-                          </div>
-                        ) : f.count_pagos > 0 ? (
-                          <div style={{ fontSize: '0.72rem', lineHeight: 1.4 }}>
-                            <div className="text-success fw-semibold">
-                              <i className="bi bi-check2 me-1" />Pag: {fmtM(f.total_pagado, 'PESO')}
-                            </div>
-                            <div className="text-danger fw-semibold">
-                              <i className="bi bi-hourglass-split me-1" />Rest: {fmtM(f.saldo_pendiente, 'PESO')}
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="badge bg-secondary"><i className="bi bi-clock me-1" />Pendiente</span>
+                          </>
                         )}
-                        {canWrite && (
-                          <button className="btn btn-sm btn-outline-primary py-0 px-1 ms-1" style={{ fontSize: '0.72rem' }}
-                            title="Ver/registrar pagos" onClick={() => abrirPagosC(f)}>
-                            <i className="bi bi-cash-coin" />
-                          </button>
-                        )}
-                      </td>
+                      </td>}
                       {canWrite && (
                         <td>
                           <div className="d-flex gap-1">
@@ -860,6 +1487,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
               </table>
             )}
           </div>
+          <Paginador pagina={pagC} setPagina={setPagC} total={factC.length} />
         </div>
       )}
 
@@ -868,11 +1496,14 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
         <div className="flex-grow-1 d-flex flex-column overflow-hidden">
           <div className="d-flex justify-content-between align-items-center mb-3">
             <FiltroBarra filt={filtV} setFilt={setFiltV} />
-            {canWrite && (
-              <button className="btn btn-sm btn-primary ms-3 flex-shrink-0" onClick={abrirNuevaV}>
-                <i className="bi bi-plus-lg me-1" />Nueva Factura
-              </button>
-            )}
+            <div className="d-flex align-items-center gap-2 ms-3 flex-shrink-0">
+              <SelectorColumnas columnas={COLS_FACT_VENTA} visible={colsFactV.visible} onToggle={colsFactV.toggle} />
+              {canWrite && (
+                <button className="btn btn-sm btn-primary" onClick={abrirNuevaV}>
+                  <i className="bi bi-plus-lg me-1" />Nueva Factura
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex-grow-1 overflow-auto">
             {loadV ? (
@@ -885,47 +1516,56 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
               <table className="table table-sm table-hover align-middle mb-0" style={{ fontSize: '0.8rem' }}>
                 <thead className="table-light">
                   <tr>
-                    <th>Fecha</th>
-                    <th style={{ width: 55 }}>Tipo</th>
-                    <th>N° Factura</th>
-                    <th>Cliente</th>
-                    <th>CUIT</th>
-                    <th>Concepto</th>
-                    <th>OC</th>
-                    <th className="text-end">Neto Grav.</th>
-                    <th className="text-end">IVA 21%</th>
-                    <th className="text-end">Total Fact.</th>
-                    <th className="text-end">Total Cobrado</th>
-                    <th>F. Pago</th>
-                    <th>Cobro</th>
+                    {colsFactV.visible('fecha') && <th>Fecha</th>}
+                    {colsFactV.visible('tipo') && <th style={{ width: 55 }}>Tipo</th>}
+                    {colsFactV.visible('numero') && <th>N° Factura</th>}
+                    {colsFactV.visible('cliente') && <th>Cliente</th>}
+                    {colsFactV.visible('cuit') && <th>CUIT</th>}
+                    {colsFactV.visible('concepto') && <th>Concepto</th>}
+                    {colsFactV.visible('oc') && <th>OC</th>}
+                    {colsFactV.visible('neto') && <th className="text-end">Neto Grav.</th>}
+                    {colsFactV.visible('iva') && <th className="text-end">IVA</th>}
+                    {colsFactV.visible('total') && <th className="text-end">Total Fact.</th>}
+                    {colsFactV.visible('total_cobrado') && <th className="text-end">Total Cobrado</th>}
+                    {colsFactV.visible('f_pago') && <th>F. Pago</th>}
+                    {colsFactV.visible('cobro') && <th>Cobro</th>}
                     {canWrite && <th style={{ width: 70 }} />}
                   </tr>
                 </thead>
                 <tbody>
-                  {factV.map(f => (
+                  {factVPagina.map(f => (
                     <tr key={f.id} style={esNC(f.tipo_factura) ? { background: '#fff1f1', opacity: 0.85 } : {}}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{fmtF(f.fecha)}</td>
-                      <td><span className={`badge bg-${esNC(f.tipo_factura) ? 'danger' : 'secondary'}`} style={{ fontSize: '0.65rem' }}>{f.tipo_factura || 'A'}</span></td>
-                      <td className="fw-semibold" style={{ whiteSpace: 'nowrap' }}>{f.numero}</td>
-                      <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.cliente_nombre}>{f.cliente_nombre || '—'}</td>
-                      <td className="text-muted font-monospace" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{f.cliente_cuit || '—'}</td>
-                      <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.concepto}>{f.concepto || '—'}</td>
-                      <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>
+                      {colsFactV.visible('fecha') && <td style={{ whiteSpace: 'nowrap' }}>{fmtF(f.fecha)}</td>}
+                      {colsFactV.visible('tipo') && <td><span className={`badge bg-${esNC(f.tipo_factura) ? 'danger' : 'secondary'}`} style={{ fontSize: '0.65rem' }}>{f.tipo_factura || 'A'}</span></td>}
+                      {colsFactV.visible('numero') && <td className="fw-semibold" style={{ whiteSpace: 'nowrap' }}>{f.numero}</td>}
+                      {colsFactV.visible('cliente') && <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.cliente_nombre}>{f.cliente_nombre || '—'}</td>}
+                      {colsFactV.visible('cuit') && <td className="text-muted font-monospace" style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{f.cliente_cuit || '—'}</td>}
+                      {colsFactV.visible('concepto') && <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.concepto}>{f.concepto || '—'}</td>}
+                      {colsFactV.visible('oc') && <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>
                         {f.oc || '—'}
                         {f.proy_codigo && (
                           <span className="badge bg-secondary ms-1" style={{ fontSize: '0.62rem', fontFamily: 'monospace' }} title={f.proy_nombre}>
                             {f.proy_codigo}
                           </span>
                         )}
-                      </td>
-                      <td className="text-end">{f.neto_gravado ? fmtM(f.neto_gravado, f.moneda) : '—'}</td>
-                      <td className="text-end">{f.iva_21 ? fmtM(f.iva_21, f.moneda) : '—'}</td>
-                      <td className="text-end fw-semibold">{fmtM(f.importe, f.moneda)}</td>
-                      <td className="text-end fw-semibold text-success">{f.total_pagado > 0 ? fmtM(f.total_pagado, f.moneda) : '—'}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{fmtF(f.fecha_pago)}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
+                      </td>}
+                      {colsFactV.visible('neto') && <td className="text-end">{f.neto_gravado ? fmtM(f.neto_gravado, f.moneda) : '—'}</td>}
+                      {colsFactV.visible('iva') && <td className="text-end">{(f.iva_21 || f.iva_10_5) ? fmtM((f.iva_21||0) + (f.iva_10_5||0), f.moneda) : '—'}</td>}
+                      {colsFactV.visible('total') && <td className="text-end fw-semibold">{fmtM(f.importe, f.moneda)}</td>}
+                      {/* total_pagado siempre viene convertido a pesos (así se puede sumar entre pagos de
+                          distinta moneda) — mostrarlo con la etiqueta de la factura (ej. USD) sin volver a
+                          convertir hacía aparecer montos absurdos en facturas en moneda extranjera. */}
+                      {colsFactV.visible('total_cobrado') && <td className="text-end fw-semibold text-success">{f.total_pagado > 0 ? fmtM(f.total_pagado, 'PESO') : '—'}</td>}
+                      {colsFactV.visible('f_pago') && <td style={{ whiteSpace: 'nowrap' }}>{fmtF(f.fecha_pago)}</td>}
+                      {colsFactV.visible('cobro') && <td style={{ whiteSpace: 'nowrap' }}>
                         {esNC(f.tipo_factura) ? (
-                          <span className="badge bg-danger" style={{ fontSize: '0.68rem' }}>Anulada</span>
+                          <span className="text-muted" style={{ fontSize: '0.72rem' }}>
+                            Anula: {f.nc_factura_numero || '—'}
+                          </span>
+                        ) : f.anulada ? (
+                          <span className="badge bg-danger" style={{ fontSize: '0.68rem' }} title={`NC: ${f.nc_numeros || ''}`}>
+                            <i className="bi bi-x-circle-fill me-1" />Anulada
+                          </span>
                         ) : (
                           <div className="d-flex gap-1 align-items-center">
                             {f.pago_confirmado ? (
@@ -940,11 +1580,18 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                                   </button>
                                 )}
                               </>
-                            ) : f.count_pagos > 0 ? (
+                            ) : f.count_pagos > 0 || f.total_nc > 0 ? (
                               <div style={{ fontSize: '0.72rem', lineHeight: 1.4 }}>
-                                <div className="text-success fw-semibold">
-                                  <i className="bi bi-check2 me-1" />Cob: {fmtM(f.total_pagado, 'PESO')}
-                                </div>
+                                {f.count_pagos > 0 && (
+                                  <div className="text-success fw-semibold">
+                                    <i className="bi bi-check2 me-1" />Cob: {fmtM(f.total_pagado, 'PESO')}
+                                  </div>
+                                )}
+                                {f.total_nc > 0 && (
+                                  <div className="text-danger fw-semibold" title={`NC: ${f.nc_numeros || ''}`}>
+                                    <i className="bi bi-file-earmark-minus me-1" />NC parcial: -{fmtM(f.total_nc, 'PESO')}
+                                  </div>
+                                )}
                                 <div className="text-danger fw-semibold">
                                   <i className="bi bi-hourglass-split me-1" />Rest: {fmtM(f.saldo_pendiente, 'PESO')}
                                 </div>
@@ -961,7 +1608,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                             )}
                           </div>
                         )}
-                      </td>
+                      </td>}
                       {canWrite && (
                         <td>
                           <div className="d-flex gap-1">
@@ -980,6 +1627,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
               </table>
             )}
           </div>
+          <Paginador pagina={pagV} setPagina={setPagV} total={factV.length} />
         </div>
       )}
 
@@ -998,7 +1646,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
               </div>
               <div className="modal-body" style={{ fontSize: '0.87rem' }}>
 
-                {/* ── Proveedor ── */}
+                {/* ── Proveedor (primero: define qué OC se pueden elegir) ── */}
                 <div className="row g-2 mb-3">
                   <div className="col-md-7">
                     <label className="form-label small fw-semibold">Proveedor *</label>
@@ -1006,7 +1654,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                       <select className="form-select form-select-sm" value={formC.proveedor_id}
                         onChange={e => {
                           const pv = proveedores.find(p => String(p.id) === e.target.value)
-                          setFormC(prev => ({ ...prev, proveedor_id: e.target.value, proveedor_nombre: pv?.nombre || '', cuit: pv?.cuit || prev.cuit }))
+                          setFormC(prev => ({ ...prev, proveedor_id: e.target.value, proveedor_nombre: pv?.nombre || '', cuit: pv?.cuit || prev.cuit, oc_id: '', oc_numero: '' }))
                         }}>
                         <option value="">— Seleccionar proveedor —</option>
                         {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
@@ -1036,8 +1684,9 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                           </div>
                           <div style={{ width: 170 }}>
                             <label className="form-label small mb-1">CUIT</label>
-                            <input className="form-control form-control-sm" value={newProvForm.cuit}
-                              onChange={e => setNewProvForm(p => ({ ...p, cuit: e.target.value }))} placeholder="20-12345678-9" />
+                            <input className="form-control form-control-sm" value={newProvForm.cuit} autoComplete="off"
+                              onChange={e => setNewProvForm(p => ({ ...p, cuit: e.target.value }))}
+                              onBlur={e => setNewProvForm(p => ({ ...p, cuit: formatCuit(e.target.value) }))} placeholder="20-12345678-9" />
                           </div>
                           <button className="btn btn-sm btn-primary" onClick={addProvC === 'new' ? guardarNuevoProv : guardarEditProv}>Guardar</button>
                           <button className="btn btn-sm btn-secondary" onClick={() => setAddProvC(false)}>Cancelar</button>
@@ -1047,27 +1696,63 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                   </div>
                   <div className="col-md-5">
                     <label className="form-label small fw-semibold">CUIT</label>
-                    <input className="form-control form-control-sm" value={formC.cuit}
-                      onChange={e => setFormC(p => ({ ...p, cuit: e.target.value }))} placeholder="Ej: 30-12345678-9" />
+                    <input className="form-control form-control-sm" value={formC.cuit} autoComplete="off"
+                      onChange={e => setFormC(p => ({ ...p, cuit: e.target.value }))}
+                      onBlur={e => setFormC(p => ({ ...p, cuit: formatCuit(e.target.value) }))} placeholder="Ej: 30-12345678-9" />
                   </div>
                 </div>
+
+                {/* ── OC (habilita el resto del formulario; filtrada por el proveedor elegido) ── */}
+                <div className="row g-2 mb-2">
+                  <div className="col-md-5">
+                    <label className="form-label small fw-semibold">OC / Referencia *</label>
+                    <OcCompraSelector
+                      value={formC.oc_numero}
+                      ocs={formC.proveedor_id ? ocs.filter(o => String(o.proveedor_id) === String(formC.proveedor_id)) : ocs}
+                      onChange={oc => setFormC(p => ({
+                        ...p, oc_id: oc.id || '', oc_numero: oc.numero,
+                        // Precarga la moneda/TC de la OC elegida — el usuario todavía puede
+                        // corregirlo, pero evita dejar la factura en PESO/1 por olvido cuando
+                        // la OC es en moneda extranjera.
+                        ...(oc.id ? { moneda: oc.moneda || 'PESO', tasa_cambio: oc.tc_resuelto || oc.tasa_cambio || 1 } : {}),
+                      }))}
+                      disabled={!formC.proveedor_id}
+                    />
+                  </div>
+                </div>
+                {!formC.proveedor_id ? (
+                  <div className="alert alert-warning py-2 small mb-2">
+                    <i className="bi bi-lock-fill me-1" />
+                    Elegí un proveedor para ver sus OC.
+                  </div>
+                ) : !ocElegidaC && (
+                  <div className="alert alert-warning py-2 small mb-2">
+                    <i className="bi bi-lock-fill me-1" />
+                    Elegí una OC (o marcá "PENDIENTE") para habilitar el resto de la factura.
+                  </div>
+                )}
+
+                <fieldset disabled={!ocElegidaC} style={{ border: 0, padding: 0, margin: 0 }}>
 
                 {/* ── Comprobante ── */}
                 <div className="row g-2 mb-3">
                   <div className="col-md-2">
                     <label className="form-label small fw-semibold">Tipo</label>
                     <select className="form-select form-select-sm" value={formC.tipo_factura}
-                      onChange={e => setFormC(p => ({ ...p, tipo_factura: e.target.value }))}>
+                      onChange={e => setFormC(p => ({ ...p, tipo_factura: e.target.value, nc_factura_id: '' }))}>
                       <option value="A">A</option>
                       <option value="B">B</option>
                       <option value="C">C</option>
                       <option value="E">E</option>
                       <option value="M">M</option>
+                      <option value="NC A">NC A</option>
+                      <option value="NC B">NC B</option>
+                      <option value="NC C">NC C</option>
                     </select>
                   </div>
                   <div className="col-md-4">
                     <label className="form-label small fw-semibold">N° Factura *</label>
-                    <input className="form-control form-control-sm" value={formC.numero}
+                    <input className="form-control form-control-sm" value={formC.numero} autoComplete="off"
                       onChange={e => setFormC(p => ({ ...p, numero: e.target.value }))} placeholder="Ej: 00004-00012345" />
                   </div>
                   <div className="col-md-3">
@@ -1080,6 +1765,14 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     <DateInput className="form-control form-control-sm" value={formC.fecha_vencimiento}
                       onChange={v => setFormC(p => ({ ...p, fecha_vencimiento: v }))} />
                   </div>
+                  {esNC(formC.tipo_factura) && (
+                    <div className="col-md-12">
+                      <label className="form-label small fw-semibold">Factura que anula *</label>
+                      <FacturaAnulaSelector tabla="compra" excludeId={modalC !== 'new' ? modalC.id : null}
+                        value={formC.nc_factura_id} valueLabel={formC.nc_factura_numero}
+                        onChange={f => setFormC(p => ({ ...p, nc_factura_id: f ? f.id : '', nc_factura_numero: f ? f.numero : '' }))} />
+                    </div>
+                  )}
                 </div>
 
                 <hr className="my-2" />
@@ -1089,12 +1782,12 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                 <div className="row g-2 mb-2">
                   <div className="col-md-4">
                     <label className="form-label small fw-semibold">Neto Gravado</label>
-                    <input type="number" className="form-control form-control-sm" value={formC.neto_gravado}
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formC.neto_gravado}
                       onChange={e => onNetoGravadoC(e.target.value)} min="0" step="0.01" placeholder="0.00" />
                   </div>
                   <div className="col-md-4">
                     <label className="form-label small fw-semibold">No Grav. / Exento</label>
-                    <input type="number" className="form-control form-control-sm" value={formC.no_grav_exento}
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formC.no_grav_exento}
                       onChange={e => setFormC(p => ({ ...p, no_grav_exento: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
                   </div>
                   <div className="col-md-4">
@@ -1116,7 +1809,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     <div key={key} className="col-md-3">
                       <label className="form-label small fw-semibold">{label}</label>
                       <div className="input-group input-group-sm">
-                        <input type="number" className="form-control form-control-sm" value={formC[key]}
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formC[key]}
                           onChange={e => setFormC(p => ({ ...p, [key]: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
                         <button type="button" className="btn btn-outline-secondary px-2"
                           title={`Calcular ${label} desde Neto Gravado`}
@@ -1137,23 +1830,23 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                 <div className="row g-2 mb-3">
                   <div className="col-md-3">
                     <label className="form-label small fw-semibold">Perc. IVA</label>
-                    <input type="number" className="form-control form-control-sm" value={formC.perc_iva}
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formC.perc_iva}
                       onChange={e => setFormC(p => ({ ...p, perc_iva: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
                   </div>
                   <div className="col-md-3">
                     <label className="form-label small fw-semibold">Perc. IIBB</label>
-                    <input type="number" className="form-control form-control-sm" value={formC.perc_iibb}
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formC.perc_iibb}
                       onChange={e => setFormC(p => ({ ...p, perc_iibb: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
                   </div>
                   <div className="col-md-3">
                     <label className="form-label small fw-semibold">Otros Impuestos</label>
-                    <input type="number" className="form-control form-control-sm" value={formC.otros_imp}
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formC.otros_imp}
                       onChange={e => setFormC(p => ({ ...p, otros_imp: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
                   </div>
                   {formC.moneda !== 'PESO' && (
                     <div className="col-md-3">
                       <label className="form-label small fw-semibold">Tasa de cambio</label>
-                      <input type="number" className="form-control form-control-sm" value={formC.tasa_cambio}
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formC.tasa_cambio}
                         onChange={e => setFormC(p => ({ ...p, tasa_cambio: e.target.value }))} min="0" step="0.01" />
                     </div>
                   )}
@@ -1167,25 +1860,16 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
                 <hr className="my-2" />
 
-                {/* OC + Observaciones */}
+                {/* Observaciones */}
                 <div className="row g-2">
-                  <div className="col-md-6">
-                    <label className="form-label small fw-semibold">Ref. OC <span className="text-muted fw-normal">(opcional)</span></label>
-                    <select className="form-select form-select-sm" value={formC.oc_id}
-                      onChange={e => {
-                        const oc = ocs.find(o => String(o.id) === e.target.value)
-                        setFormC(prev => ({ ...prev, oc_id: e.target.value, oc_numero: oc?.numero || '' }))
-                      }}>
-                      <option value="">— Sin OC —</option>
-                      {ocs.map(o => <option key={o.id} value={o.id}>{o.numero} — {o.proveedor_nombre}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-md-6">
+                  <div className="col-md-12">
                     <label className="form-label small fw-semibold">Observaciones</label>
                     <input className="form-control form-control-sm" value={formC.observaciones}
                       onChange={e => setFormC(p => ({ ...p, observaciones: e.target.value }))} />
                   </div>
                 </div>
+
+                </fieldset>
 
               </div>
               <div className="modal-footer py-2">
@@ -1209,7 +1893,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                   <h6 className="modal-title fw-bold mb-0">
                     <i className="bi bi-cash-coin me-2" />Pagos — {pagosModalC.numero}
                   </h6>
-                  <small className="text-muted">{pagosModalC.proveedor_nombre} · Total: {fmtM(pagosModalC.importe * (pagosModalC.tasa_cambio||1), 'PESO')}</small>
+                  <small className="text-muted">{pagosModalC.proveedor_nombre} · Total: {fmtM(totalEnPesos(pagosModalC), 'PESO')}</small>
                 </div>
                 <button className="btn-close btn-sm" onClick={() => setPagosModalC(null)} />
               </div>
@@ -1218,7 +1902,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                 {!pagosModalC.pago_confirmado && (
                   <div className="alert alert-warning py-1 px-2 mb-3 small">
                     <i className="bi bi-hourglass-split me-1" />
-                    Saldo pendiente: <strong>{fmtM(pagosModalC.saldo_pendiente ?? (pagosModalC.importe * (pagosModalC.tasa_cambio||1)), 'PESO')}</strong>
+                    Saldo pendiente: <strong>{fmtM(pagosModalC.saldo_pendiente ?? totalEnPesos(pagosModalC), 'PESO')}</strong>
                   </div>
                 )}
                 {pagosLoadC ? (
@@ -1242,13 +1926,20 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                           <td>
                             {p.estado === 'confirmado'
                               ? <span className="badge bg-success">Confirmado</span>
-                              : <button className="btn btn-xs btn-warning py-0 px-1" style={{ fontSize: '0.72rem' }} onClick={() => confirmarPagoC(p)}>Confirmar</button>}
+                              : canConfirmarPago
+                                ? <button className="btn btn-xs btn-warning py-0 px-1" style={{ fontSize: '0.72rem' }} onClick={() => confirmarPagoC(p)}>Confirmar</button>
+                                : <span className="badge bg-warning text-dark">Pendiente</span>}
                           </td>
                           {canWrite && (
                             <td>
-                              <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => eliminarPagoC(p)}>
-                                <i className="bi bi-trash" />
-                              </button>
+                              <div className="d-flex gap-1">
+                                <button className="btn btn-sm btn-outline-primary py-0 px-1" title="Editar pago" onClick={() => abrirEditarPagoC(p)}>
+                                  <i className="bi bi-pencil" />
+                                </button>
+                                <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => eliminarPagoC(p)}>
+                                  <i className="bi bi-trash" />
+                                </button>
+                              </div>
                             </td>
                           )}
                         </tr>
@@ -1258,13 +1949,13 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                 )}
 
                 {canWrite && !mostrarFormC && (
-                  <button className="btn btn-sm btn-outline-primary" onClick={() => setMostrarFormC(true)}>
+                  <button className="btn btn-sm btn-outline-primary" onClick={() => { setPagoFormC({ ...FORM_PAGO, moneda: pagosModalC.moneda || 'PESO', tasa_cambio: pagosModalC.tasa_cambio || 1 }); setEditandoPagoC(null); setMostrarFormC(true) }}>
                     <i className="bi bi-plus-lg me-1" />Registrar pago
                   </button>
                 )}
                 {canWrite && mostrarFormC && (
                   <div className="border rounded p-3" style={{ background: '#f8f9ff' }}>
-                    <p className="small fw-semibold mb-2">Nuevo pago</p>
+                    <p className="small fw-semibold mb-2">{editandoPagoC ? 'Editar pago' : 'Nuevo pago'}</p>
                     <div className="row g-2 mb-2">
                       <div className="col-md-3">
                         <label className="form-label small">Tipo</label>
@@ -1306,10 +1997,18 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     <div className="row g-2 mb-2">
                       <div className="col-md-3">
                         <label className="form-label small">Importe *</label>
-                        <input type="number" className="form-control form-control-sm" value={pagoFormC.importe}
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={pagoFormC.importe}
                           onChange={e => setPagoFormC(p => ({ ...p, importe: e.target.value }))}
                           min="0" step="0.01" placeholder="0.00" />
                       </div>
+                      {pagoFormC.moneda !== 'PESO' && pagoFormC.moneda !== 'PESOS' && (
+                        <div className="col-md-3">
+                          <label className="form-label small">Tasa de cambio</label>
+                          <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={pagoFormC.tasa_cambio}
+                            onChange={e => setPagoFormC(p => ({ ...p, tasa_cambio: e.target.value }))}
+                            min="0" step="0.01" placeholder="1" />
+                        </div>
+                      )}
                       <div className="col-md-3">
                         <label className="form-label small">Fecha *</label>
                         <DateInput className="form-control form-control-sm" value={pagoFormC.fecha}
@@ -1328,12 +2027,24 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                           onChange={e => setPagoFormC(p => ({ ...p, observaciones: e.target.value }))} />
                       </div>
                     </div>
+                    {pagoFormC.forma_pago === 'cheque_diferido' && (
+                      <p className="small text-warning mb-2">
+                        <i className="bi bi-info-circle me-1" />
+                        Se registra como <strong>pendiente</strong> hasta que confirmes la acreditación.
+                      </p>
+                    )}
+                    {pagoFormC.forma_pago === 'e-cheq' && (
+                      <p className="small text-info mb-2">
+                        <i className="bi bi-info-circle me-1" />
+                        La factura queda marcada como <strong>pagada</strong>. El E-CHEQ se sigue viendo aparte, como pendiente de débito, hasta que lo confirmes.
+                      </p>
+                    )}
                     <div className="d-flex gap-2">
                       <button className="btn btn-sm btn-primary" onClick={agregarPagoC} disabled={pagoSavingC}>
                         {pagoSavingC ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-check-lg me-1" />}
                         Guardar pago
                       </button>
-                      <button className="btn btn-sm btn-outline-secondary" onClick={() => setMostrarFormC(false)}>Cancelar</button>
+                      <button className="btn btn-sm btn-outline-secondary" onClick={() => { setMostrarFormC(false); setEditandoPagoC(null) }}>Cancelar</button>
                     </div>
                   </div>
                 )}
@@ -1360,7 +2071,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                 <p className="small mb-3">Total: <strong>{fmtM(anticipoModal.f.importe, anticipoModal.f.moneda)}</strong></p>
                 <div className="mb-2">
                   <label className="form-label small fw-semibold">Monto anticipo</label>
-                  <input type="number" className="form-control form-control-sm" value={anticipoForm.anticipo}
+                  <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={anticipoForm.anticipo}
                     onChange={e => setAnticipoForm(p => ({ ...p, anticipo: e.target.value }))}
                     min="0" step="0.01" placeholder="0.00" autoFocus />
                   {anticipoForm.anticipo > 0 && (
@@ -1378,6 +2089,155 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                 <button className="btn btn-sm btn-warning" onClick={guardarAnticipo} disabled={!anticipoForm.anticipo}>
                   <i className="bi bi-clock-history me-1" />Guardar anticipo
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL COMPARAR CON ARCA ── */}
+      {modalArca && (
+        <div className="modal d-block" style={{ background: 'rgba(0,0,0,.45)', zIndex: 1060 }}>
+          <div className="modal-dialog modal-dialog-centered modal-lg">
+            <div className="modal-content">
+              <div className="modal-header py-2">
+                <h6 className="modal-title fw-bold"><i className="bi bi-file-earmark-diff me-2" />Comparar con ARCA</h6>
+                <button className="btn-close btn-sm" onClick={() => setModalArca(false)} />
+              </div>
+              <div className="modal-body" style={{ fontSize: '0.87rem' }}>
+                {!resultadoArca ? (
+                  <>
+                    <p className="text-muted small">
+                      Subí el Excel de <strong>"Mis Comprobantes Recibidos"</strong> que se descarga del portal de ARCA
+                      (Facturación electrónica → Mis Comprobantes Recibidos → Exportar) para comparar contra las facturas
+                      de compra cargadas en el sistema y ver qué falta o no coincide.
+                    </p>
+                    <input type="file" className="form-control form-control-sm" accept=".xlsx,.xls"
+                      onChange={e => setArchivoArca(e.target.files[0] || null)} />
+                    {errorArca && <div className="alert alert-danger py-2 small mt-2 mb-0">{errorArca}</div>}
+                  </>
+                ) : (
+                  <>
+                    <div className="d-flex flex-wrap gap-3 mb-3">
+                      <div className="p-2 rounded border flex-grow-1" style={{ minWidth: 140 }}>
+                        <div className="text-muted small">Período comparado</div>
+                        <div className="fw-semibold">{fmtF(resultadoArca.desde)} – {fmtF(resultadoArca.hasta)}</div>
+                      </div>
+                      <div className="p-2 rounded border" style={{ minWidth: 110 }}>
+                        <div className="text-muted small">En ARCA</div>
+                        <div className="fw-bold fs-5">{resultadoArca.totalArca}</div>
+                      </div>
+                      <div className="p-2 rounded border" style={{ minWidth: 110 }}>
+                        <div className="text-muted small">Coinciden</div>
+                        <div className="fw-bold fs-5 text-success">{resultadoArca.coinciden}</div>
+                      </div>
+                      <div className="p-2 rounded border" style={{ minWidth: 110 }}>
+                        <div className="text-muted small">Faltan cargar</div>
+                        <div className="fw-bold fs-5 text-danger">{resultadoArca.faltantes.length}</div>
+                      </div>
+                      <div className="p-2 rounded border" style={{ minWidth: 110 }}>
+                        <div className="text-muted small">Diferencias</div>
+                        <div className="fw-bold fs-5 text-warning">{resultadoArca.diferencias.length}</div>
+                      </div>
+                      <div className="p-2 rounded border" style={{ minWidth: 110 }}>
+                        <div className="text-muted small">Sobran en sistema</div>
+                        <div className="fw-bold fs-5 text-secondary">{resultadoArca.sobrantes.length}</div>
+                      </div>
+                    </div>
+                    {resultadoArca.excluidasViejas > 0 && (
+                      <p className="text-muted small">
+                        <i className="bi bi-info-circle me-1" />
+                        Se excluyeron {resultadoArca.excluidasViejas} comprobante{resultadoArca.excluidasViejas !== 1 ? 's' : ''} de
+                        antes del 01/07/2026 (datos importados, no confiables para comparar).
+                      </p>
+                    )}
+
+                    {resultadoArca.faltantes.length > 0 && (
+                      <div className="mb-3">
+                        <p className="fw-semibold text-danger mb-1"><i className="bi bi-exclamation-triangle-fill me-1" />Faltan cargar en el sistema</p>
+                        <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                          <table className="table table-sm table-hover mb-0" style={{ fontSize: '0.78rem' }}>
+                            <thead className="table-light sticky-top"><tr><th>Fecha</th><th>Tipo</th><th>N° Comprobante</th><th>Proveedor</th><th className="text-end">Importe</th></tr></thead>
+                            <tbody>
+                              {resultadoArca.faltantes.map((f, i) => (
+                                <tr key={i}>
+                                  <td style={{ whiteSpace: 'nowrap' }}>{fmtF(f.fecha)}</td>
+                                  <td>{f.tipo}</td>
+                                  <td className="font-monospace">{f.numero}</td>
+                                  <td>{f.proveedor}</td>
+                                  <td className="text-end">{fmtM(f.importe, f.moneda)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {resultadoArca.diferencias.length > 0 && (
+                      <div className="mb-3">
+                        <p className="fw-semibold text-warning mb-1"><i className="bi bi-exclamation-circle-fill me-1" />Diferencia de importe</p>
+                        <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                          <table className="table table-sm table-hover mb-0" style={{ fontSize: '0.78rem' }}>
+                            <thead className="table-light sticky-top"><tr><th>N° Factura</th><th>Proveedor</th><th className="text-end">ARCA</th><th className="text-end">Sistema</th><th className="text-end">Diferencia</th></tr></thead>
+                            <tbody>
+                              {resultadoArca.diferencias.map((d, i) => (
+                                <tr key={i}>
+                                  <td className="font-monospace">{d.numero}</td>
+                                  <td>{d.proveedor}</td>
+                                  <td className="text-end">{fmtM(d.importe_arca, 'PESO')}</td>
+                                  <td className="text-end">{fmtM(d.importe_sistema, 'PESO')}</td>
+                                  <td className={`text-end fw-semibold ${d.diferencia > 0 ? 'text-danger' : 'text-primary'}`}>{d.diferencia > 0 ? '+' : ''}{fmtM(d.diferencia, 'PESO')}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {resultadoArca.sobrantes.length > 0 && (
+                      <div className="mb-2">
+                        <p className="fw-semibold text-secondary mb-1"><i className="bi bi-question-circle-fill me-1" />En el sistema pero no en ARCA</p>
+                        <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                          <table className="table table-sm table-hover mb-0" style={{ fontSize: '0.78rem' }}>
+                            <thead className="table-light sticky-top"><tr><th>Fecha</th><th>N° Factura</th><th>Proveedor</th><th className="text-end">Importe</th></tr></thead>
+                            <tbody>
+                              {resultadoArca.sobrantes.map((s, i) => (
+                                <tr key={i}>
+                                  <td style={{ whiteSpace: 'nowrap' }}>{fmtF(s.fecha)}</td>
+                                  <td className="font-monospace">{s.numero}</td>
+                                  <td>{s.proveedor}</td>
+                                  <td className="text-end">{fmtM(s.importe, 'PESO')}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {resultadoArca.faltantes.length === 0 && resultadoArca.diferencias.length === 0 && resultadoArca.sobrantes.length === 0 && (
+                      <div className="text-center text-success py-4">
+                        <i className="bi bi-check-circle display-6 d-block mb-2" />
+                        No hay diferencias — todo lo de ARCA está cargado y coincide.
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="modal-footer py-2">
+                {resultadoArca && (
+                  <button className="btn btn-sm btn-outline-secondary me-auto" onClick={() => { setResultadoArca(null); setArchivoArca(null) }}>
+                    <i className="bi bi-arrow-left me-1" />Comparar otro archivo
+                  </button>
+                )}
+                <button className="btn btn-sm btn-secondary" onClick={() => setModalArca(false)}>Cerrar</button>
+                {!resultadoArca && (
+                  <button className="btn btn-sm btn-primary" onClick={compararArca} disabled={comparandoArca || !archivoArca}>
+                    {comparandoArca ? <><span className="spinner-border spinner-border-sm me-1" />Comparando...</> : <><i className="bi bi-search me-1" />Comparar</>}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1418,7 +2278,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                   {ocSel && (
                     <div className="col-md-2">
                       <label className="form-label small fw-semibold">% de la OC a facturar</label>
-                      <input type="number" className="form-control form-control-sm" value={formV.oc_pct}
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formV.oc_pct}
                         onChange={e => setFormV(p => ({ ...p, oc_pct: e.target.value }))}
                         min="0" max="100" step="1" placeholder="Ej: 50" />
                     </div>
@@ -1457,7 +2317,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     </div>
                     <div className="col-md-3">
                       <label className="form-label small fw-semibold">N° Factura *</label>
-                      <input className="form-control form-control-sm" value={formV.numero}
+                      <input className="form-control form-control-sm" value={formV.numero} autoComplete="off"
                         onChange={e => setFormV(p => ({ ...p, numero: e.target.value }))}
                         placeholder="Ej: 3-926" />
                     </div>
@@ -1476,6 +2336,14 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                       <DateInput className="form-control form-control-sm" value={formV.fecha_pago}
                         onChange={v => setFormV(p => ({ ...p, fecha_pago: v }))} />
                     </div>
+                    {esNC(formV.tipo_factura) && (
+                      <div className="col-md-12">
+                        <label className="form-label small fw-semibold">Factura que anula *</label>
+                        <FacturaAnulaSelector tabla="venta" excludeId={modalV !== 'new' ? modalV.id : null}
+                          value={formV.nc_factura_id} valueLabel={formV.nc_factura_numero}
+                          onChange={f => setFormV(p => ({ ...p, nc_factura_id: f ? f.id : '', nc_factura_numero: f ? f.numero : '' }))} />
+                      </div>
+                    )}
                   </div>
 
                   <div className="row g-2 mb-3">
@@ -1520,7 +2388,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                       </label>
                       <ProyectoSelector
                         value={formV.proyecto}
-                        onChange={p => setFormV(prev => ({ ...prev, proyecto_id: p.id, proyecto: `${p.codigo} — ${p.nombre}` }))}
+                        onChange={p => setFormV(prev => ({ ...prev, proyecto_id: p?.id || null, proyecto: p ? `${p.codigo} — ${p.nombre}` : '' }))}
                       />
                     </div>
                   </div>
@@ -1541,7 +2409,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     {(formV.moneda !== 'PESO' || ocSel) && (
                       <div className="col-md-3">
                         <label className="form-label small fw-semibold">Tipo de cambio</label>
-                        <input type="number" className="form-control form-control-sm" value={formV.tasa_cambio}
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formV.tasa_cambio}
                           onChange={e => setFormV(p => ({ ...p, tasa_cambio: e.target.value }))}
                           min="0" step="0.01" placeholder="Tipo de cambio" />
                         {ocSel && formV.moneda === 'PESO' && (
@@ -1554,18 +2422,18 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                   </div>
 
                   <div className="row g-2 mb-2">
-                    <div className="col-md-4">
+                    <div className="col-md-3">
                       <label className="form-label small fw-semibold">Neto Gravado</label>
-                      <input type="number" className="form-control form-control-sm" value={formV.neto_gravado}
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formV.neto_gravado}
                         onChange={e => setFormV(p => ({ ...p, neto_gravado: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
                       {otraMoneda(formV.neto_gravado) && (
                         <div className="form-text" style={{ fontSize: '0.68rem' }}>≈ {otraMoneda(formV.neto_gravado)}</div>
                       )}
                     </div>
-                    <div className="col-md-4">
+                    <div className="col-md-3">
                       <label className="form-label small fw-semibold">IVA 21%</label>
                       <div className="input-group input-group-sm">
-                        <input type="number" className="form-control form-control-sm" value={formV.iva_21}
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formV.iva_21}
                           onChange={e => setFormV(p => ({ ...p, iva_21: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
                         <button type="button" className="btn btn-outline-secondary px-2"
                           title="Calcular IVA 21% desde Neto"
@@ -1577,9 +2445,24 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                         <div className="form-text" style={{ fontSize: '0.68rem' }}>≈ {otraMoneda(formV.iva_21)}</div>
                       )}
                     </div>
-                    <div className="col-md-4">
+                    <div className="col-md-3">
+                      <label className="form-label small fw-semibold">IVA 10.5%</label>
+                      <div className="input-group input-group-sm">
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formV.iva_10_5}
+                          onChange={e => setFormV(p => ({ ...p, iva_10_5: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
+                        <button type="button" className="btn btn-outline-secondary px-2"
+                          title="Calcular IVA 10.5% desde Neto"
+                          onClick={() => setFormV(p => ({ ...p, iva_10_5: Math.round((parseFloat(p.neto_gravado)||0) * 0.105 * 100) / 100 }))}>
+                          <i className="bi bi-calculator" style={{ fontSize: '0.72rem' }} />
+                        </button>
+                      </div>
+                      {otraMoneda(formV.iva_10_5) && (
+                        <div className="form-text" style={{ fontSize: '0.68rem' }}>≈ {otraMoneda(formV.iva_10_5)}</div>
+                      )}
+                    </div>
+                    <div className="col-md-3">
                       <label className="form-label small fw-semibold">Total Factura</label>
-                      <input type="number" className="form-control form-control-sm" value={formV.importe}
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formV.importe}
                         onChange={e => setFormV(p => ({ ...p, importe: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
                       {otraMoneda(formV.importe) && (
                         <div className="form-text" style={{ fontSize: '0.68rem' }}>≈ {otraMoneda(formV.importe)}</div>
@@ -1590,7 +2473,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                   <div className="row g-2 mb-3">
                     <div className="col-md-4">
                       <label className="form-label small fw-semibold">Total Cobrado</label>
-                      <input type="number" className="form-control form-control-sm" value={formV.total_cobrado}
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formV.total_cobrado}
                         onChange={e => setFormV(p => ({ ...p, total_cobrado: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
                     </div>
                   </div>
@@ -1646,11 +2529,14 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
                 {/* Resumen financiero */}
                 {(() => {
-                  const confirmados = pagos.filter(p => p.estado === 'confirmado')
+                  // Un E-CHEQ cuenta como cobrado apenas se registra (la factura queda saldada);
+                  // el cheque en sí se sigue rastreando aparte como pendiente de acreditación
+                  // hasta confirmarlo, pero ya no resta del saldo de la factura.
+                  const confirmados = pagos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq')
                   const cobrado  = confirmados.reduce((s, p) => s + (p.importe||0), 0)
-                  const retenido = confirmados.reduce((s, p) => s + totalPago(p) - (p.importe||0), 0)
-                  const cheques  = pagos.filter(p => p.estado === 'pendiente').reduce((s, p) => s + p.importe, 0)
-                  const total    = pagosModal.importe * (pagosModal.tasa_cambio || 1)
+                  const retenido = confirmados.reduce((s, p) => s + totalPago(p) - totalEnPesos(p), 0)
+                  const cheques  = pagos.filter(p => p.estado === 'pendiente' && p.forma_pago !== 'e-cheq').reduce((s, p) => s + totalEnPesos(p), 0)
+                  const total    = totalEnPesos(pagosModal)
                   const saldo    = Math.max(0, total - cobrado - retenido)
                   return (
                     <div className="d-flex gap-4 mb-3 p-2 rounded flex-wrap" style={{ background: '#f8f9fa' }}>
@@ -1685,7 +2571,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     </thead>
                     <tbody>
                       {pagos.map(p => {
-                        const ret = totalPago(p) - (p.importe||0)
+                        const ret = totalPago(p) - totalEnPesos(p)
                         return (
                         <tr key={p.id} style={p.estado === 'pendiente' ? { background: '#fffbea' } : {}}>
                           <td><span className="badge bg-secondary" style={{ fontSize: '0.65rem' }}>{p.tipo}</span></td>
@@ -1705,11 +2591,14 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                           {canWrite && (
                             <td>
                               <div className="d-flex gap-1">
-                                {p.estado === 'pendiente' && (
+                                {p.estado === 'pendiente' && canConfirmarPago && (
                                   <button className="btn btn-sm btn-outline-success py-0 px-1" title="Confirmar acreditación" onClick={() => confirmarPago(p)}>
                                     <i className="bi bi-check-lg" />
                                   </button>
                                 )}
+                                <button className="btn btn-sm btn-outline-primary py-0 px-1" title="Editar pago" onClick={() => abrirEditarPago(p)}>
+                                  <i className="bi bi-pencil" />
+                                </button>
                                 <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => eliminarPago(p)}>
                                   <i className="bi bi-trash" />
                                 </button>
@@ -1724,13 +2613,13 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
                 {/* Formulario nuevo pago */}
                 {canWrite && !mostrarForm && (
-                  <button className="btn btn-sm btn-outline-primary" onClick={() => setMostrarForm(true)}>
+                  <button className="btn btn-sm btn-outline-primary" onClick={() => { setPagoForm({ ...FORM_PAGO, moneda: pagosModal.moneda || 'PESO', tasa_cambio: pagosModal.tasa_cambio || 1 }); setEditandoPago(null); setMostrarForm(true) }}>
                     <i className="bi bi-plus-lg me-1" />Registrar pago
                   </button>
                 )}
                 {canWrite && mostrarForm && (
                   <div className="border rounded p-3" style={{ background: '#f8f9ff' }}>
-                    <p className="small fw-semibold mb-2">Nuevo pago</p>
+                    <p className="small fw-semibold mb-2">{editandoPago ? 'Editar pago' : 'Nuevo pago'}</p>
                     <div className="row g-2 mb-2">
                       <div className="col-md-3">
                         <label className="form-label small">Tipo</label>
@@ -1773,10 +2662,18 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     <div className="row g-2 mb-2">
                       <div className="col-md-3">
                         <label className="form-label small">Importe *</label>
-                        <input type="number" className="form-control form-control-sm" value={pagoForm.importe}
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={pagoForm.importe}
                           onChange={e => setPagoForm(p => ({ ...p, importe: e.target.value }))}
                           min="0" step="0.01" placeholder="0.00" />
                       </div>
+                      {pagoForm.moneda !== 'PESO' && pagoForm.moneda !== 'PESOS' && (
+                        <div className="col-md-3">
+                          <label className="form-label small">Tasa de cambio</label>
+                          <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={pagoForm.tasa_cambio}
+                            onChange={e => setPagoForm(p => ({ ...p, tasa_cambio: e.target.value }))}
+                            min="0" step="0.01" placeholder="1" />
+                        </div>
+                      )}
                       <div className="col-md-3">
                         <label className="form-label small">Fecha *</label>
                         <DateInput className="form-control form-control-sm" value={pagoForm.fecha}
@@ -1809,7 +2706,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                       ].map(({ key, label }) => (
                         <div key={key} className="col-md-2">
                           <label className="form-label small">{label}</label>
-                          <input type="number" className="form-control form-control-sm" value={pagoForm[key]}
+                          <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={pagoForm[key]}
                             onChange={e => setPagoForm(p => ({ ...p, [key]: e.target.value }))} min="0" step="0.01" placeholder="0.00" />
                         </div>
                       ))}
@@ -1820,12 +2717,18 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                         Se registra como <strong>pendiente</strong> hasta que confirmes la acreditación.
                       </p>
                     )}
+                    {pagoForm.forma_pago === 'e-cheq' && (
+                      <p className="small text-info mb-2">
+                        <i className="bi bi-info-circle me-1" />
+                        La factura queda marcada como <strong>cobrada</strong>. El E-CHEQ se sigue viendo aparte, como pendiente de acreditación, hasta que lo confirmes.
+                      </p>
+                    )}
                     <div className="d-flex gap-2">
                       <button className="btn btn-sm btn-primary" onClick={agregarPago} disabled={pagoSaving}>
                         {pagoSaving ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-check-lg me-1" />}
                         Guardar pago
                       </button>
-                      <button className="btn btn-sm btn-outline-secondary" onClick={() => setMostrarForm(false)}>Cancelar</button>
+                      <button className="btn btn-sm btn-outline-secondary" onClick={() => { setMostrarForm(false); setEditandoPago(null) }}>Cancelar</button>
                     </div>
                   </div>
                 )}
@@ -1857,7 +2760,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                   </div>
                   <div className="col-sm-4">
                     <label className="form-label small fw-semibold mb-1">Monto</label>
-                    <input type="number" className="form-control form-control-sm" value={formSaldo.monto}
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formSaldo.monto}
                       onChange={e => setFormSaldo(p => ({ ...p, monto: e.target.value }))}
                       onKeyDown={e => e.key === 'Enter' && guardarSaldo()}
                       min="0" step="0.01" placeholder="0.00" autoFocus />
@@ -1883,23 +2786,39 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
           {/* Tipo de cambio BNA */}
           {canWrite && (
-            <div className="card mb-3" style={{ maxWidth: 520 }}>
+            <div className="card mb-3" style={{ maxWidth: 560 }}>
               <div className="card-body py-3">
-                <h6 className="fw-bold mb-3"><i className="bi bi-currency-exchange me-2 text-success" />Tipo de Cambio BNA (Dólar)</h6>
+                <div className="d-flex justify-content-between align-items-center mb-3">
+                  <h6 className="fw-bold mb-0"><i className="bi bi-currency-exchange me-2 text-success" />Tipo de Cambio BNA (Dólar y Euro)</h6>
+                  <button className="btn btn-sm btn-outline-success" onClick={actualizarBNA} disabled={actualizandoBNA}
+                    title="Trae del sitio del BNA la cotización Billetes (venta) de hoy para dólar y euro">
+                    {actualizandoBNA ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-cloud-download me-1" />}
+                    Traer cotización de hoy
+                  </button>
+                </div>
+                <div className="form-text mb-2">O cargala a mano si el sitio del BNA no responde:</div>
                 <div className="row g-2 align-items-end">
-                  <div className="col-sm-4">
-                    <label className="form-label small fw-semibold mb-1">Valor $ por USD</label>
-                    <input type="number" className="form-control form-control-sm" value={formTC.valor}
+                  <div className="col-sm-3">
+                    <label className="form-label small fw-semibold mb-1">Moneda</label>
+                    <select className="form-select form-select-sm" value={formTC.moneda}
+                      onChange={e => setFormTC(p => ({ ...p, moneda: e.target.value }))}>
+                      <option value="DÓLAR">Dólar</option>
+                      <option value="EURO">Euro</option>
+                    </select>
+                  </div>
+                  <div className="col-sm-3">
+                    <label className="form-label small fw-semibold mb-1">Valor $</label>
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formTC.valor}
                       onChange={e => setFormTC(p => ({ ...p, valor: e.target.value }))}
                       onKeyDown={e => e.key === 'Enter' && guardarTC()}
                       min="0" step="0.01" placeholder="Ej: 1250.00" />
                   </div>
-                  <div className="col-sm-4">
+                  <div className="col-sm-3">
                     <label className="form-label small fw-semibold mb-1">Fecha</label>
                     <DateInput className="form-control form-control-sm" value={formTC.fecha}
                       onChange={v => setFormTC(p => ({ ...p, fecha: v }))} />
                   </div>
-                  <div className="col-sm-4">
+                  <div className="col-sm-3">
                     <button className="btn btn-sm btn-success w-100" onClick={guardarTC} disabled={savTC}>
                       {savTC ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-save me-1" />}
                       Registrar
@@ -1909,9 +2828,10 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                 {tcBNA.length > 0 && (
                   <div className="mt-3" style={{ fontSize: '0.82rem' }}>
                     <div className="fw-semibold text-muted mb-2" style={{ fontSize: '0.72rem', letterSpacing: '0.04em' }}>HISTORIAL</div>
-                    {tcBNA.slice(0, 5).map(t => (
+                    {tcBNA.slice(0, 6).map(t => (
                       <div key={t.id} className="d-flex justify-content-between align-items-center py-1 border-bottom">
                         <span className="text-muted">{t.fecha || t.created_at?.slice(0,10)}</span>
+                        <span className="badge bg-secondary-subtle text-secondary-emphasis">{t.moneda === 'EURO' ? 'EUR' : 'USD'}</span>
                         <span className="fw-semibold">$ {parseFloat(t.valor).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
                         <span className="text-muted small">{t.usuario_nombre || '—'}</span>
                         <button className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => eliminarTC(t)}>
@@ -1975,7 +2895,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
       {tab === 'servicios' && (
         <div className="flex-grow-1 d-flex flex-column overflow-hidden">
           <div className="d-flex justify-content-between align-items-center mb-3">
-            <span className="text-muted small">Servicios recurrentes — vencimientos y pagos</span>
+            <span className="text-muted small">Servicios recurrentes — pagos pendientes y pagados</span>
             <div className="d-flex gap-2 align-items-center flex-wrap">
               <input className="form-control form-control-sm" style={{ width: 180 }}
                 placeholder="Buscar descripción, usuario..."
@@ -1986,7 +2906,6 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                 onChange={e => setFiltServ(p => ({ ...p, estado: e.target.value }))}>
                 <option value="todos">Todos los estados</option>
                 <option value="pendiente">Pendientes</option>
-                <option value="sin_importe">Sin importe</option>
                 <option value="vencido">Vencidos</option>
                 <option value="pagado">Pagados</option>
               </select>
@@ -2003,8 +2922,8 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                 </button>
               )}
               {canWrite && (
-                <button className="btn btn-sm btn-primary" onClick={() => { setFormServ(FORM_SERV); setModalServ('new') }}>
-                  <i className="bi bi-plus-lg me-1" />Nuevo servicio
+                <button className="btn btn-sm btn-primary" onClick={abrirCargarPago}>
+                  <i className="bi bi-plus-lg me-1" />Cargar pago
                 </button>
               )}
             </div>
@@ -2012,10 +2931,10 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
 
           {loadServ ? (
             <div className="text-center py-4 text-muted"><span className="spinner-border spinner-border-sm me-2" />Cargando...</div>
-          ) : servicios.length === 0 ? (
+          ) : servCuotas.length === 0 ? (
             <div className="text-center py-5 text-muted">
               <i className="bi bi-lightning-charge display-6 d-block mb-2" />
-              No hay servicios registrados
+              No hay pagos de servicios cargados todavía
             </div>
           ) : (
             <div className="overflow-auto flex-grow-1">
@@ -2032,67 +2951,38 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                   </tr>
                 </thead>
                 <tbody>
-                  {servicios.filter(s => {
-                    const hoy = new Date().toISOString().slice(0, 10)
-                    const sinMonto = s.cuota_estado === 'pendiente' && (s.cuota_monto == null || s.cuota_monto === '')
-                    const pendiente = s.cuota_estado === 'pendiente' && !sinMonto
-                    const vencido   = pendiente && s.cuota_vencimiento && s.cuota_vencimiento < hoy
-                    if (filtServ.estado === 'pendiente'   && !pendiente)               return false
-                    if (filtServ.estado === 'sin_importe' && !sinMonto)               return false
-                    if (filtServ.estado === 'vencido'     && !vencido)                return false
-                    if (filtServ.estado === 'pagado'      && s.cuota_estado === 'pendiente') return false
-                    if (filtServ.periodicidad && s.periodicidad !== filtServ.periodicidad) return false
+                  {servCuotas.filter(c => {
+                    const hoy = hoyLocal()
+                    const pendiente = c.estado === 'pendiente'
+                    const vencido   = pendiente && c.vencimiento && c.vencimiento < hoy
+                    if (filtServ.estado === 'pendiente' && !pendiente) return false
+                    if (filtServ.estado === 'vencido'   && !vencido)   return false
+                    if (filtServ.estado === 'pagado'    && pendiente)  return false
+                    if (filtServ.periodicidad && c.periodicidad !== filtServ.periodicidad) return false
                     if (filtServ.buscar) {
                       const q = filtServ.buscar.toLowerCase()
-                      if (!s.descripcion?.toLowerCase().includes(q) && !s.usuario?.toLowerCase().includes(q)) return false
+                      if (!c.descripcion?.toLowerCase().includes(q) && !c.usuario?.toLowerCase().includes(q)) return false
                     }
                     return true
-                  }).map(s => {
-                    const pendiente = s.cuota_estado === 'pendiente'
-                    const sinMonto  = pendiente && (s.cuota_monto == null || s.cuota_monto === '')
-                    const editando  = montoEdit[s.cuota_id] !== undefined
-
+                  }).map(c => {
+                    const pendiente = c.estado === 'pendiente'
                     return (
-                      <tr key={s.id} style={sinMonto ? { opacity: 0.65, fontSize: '0.78rem' } : {}}>
-                        <td className="fw-semibold">{s.descripcion}</td>
-                        <td><span className="badge bg-light text-dark border">{s.periodicidad}</span></td>
+                      <tr key={c.id}>
+                        <td className="fw-semibold">
+                          {c.descripcion}
+                          {!c.servicio_activo && <span className="badge bg-light text-muted border ms-2" style={{ fontSize: '0.65rem' }}>Inactivo</span>}
+                        </td>
+                        <td><span className="badge bg-light text-dark border">{c.periodicidad}</span></td>
                         <td>
-                          <div>{s.usuario || '—'}</div>
-                          {s.info_pago && <div className="text-muted" style={{ fontSize: '0.75rem' }}>{s.info_pago}</div>}
+                          <div>{c.usuario || '—'}</div>
+                          {c.info_pago && <div className="text-muted" style={{ fontSize: '0.75rem' }}>{c.info_pago}</div>}
                         </td>
-                        <td className="text-end" style={{ minWidth: 130 }}>
-                          {sinMonto ? (
-                            <div className="d-flex align-items-center gap-1 justify-content-end">
-                              <input
-                                type="number" min="0" step="0.01" placeholder="$ importe"
-                                className="form-control form-control-sm text-end"
-                                style={{ width: 110, fontSize: '0.78rem' }}
-                                value={editando ? montoEdit[s.cuota_id] : ''}
-                                onChange={e => setMontoEdit(p => ({ ...p, [s.cuota_id]: e.target.value }))}
-                                onKeyDown={e => e.key === 'Enter' && guardarMonto(s.cuota_id, montoEdit[s.cuota_id])}
-                              />
-                              {editando && (
-                                <button className="btn btn-sm btn-success py-0 px-1"
-                                  onClick={() => guardarMonto(s.cuota_id, montoEdit[s.cuota_id])}>
-                                  <i className="bi bi-check-lg" />
-                                </button>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="fw-semibold">{fmtM(s.cuota_monto, 'PESO')}</span>
-                          )}
-                        </td>
-                        <td className={vctoColor(s.cuota_vencimiento, !pendiente)}>
-                          {fmtF(s.cuota_vencimiento)}
-                        </td>
+                        <td className="text-end fw-semibold">{fmtM(c.monto, 'PESO')}</td>
+                        <td className={vctoColor(c.vencimiento, !pendiente)}>{fmtF(c.vencimiento)}</td>
                         <td>
                           {!pendiente ? (
                             <span className="badge bg-success">
-                              <i className="bi bi-check2 me-1" />Pagado {fmtF(s.cuota_fecha_pagada)}
-                            </span>
-                          ) : sinMonto ? (
-                            <span className="badge bg-light text-muted border" style={{ fontSize: '0.72rem' }}>
-                              <i className="bi bi-hourglass me-1" />Sin importe
+                              <i className="bi bi-check2 me-1" />Pagado {fmtF(c.fecha_pagada)}
                             </span>
                           ) : (
                             <span className="badge bg-warning text-dark">
@@ -2103,22 +2993,26 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                         {canWrite && (
                           <td>
                             <div className="d-flex gap-1 align-items-center">
-                              {pendiente && !sinMonto && (
+                              {pendiente && (
                                 <button className="btn btn-sm btn-outline-success py-0 px-2"
                                   style={{ fontSize: '0.72rem' }}
-                                  disabled={pagandoId === s.cuota_id}
-                                  onClick={() => pagarCuota(s)}>
-                                  {pagandoId === s.cuota_id
+                                  disabled={pagandoId === c.id}
+                                  onClick={() => pagarCuota(c)}>
+                                  {pagandoId === c.id
                                     ? <span className="spinner-border spinner-border-sm" />
                                     : <><i className="bi bi-check2-circle me-1" />Pagar</>}
                                 </button>
                               )}
-                              <button className="btn btn-sm btn-outline-primary py-0 px-1" title="Editar"
-                                onClick={() => { setFormServ({ descripcion: s.descripcion, usuario: s.usuario||'', info_pago: s.info_pago||'', periodicidad: s.periodicidad, vencimiento_inicial: '' }); setModalServ(s) }}>
+                              <button className="btn btn-sm btn-outline-secondary py-0 px-1" title="Editar monto/vencimiento de este pago"
+                                onClick={() => abrirEditarCuota(c)}>
+                                <i className="bi bi-cash-coin" />
+                              </button>
+                              <button className="btn btn-sm btn-outline-primary py-0 px-1" title="Editar servicio"
+                                onClick={() => { setFormServ({ descripcion: c.descripcion, usuario: c.usuario||'', info_pago: c.info_pago||'', periodicidad: c.periodicidad }); setModalServ({ id: c.servicio_id, descripcion: c.descripcion }) }}>
                                 <i className="bi bi-pencil" />
                               </button>
-                              <button className="btn btn-sm btn-outline-danger py-0 px-1" title="Desactivar"
-                                onClick={() => eliminarServ(s)}>
+                              <button className="btn btn-sm btn-outline-danger py-0 px-1" title="Eliminar este pago"
+                                onClick={() => eliminarCuota(c)}>
                                 <i className="bi bi-trash" />
                               </button>
                             </div>
@@ -2134,16 +3028,109 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
         </div>
       )}
 
-      {/* ── MODAL SERVICIO ── */}
+      {/* ── MODAL CARGAR PAGO ── */}
+      {modalPago && (
+        <div className="modal d-block" style={{ background: 'rgba(0,0,0,.45)', zIndex: 1060 }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header py-2">
+                <h6 className="modal-title fw-bold"><i className="bi bi-lightning-charge me-2" />Cargar pago de servicio</h6>
+                <button className="btn-close btn-sm" onClick={() => setModalPago(false)} />
+              </div>
+              <div className="modal-body" style={{ fontSize: '0.87rem' }}>
+                <div className="mb-2">
+                  <label className="form-label small fw-semibold">Servicio *</label>
+                  {!nuevoServ ? (
+                    <div className="d-flex gap-1">
+                      <select className="form-select form-select-sm" value={formPago.servicio_id}
+                        onChange={e => setFormPago(p => ({ ...p, servicio_id: e.target.value }))} autoFocus>
+                        <option value="">— Seleccionar servicio —</option>
+                        {servicios.map(s => <option key={s.id} value={s.id}>{s.descripcion}</option>)}
+                      </select>
+                      <button className="btn btn-sm btn-outline-success flex-shrink-0" title="Nuevo servicio"
+                        onClick={() => setNuevoServ(true)}>
+                        <i className="bi bi-plus-lg" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="border rounded p-2" style={{ background: '#f8f9ff' }}>
+                      <div className="d-flex justify-content-between align-items-center mb-2">
+                        <span className="small fw-semibold text-muted">Nuevo servicio</span>
+                        <button className="btn btn-sm btn-outline-secondary py-0 px-2" onClick={() => setNuevoServ(false)}>Cancelar</button>
+                      </div>
+                      <div className="mb-2">
+                        <input className="form-control form-control-sm" value={nuevoServForm.descripcion}
+                          onChange={e => setNuevoServForm(p => ({ ...p, descripcion: e.target.value }))}
+                          placeholder="Ej: EDENOR Burzaco 6363" autoFocus />
+                      </div>
+                      <div className="row g-2 mb-2">
+                        <div className="col-md-6">
+                          <select className="form-select form-select-sm" value={nuevoServForm.periodicidad}
+                            onChange={e => setNuevoServForm(p => ({ ...p, periodicidad: e.target.value }))}>
+                            {PERIODICIDADES.map(p => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                        </div>
+                        <div className="col-md-6">
+                          <input className="form-control form-control-sm" value={nuevoServForm.usuario}
+                            onChange={e => setNuevoServForm(p => ({ ...p, usuario: e.target.value }))}
+                            placeholder="Usuario / email" />
+                        </div>
+                      </div>
+                      <div className="d-flex gap-2 align-items-center">
+                        <input className="form-control form-control-sm" value={nuevoServForm.info_pago}
+                          onChange={e => setNuevoServForm(p => ({ ...p, info_pago: e.target.value }))}
+                          placeholder="Datos de pago (código, CBU...)" />
+                        <button className="btn btn-sm btn-primary flex-shrink-0" disabled={savServ} onClick={crearServicioYUsarlo}>
+                          {savServ ? <span className="spinner-border spinner-border-sm" /> : 'Crear'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="row g-2 mb-2">
+                  <div className="col-md-6">
+                    <label className="form-label small fw-semibold">Monto *</label>
+                    <input type="number" onPaste={manejarPegadoNumero} min="0" step="0.01" className="form-control form-control-sm" value={formPago.monto}
+                      onChange={e => setFormPago(p => ({ ...p, monto: e.target.value }))} placeholder="0.00" />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label small fw-semibold">Vencimiento</label>
+                    <DateInput className="form-control form-control-sm" value={formPago.vencimiento}
+                      onChange={v => setFormPago(p => ({ ...p, vencimiento: v }))} />
+                  </div>
+                </div>
+                <div className="form-check mb-2">
+                  <input className="form-check-input" type="checkbox" id="pagoYaPagado"
+                    checked={formPago.pagado}
+                    onChange={e => setFormPago(p => ({ ...p, pagado: e.target.checked, fecha_pagada: e.target.checked ? (p.fecha_pagada || hoyLocal()) : '' }))} />
+                  <label className="form-check-label small" htmlFor="pagoYaPagado">Ya está pagado</label>
+                </div>
+                {formPago.pagado && (
+                  <div className="mb-0">
+                    <label className="form-label small fw-semibold">Fecha de pago</label>
+                    <DateInput className="form-control form-control-sm" value={formPago.fecha_pagada}
+                      onChange={v => setFormPago(p => ({ ...p, fecha_pagada: v }))} />
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer py-2">
+                <button className="btn btn-sm btn-secondary" onClick={() => setModalPago(false)}>Cancelar</button>
+                <button className="btn btn-sm btn-primary" onClick={guardarPago} disabled={savPago}>
+                  {savPago ? <><span className="spinner-border spinner-border-sm me-1" />Guardando...</> : 'Guardar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL EDITAR SERVICIO ── */}
       {modalServ && (
         <div className="modal d-block" style={{ background: 'rgba(0,0,0,.45)', zIndex: 1060 }}>
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content">
               <div className="modal-header py-2">
-                <h6 className="modal-title fw-bold">
-                  <i className="bi bi-lightning-charge me-2" />
-                  {modalServ === 'new' ? 'Nuevo servicio' : 'Editar servicio'}
-                </h6>
+                <h6 className="modal-title fw-bold"><i className="bi bi-lightning-charge me-2" />Editar servicio</h6>
                 <button className="btn-close btn-sm" onClick={() => setModalServ(null)} />
               </div>
               <div className="modal-body" style={{ fontSize: '0.87rem' }}>
@@ -2174,18 +3161,50 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     onChange={e => setFormServ(p => ({ ...p, info_pago: e.target.value }))}
                     placeholder="Ej: código de pago 6554969-608" />
                 </div>
-                {modalServ === 'new' && (
-                  <div className="mb-0">
-                    <label className="form-label small fw-semibold">Próximo vencimiento</label>
-                    <DateInput className="form-control form-control-sm" value={formServ.vencimiento_inicial}
-                      onChange={v => setFormServ(p => ({ ...p, vencimiento_inicial: v }))} />
+              </div>
+              <div className="modal-footer py-2 justify-content-between">
+                <button className="btn btn-sm btn-outline-danger" onClick={() => { desactivarServ(modalServ); setModalServ(null) }}>
+                  <i className="bi bi-slash-circle me-1" />Desactivar servicio
+                </button>
+                <div className="d-flex gap-2">
+                  <button className="btn btn-sm btn-secondary" onClick={() => setModalServ(null)}>Cancelar</button>
+                  <button className="btn btn-sm btn-primary" onClick={guardarServ} disabled={savServ}>
+                    {savServ ? <><span className="spinner-border spinner-border-sm me-1" />Guardando...</> : 'Guardar'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL EDITAR MONTO/VENCIMIENTO DE UN PAGO DE SERVICIO ── */}
+      {modalCuota && (
+        <div className="modal d-block" style={{ background: 'rgba(0,0,0,.45)', zIndex: 1060 }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header py-2">
+                <h6 className="modal-title fw-bold"><i className="bi bi-cash-coin me-2" />Editar pago — {modalCuota.descripcion}</h6>
+                <button className="btn-close btn-sm" onClick={() => setModalCuota(null)} />
+              </div>
+              <div className="modal-body" style={{ fontSize: '0.87rem' }}>
+                <div className="row g-2">
+                  <div className="col-md-6">
+                    <label className="form-label small fw-semibold">Monto *</label>
+                    <input type="number" onPaste={manejarPegadoNumero} min="0" step="0.01" className="form-control form-control-sm" value={formCuota.monto}
+                      onChange={e => setFormCuota(p => ({ ...p, monto: e.target.value }))} autoFocus />
                   </div>
-                )}
+                  <div className="col-md-6">
+                    <label className="form-label small fw-semibold">Vencimiento</label>
+                    <input type="date" className="form-control form-control-sm" value={formCuota.vencimiento}
+                      onChange={e => setFormCuota(p => ({ ...p, vencimiento: e.target.value }))} />
+                  </div>
+                </div>
               </div>
               <div className="modal-footer py-2">
-                <button className="btn btn-sm btn-secondary" onClick={() => setModalServ(null)}>Cancelar</button>
-                <button className="btn btn-sm btn-primary" onClick={guardarServ} disabled={savServ}>
-                  {savServ ? <><span className="spinner-border spinner-border-sm me-1" />Guardando...</> : 'Guardar'}
+                <button className="btn btn-sm btn-secondary" onClick={() => setModalCuota(null)}>Cancelar</button>
+                <button className="btn btn-sm btn-primary" onClick={guardarCuota} disabled={savCuota}>
+                  {savCuota ? <><span className="spinner-border spinner-border-sm me-1" />Guardando...</> : 'Guardar'}
                 </button>
               </div>
             </div>
@@ -2199,7 +3218,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
           <div className="d-flex justify-content-between align-items-center mb-3">
             <div>
               <span className="fw-semibold">Facturas con diferencia de neto respecto a la OC</span>
-              <span className="text-muted small ms-2">(diferencia &gt; $1, valor sin impuestos)</span>
+              <span className="text-muted small ms-2">(diferencia &gt; 3% del neto de la OC, valor sin impuestos)</span>
             </div>
             <button className="btn btn-sm btn-outline-secondary" onClick={cargarCtrlOC} disabled={loadCtrlOC}>
               <i className="bi bi-arrow-clockwise me-1" />Actualizar
@@ -2224,7 +3243,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     <th>Facturas</th>
                     <th className="text-end">Neto OC (en $)</th>
                     <th className="text-end">Total neto facturas ($)</th>
-                    <th className="text-end">Diferencia ($)</th>
+                    <th className="text-end">Diferencia ($ / %)</th>
                     <th className="text-center">Moneda OC</th>
                   </tr>
                 </thead>
@@ -2236,8 +3255,9 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                     const origenTC = r.oc_tc_manual ? 'manual'
                       : r.oc_tc_dia ? 'dia'
                       : r.oc_tc_original > 0 ? 'oc' : null
+                    const pctDiff = r.oc_neto_pesos > 0 ? Math.abs(diff) / r.oc_neto_pesos * 100 : null
                     return (
-                      <tr key={r.oc_id} className={!tcValido ? 'table-info' : Math.abs(diff) > 1000 ? 'table-danger' : 'table-warning'}>
+                      <tr key={r.oc_id} className={!tcValido ? 'table-info' : pctDiff > 10 ? 'table-danger' : 'table-warning'}>
                         <td className="fw-semibold text-primary">{r.oc_numero}</td>
                         <td>{r.proveedor_nombre}</td>
                         <td>
@@ -2267,14 +3287,24 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                           )}
                         </td>
                         <td className="text-end">{fmtM(r.facturas_neto_total, 'PESO')}</td>
-                        <td className={`text-end fw-bold ${!tcValido ? 'text-muted' : diff > 0 ? 'text-danger' : 'text-success'}`}
-                          style={!esPeso ? { cursor: 'pointer' } : undefined}
-                          title={!esPeso ? 'Click para ajustar el tipo de cambio usado en esta OC' : undefined}
-                          onClick={() => { if (!esPeso) setEditTC({ oc_id: r.oc_id, oc_numero: r.oc_numero, valor: r.oc_tc_manual || '' }) }}>
-                          {tcValido
-                            ? <>{diff > 0 ? '+' : ''}{fmtM(diff, 'PESO')}</>
-                            : 'TC no cargado en la OC'}
-                          {!esPeso && <i className="bi bi-pencil-square ms-1 text-muted" style={{ fontSize: '0.7rem' }} />}
+                        <td className={`text-end fw-bold ${!tcValido ? 'text-muted' : diff > 0 ? 'text-danger' : 'text-success'}`}>
+                          <span
+                            style={!esPeso ? { cursor: 'pointer' } : undefined}
+                            title={!esPeso ? 'Click para ajustar el tipo de cambio usado en esta OC' : undefined}
+                            onClick={() => { if (!esPeso) setEditTC({ oc_id: r.oc_id, oc_numero: r.oc_numero, valor: r.oc_tc_manual || '' }) }}>
+                            {tcValido
+                              ? <>{diff > 0 ? '+' : ''}{fmtM(diff, 'PESO')} {pctDiff != null && <span className="fw-normal" style={{ fontSize: '0.72rem' }}>({pctDiff.toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%)</span>}</>
+                              : 'TC no cargado en la OC'}
+                            {!esPeso && <i className="bi bi-pencil-square ms-1 text-muted" style={{ fontSize: '0.7rem' }} />}
+                          </span>
+                          {!esPeso && r.oc_neto_orig > 0 && diff !== 0 && (
+                            <button className="btn btn-sm btn-outline-primary py-0 px-1 ms-2" style={{ fontSize: '0.68rem' }}
+                              disabled={savingTC}
+                              title="Ajustar el TC de esta OC para que coincida exactamente con lo facturado"
+                              onClick={() => autocorregirTC(r)}>
+                              <i className="bi bi-magic me-1" />Autocorregir
+                            </button>
+                          )}
                         </td>
                         <td className="text-center">
                           <span className={`badge ${esPeso ? 'bg-secondary' : 'bg-info text-dark'}`}>{r.oc_moneda}</span>
@@ -2313,7 +3343,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
                   </div>
                   <div className="modal-body">
                     <label className="form-label small fw-semibold">Tipo de cambio a usar para esta OC</label>
-                    <input type="number" min="0" step="0.01" className="form-control form-control-sm"
+                    <input type="number" onPaste={manejarPegadoNumero} min="0" step="0.01" className="form-control form-control-sm"
                       placeholder="Ej: 1510"
                       value={editTC.valor}
                       onChange={e => setEditTC(x => ({ ...x, valor: e.target.value }))} />
@@ -2334,10 +3364,213 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard } = {}) {
         </div>
       )}
 
+      {/* ── TAB SEGUIMIENTO OC COMPRAS (solo lectura) ── */}
+      {tab === 'seguimiento-compras' && (() => {
+        const abiertas = segCompras.filter(r => r.estado !== 'Cancelada' && !(r.estado_facturacion === 'completo' && r.estado_pago === 'pagado'))
+        const montoPendienteFacturar = abiertas.reduce((s, r) => s + Math.max(0, (r.oc_neto_pesos || 0) - (r.facturas_neto_total || 0)), 0)
+        const montoPendientePago = abiertas.filter(r => r.estado_pago === 'pendiente' || r.estado_pago === 'parcial')
+          .reduce((s, r) => s + (r.facturas_neto_total || 0), 0)
+        const atrasadas = segCompras.filter(r => r.atrasada)
+        const FACT_LABEL = { sin_facturar: { txt: 'Sin facturar', cls: 'bg-secondary' }, parcial: { txt: 'Parcial', cls: 'bg-warning text-dark' }, completo: { txt: 'Completo', cls: 'bg-success' } }
+        const PAGO_LABEL = { sin_facturar: { txt: '—', cls: 'bg-secondary' }, pendiente: { txt: 'Pendiente', cls: 'bg-danger' }, parcial: { txt: 'Parcial', cls: 'bg-warning text-dark' }, pagado: { txt: 'Pagado', cls: 'bg-success' } }
+        const RECEPCION_CLS = { Emitida: 'bg-secondary', Parcial: 'bg-warning text-dark', Recibida: 'bg-success', Cancelada: 'bg-dark' }
+        return (
+        <div className="flex-grow-1 d-flex flex-column overflow-hidden">
+          <p className="text-muted small mb-2">
+            Panorama de todas las OC de compras — no importa si ya fueron recibidas o no, sino cómo viene su ciclo de facturación y pago.
+          </p>
+
+          {/* KPIs */}
+          <div className="row g-2 mb-3">
+            {[
+              { label: 'OC abiertas',                valor: abiertas.length,                       icon: 'truck',              color: '#0d6efd' },
+              { label: 'Atrasadas (entrega vencida)', valor: atrasadas.length,                       icon: 'exclamation-triangle', color: '#dc3545' },
+              { label: 'Pendiente de facturar',        valor: fmtM(montoPendienteFacturar, 'PESO'),  icon: 'receipt',            color: '#fd7e14' },
+              { label: 'Facturado pendiente de pago',  valor: fmtM(montoPendientePago, 'PESO'),      icon: 'cash-coin',          color: '#6f42c1' },
+            ].map(k => (
+              <div className="col-md-3" key={k.label}>
+                <div className="p-2 rounded border h-100" style={{ borderLeft: `4px solid ${k.color}` }}>
+                  <div className="text-muted small"><i className={`bi bi-${k.icon} me-1`} />{k.label}</div>
+                  <div className="fs-5 fw-bold">{k.valor}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Filtros */}
+          <div className="d-flex gap-2 mb-3 flex-wrap align-items-center">
+            <input className="form-control form-control-sm" style={{ width: 220 }} placeholder="Buscar N° OC o proveedor..."
+              value={filtSegCompras.buscar} onChange={e => setFiltSegCompras(p => ({ ...p, buscar: e.target.value }))} />
+            <select className="form-select form-select-sm" style={{ width: 150 }}
+              value={filtSegCompras.estado} onChange={e => setFiltSegCompras(p => ({ ...p, estado: e.target.value }))}>
+              <option value="">Recepción: todas</option>
+              <option value="Emitida">Emitida</option>
+              <option value="Parcial">Parcial</option>
+              <option value="Recibida">Recibida</option>
+              <option value="Cancelada">Cancelada</option>
+            </select>
+            <select className="form-select form-select-sm" style={{ width: 170 }}
+              value={filtSegCompras.estado_facturacion} onChange={e => setFiltSegCompras(p => ({ ...p, estado_facturacion: e.target.value }))}>
+              <option value="">Facturación: todas</option>
+              <option value="sin_facturar">Sin facturar</option>
+              <option value="parcial">Parcial</option>
+              <option value="completo">Completo</option>
+            </select>
+            <select className="form-select form-select-sm" style={{ width: 150 }}
+              value={filtSegCompras.estado_pago} onChange={e => setFiltSegCompras(p => ({ ...p, estado_pago: e.target.value }))}>
+              <option value="">Pago: todos</option>
+              <option value="pendiente">Pendiente</option>
+              <option value="parcial">Parcial</option>
+              <option value="pagado">Pagado</option>
+            </select>
+            {(filtSegCompras.buscar || filtSegCompras.estado || filtSegCompras.estado_facturacion || filtSegCompras.estado_pago) && (
+              <button className="btn btn-sm btn-outline-secondary" onClick={() => setFiltSegCompras({ estado: '', estado_facturacion: '', estado_pago: '', buscar: '' })}>
+                <i className="bi bi-x" />
+              </button>
+            )}
+            <SelectorColumnas columnas={COLS_SEG_COMPRAS} visible={colsSegComp.visible} onToggle={colsSegComp.toggle} />
+          </div>
+
+          <div className="flex-grow-1 overflow-auto">
+            {loadSegCompras ? (
+              <div className="text-center text-muted py-5"><span className="spinner-border spinner-border-sm me-2" />Cargando...</div>
+            ) : segCompras.length === 0 ? (
+              <div className="text-center text-muted py-5"><i className="bi bi-inbox display-6 d-block mb-2" />Sin OC que coincidan</div>
+            ) : (
+              <table className="table table-sm table-hover align-middle mb-0" style={{ fontSize: '0.8rem' }}>
+                <thead className="table-light">
+                  <tr>
+                    {colsSegComp.visible('oc') && <th>OC</th>}
+                    {colsSegComp.visible('proveedor') && <th>Proveedor</th>}
+                    {colsSegComp.visible('fecha') && <th>Fecha</th>}
+                    {colsSegComp.visible('entrega') && <th>Entrega est.</th>}
+                    {colsSegComp.visible('recepcion') && <th>Recepción</th>}
+                    {colsSegComp.visible('neto') && <th className="text-end">Neto OC</th>}
+                    {colsSegComp.visible('facturacion') && <th>Facturación</th>}
+                    {colsSegComp.visible('pct_facturado') && <th className="text-end">% Facturado</th>}
+                    {colsSegComp.visible('pago') && <th>Pago</th>}
+                    {colsSegComp.visible('pct_pagado') && <th className="text-end">% Pagado</th>}
+                    {colsSegComp.visible('ultima_factura') && <th>Última factura</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {segComprasPagina.map(r => (
+                    <tr key={r.oc_id} style={{ cursor: 'pointer' }} title="Abrir OC"
+                      onClick={() => navigate('/compras', { state: { abrirOcId: r.oc_id } })}>
+                      {colsSegComp.visible('oc') && <td className="fw-semibold text-primary">{r.oc_numero}</td>}
+                      {colsSegComp.visible('proveedor') && <td style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.proveedor_nombre}>{r.proveedor_nombre || '—'}</td>}
+                      {colsSegComp.visible('fecha') && <td style={{ whiteSpace: 'nowrap' }}>{fmtF(r.fecha)}</td>}
+                      {colsSegComp.visible('entrega') && <td style={{ whiteSpace: 'nowrap' }} className={r.atrasada ? 'text-danger fw-semibold' : ''}>
+                        {fmtF(r.fecha_entrega_est)}{r.atrasada && <i className="bi bi-exclamation-triangle-fill ms-1" title="Entrega vencida" />}
+                      </td>}
+                      {colsSegComp.visible('recepcion') && <td><span className={`badge ${RECEPCION_CLS[r.estado] || 'bg-secondary'}`} style={{ fontSize: '0.68rem' }}>{r.estado}</span></td>}
+                      {colsSegComp.visible('neto') && <td className="text-end">{fmtM(r.oc_neto_pesos, 'PESO')}</td>}
+                      {colsSegComp.visible('facturacion') && <td><span className={`badge ${FACT_LABEL[r.estado_facturacion].cls}`} style={{ fontSize: '0.68rem' }}>{FACT_LABEL[r.estado_facturacion].txt}</span></td>}
+                      {colsSegComp.visible('pct_facturado') && <td className="text-end">{r.pct_facturado}%</td>}
+                      {colsSegComp.visible('pago') && <td><span className={`badge ${PAGO_LABEL[r.estado_pago].cls}`} style={{ fontSize: '0.68rem' }}>{PAGO_LABEL[r.estado_pago].txt}</span></td>}
+                      {colsSegComp.visible('pct_pagado') && <td className="text-end">{r.pct_pagado}%</td>}
+                      {colsSegComp.visible('ultima_factura') && <td style={{ whiteSpace: 'nowrap' }}>{fmtF(r.fecha_ultima)}</td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <Paginador pagina={pagSegCompras} setPagina={setPagSegCompras} total={segCompras.length} />
+        </div>
+        )
+      })()}
+
       {/* ── TAB OC CLIENTES ── */}
       {tab === 'oc-clientes' && (
-        <FinanzasOCClientes canWrite={canWrite} />
+        <FinanzasOCClientes canWrite={canWrite} abrirOcId={abrirOcClienteId} onAbierto={() => setAbrirOcClienteId(null)} />
       )}
+
+      {/* ── TAB SEGUIMIENTO OC VENTAS (solo lectura) ── */}
+      {tab === 'seguimiento-ventas' && (() => {
+        const hoyISO = hoyLocal()
+        const resumen = Object.keys(ESTADO_LABEL).map(k => {
+          const filas = segVentas.filter(r => estadoFila(r) === k)
+          return { estado: k, cantidad: filas.length, monto: filas.reduce((s, r) => s + (parseFloat(r.monto_oc) || 0), 0) }
+        })
+        return (
+        <div className="flex-grow-1 d-flex flex-column overflow-hidden">
+          <p className="text-muted small mb-2">
+            Seguimiento gerencial de las OC de clientes — para cargar o editar los datos de una OC, usar la solapa "OC Clientes".
+          </p>
+
+          {/* KPIs por estado */}
+          <div className="row g-2 mb-3">
+            {resumen.map(r => (
+              <div className="col-md-2" key={r.estado} style={{ minWidth: 150 }}>
+                <div className="p-2 rounded border h-100">
+                  <div><span className={`badge ${ESTADO_LABEL[r.estado].cls}`} style={{ fontSize: '0.68rem' }}>{ESTADO_LABEL[r.estado].txt}</span></div>
+                  <div className="fs-5 fw-bold mt-1">{r.cantidad}</div>
+                  <div className="text-muted" style={{ fontSize: '0.72rem' }}>{fmtM(r.monto, 'DÓLAR')}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="d-flex gap-2 mb-3 flex-wrap align-items-center">
+            <select className="form-select form-select-sm" style={{ width: 190 }}
+              value={filtSegVentas} onChange={e => setFiltSegVentas(e.target.value)}>
+              <option value="">Todos los estados</option>
+              {Object.entries(ESTADO_LABEL).map(([k, v]) => <option key={k} value={k}>{v.txt}</option>)}
+            </select>
+            {filtSegVentas && (
+              <button className="btn btn-sm btn-outline-secondary" onClick={() => setFiltSegVentas('')}><i className="bi bi-x" /></button>
+            )}
+            <span className="text-muted small">{segVentasFiltradas.length} registros</span>
+          </div>
+
+          <div className="flex-grow-1 overflow-auto">
+            {loadSegVentas ? (
+              <div className="text-center text-muted py-5"><span className="spinner-border spinner-border-sm me-2" />Cargando...</div>
+            ) : segVentasFiltradas.length === 0 ? (
+              <div className="text-center text-muted py-5"><i className="bi bi-inbox display-6 d-block mb-2" />Sin registros</div>
+            ) : (
+              <table className="table table-sm table-hover align-middle mb-0" style={{ fontSize: '0.8rem' }}>
+                <thead className="table-light">
+                  <tr>
+                    <th>Cliente</th><th>Proyecto</th><th>N° OC</th><th className="text-end">Monto OC</th>
+                    <th>Estado</th><th className="text-end">% Facturado</th><th className="text-end">% Cobrado</th>
+                    <th>Fecha OC</th><th className="text-end">Atraso</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {segVentasPagina.map(r => {
+                    const est = estadoFila(r)
+                    const atraso = diasAtrasoOC(r, hoyISO)
+                    const atrasada = atraso != null
+                    return (
+                      <tr key={r.id} className={atrasada ? 'table-danger' : ''} style={{ cursor: 'pointer' }} title="Abrir OC"
+                        onClick={() => { setAbrirOcClienteId(r.id); setTab('oc-clientes') }}>
+                        <td className="fw-semibold">{r.cliente || '—'}</td>
+                        <td>{r.proy_codigo
+                          ? <span className="badge bg-secondary" style={{ fontSize: '0.7rem', fontFamily: 'monospace' }} title={r.proy_nombre}>{r.proy_codigo}</span>
+                          : <span className="text-muted">—</span>}</td>
+                        <td className="fw-semibold text-primary">{r.numero_oc || '—'}</td>
+                        <td className="text-end">{fmtM(r.monto_oc, 'DÓLAR')}</td>
+                        <td><span className={`badge ${ESTADO_LABEL[est].cls}`} style={{ fontSize: '0.68rem' }}>{ESTADO_LABEL[est].txt}</span></td>
+                        <td className="text-end">{pctFacturado(r)}%</td>
+                        <td className="text-end">{pctCobrado(r)}%</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{fmtF(r.fecha_oc)}</td>
+                        <td className={`text-end ${atrasada ? 'fw-semibold text-danger' : 'text-muted'}`}>
+                          {atrasada ? `${atraso} día${atraso !== 1 ? 's' : ''}` : '—'}
+                          {atrasada && <i className="bi bi-exclamation-triangle-fill ms-1" title="Tiene una cuota vencida sin cobrar según su plazo pactado" />}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <Paginador pagina={pagSegVentas} setPagina={setPagSegVentas} total={segVentasFiltradas.length} />
+        </div>
+        )
+      })()}
 
     </div>
   )

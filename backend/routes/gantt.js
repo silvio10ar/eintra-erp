@@ -2,6 +2,7 @@
 const express = require('express')
 const { db }  = require('../db/database')
 const { verificarToken, puede } = require('../middleware/auth')
+const { hoyArgentina } = require('../helpers/fecha')
 
 const router = express.Router()
 router.use(verificarToken)
@@ -12,7 +13,7 @@ const puedeE = req => !!req.permisos?.proyectos?.escribir
 // ── Algoritmo: calcular fechas de todas las tareas de un proyecto ─────────────
 function recalcularFechas(proyectoId) {
   const proyecto = db.prepare('SELECT fecha_inicio FROM proyectos WHERE id=?').get(proyectoId)
-  const fechaBase = proyecto?.fecha_inicio || new Date().toISOString().slice(0, 10)
+  const fechaBase = proyecto?.fecha_inicio || hoyArgentina()
 
   const tareas = db.prepare('SELECT * FROM proyecto_tarea WHERE proyecto_id=? ORDER BY orden').all(proyectoId)
   if (!tareas.length) return
@@ -107,11 +108,33 @@ router.get('/proyecto/:proyectoId/tareas', (req, res) => {
   res.json(tareas)
 })
 
+// ── GET plan general: tareas de todos los proyectos activos, agrupadas por proyecto ──
+router.get('/plan-general', (req, res) => {
+  const proyectos = db.prepare(`
+    SELECT id, codigo, nombre, cliente_nombre, estado, fecha_inicio, fecha_fin_est
+    FROM proyectos
+    WHERE codigo NOT LIKE 'HIST-%' AND estado IN ('Activo','En espera')
+      AND id IN (SELECT DISTINCT proyecto_id FROM proyecto_tarea)
+    ORDER BY fecha_inicio, id
+  `).all()
+
+  const tareas = db.prepare(`
+    SELECT * FROM proyecto_tarea
+    WHERE proyecto_id IN (SELECT id FROM proyectos WHERE codigo NOT LIKE 'HIST-%' AND estado IN ('Activo','En espera'))
+    ORDER BY proyecto_id, orden, id
+  `).all()
+
+  const porProyecto = {}
+  tareas.forEach(t => { (porProyecto[t.proyecto_id] ??= []).push(t) })
+
+  res.json(proyectos.map(p => ({ ...p, tareas: porProyecto[p.id] || [] })))
+})
+
 // ── POST nueva tarea ──────────────────────────────────────────────────────────
 router.post('/proyecto/:proyectoId/tareas', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { proyectoId } = req.params
-  const { nombre, duracion_dias, responsable, estado, avance, color, observaciones, predecesoras = [], insertarEnPosicion } = req.body
+  const { nombre, duracion_dias, responsable, area_responsable, estado, avance, color, observaciones, predecesoras = [], insertarEnPosicion } = req.body
 
   let orden
   if (insertarEnPosicion !== undefined && insertarEnPosicion !== null) {
@@ -124,13 +147,15 @@ router.post('/proyecto/:proyectoId/tareas', (req, res) => {
   }
 
   const r = db.prepare(`
-    INSERT INTO proyecto_tarea (proyecto_id, orden, nombre, duracion_dias, responsable, estado, avance, color, observaciones)
-    VALUES (?,?,?,?,?,?,?,?,?)
-  `).run(proyectoId, orden, nombre || 'Nueva tarea', duracion_dias || 1, responsable || '', estado || 'Pendiente', avance || 0, color || '', observaciones || '')
+    INSERT INTO proyecto_tarea (proyecto_id, orden, nombre, duracion_dias, responsable, area_responsable, estado, avance, color, observaciones)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `).run(proyectoId, orden, nombre || 'Nueva tarea', duracion_dias || 1, responsable || '', area_responsable || '', estado || 'Pendiente', avance || 0, color || '', observaciones || '')
 
   const id = r.lastInsertRowid
   const insPred = db.prepare('INSERT OR IGNORE INTO proyecto_tarea_predecesora (tarea_id, predecesora_id) VALUES (?,?)')
-  predecesoras.forEach(pid => { if (pid !== id) insPred.run(id, pid) })
+  // Comparación tolerante a tipo (igual que en el PUT): pid suele llegar como
+  // string desde un <select> del frontend, y id es siempre un número.
+  predecesoras.forEach(pid => { if (String(pid) !== String(id)) insPred.run(id, pid) })
 
   recalcularFechas(proyectoId)
   res.status(201).json({ id, orden })
@@ -156,12 +181,12 @@ function creariaCiclo(tareaId, candidatoPid) {
 router.put('/proyecto/:proyectoId/tareas/:tareaId', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { proyectoId, tareaId } = req.params
-  const { nombre, duracion_dias, responsable, estado, avance, color, observaciones, predecesoras } = req.body
+  const { nombre, duracion_dias, responsable, area_responsable, estado, avance, color, observaciones, predecesoras } = req.body
 
   db.prepare(`
-    UPDATE proyecto_tarea SET nombre=?, duracion_dias=?, responsable=?, estado=?, avance=?, color=?, observaciones=?
+    UPDATE proyecto_tarea SET nombre=?, duracion_dias=?, responsable=?, area_responsable=?, estado=?, avance=?, color=?, observaciones=?
     WHERE id=? AND proyecto_id=?
-  `).run(nombre || '', duracion_dias || 1, responsable || '', estado || 'Pendiente', avance ?? 0, color || '', observaciones || '', tareaId, proyectoId)
+  `).run(nombre || '', duracion_dias || 1, responsable || '', area_responsable || '', estado || 'Pendiente', avance ?? 0, color || '', observaciones || '', tareaId, proyectoId)
 
   let ciclosEvitados = 0
   if (Array.isArray(predecesoras)) {

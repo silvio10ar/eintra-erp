@@ -4,6 +4,10 @@ const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
 const { verificarToken, puede } = require('../middleware/auth');
 const { buscarCondicion } = require('../helpers/buscar');
+const { sqlFechaIso, hoyArgentina } = require('../helpers/fecha');
+const { formatCuit } = require('../helpers/cuit');
+const { tasaCambioSistema } = require('../helpers/tipoCambio');
+const { validarPctCuotas } = require('../helpers/cuotas');
 
 const router = express.Router();
 
@@ -12,13 +16,43 @@ const leerCompras = (req, res, next) => {
   if (req.usuario?.rol === 'admin' || req.permisos?.compras?.leer || req.permisos?.finanzas?.leer) return next();
   return res.status(403).json({ error: 'Sin permisos de lectura' });
 };
+// El listado de OC también lo necesita Administración: para elegir la OC de
+// referencia al cargar una factura de compra (selector con opción PENDIENTE).
+// No se amplía leerCompras en general porque cubre datos más sensibles
+// (último precio, exportación de OC, Form49) que Administración no necesita ver.
+const leerOCListado = (req, res, next) => {
+  if (req.usuario?.rol === 'admin' || req.permisos?.compras?.leer || req.permisos?.finanzas?.leer || req.permisos?.administracion?.leer || req.permisos?.administracion?.escribir) return next();
+  return res.status(403).json({ error: 'Sin permisos de lectura' });
+};
 // Igual que leerCompras, pero también permite a Codificación (necesita ver items de OC sin código)
 const leerComprasOCodif = (req, res, next) => {
   if (req.usuario?.rol === 'admin' || req.permisos?.compras?.leer || req.permisos?.codificacion?.leer || req.permisos?.finanzas?.leer) return next();
   return res.status(403).json({ error: 'Sin permisos de lectura' });
 };
-// Fusión de proveedores duplicados: tarea de gestión, reservada a puestos con el módulo "ampliado" (ej. Gerente de Compras)
-const puedeFusion = (req) => req.usuario?.rol === 'admin' || req.permisos?.compras_fusion?.escribir || req.permisos?.administracion?.escribir;
+// Padrón de proveedores (nombre/CUIT/contacto): lo usan Compras, Finanzas,
+// Administración (fusión de duplicados), Materiales (selector), Calidad
+// (evaluación de proveedores) y Stock (selector al cargar productos).
+const leerProveedores = (req, res, next) => {
+  if (req.usuario?.rol === 'admin' || req.permisos?.compras?.leer || req.permisos?.finanzas?.leer
+      || req.permisos?.administracion?.leer || req.permisos?.administracion?.escribir || req.permisos?.materiales?.leer
+      || req.permisos?.calidad?.leer || req.permisos?.stock?.leer) return next();
+  return res.status(403).json({ error: 'Sin permisos de lectura' });
+};
+// Ninguna pantalla deja cargar cantidad/precio negativo (son inputs numéricos
+// con min="0") — si llega uno así es un valor mal enviado, no un caso real.
+function validarItemsOC(items) {
+  if (!items?.length) return null;
+  for (const it of items) {
+    if (it.cantidad != null && parseFloat(it.cantidad) < 0) return 'La cantidad de un ítem no puede ser negativa';
+    if (it.precio_unitario != null && parseFloat(it.precio_unitario) < 0) return 'El precio unitario de un ítem no puede ser negativo';
+    if (it.precio_final != null && parseFloat(it.precio_final) < 0) return 'El precio final de un ítem no puede ser negativo';
+  }
+  return null;
+}
+
+// Fusión de proveedores duplicados: reasigna datos de otros módulos (OC, stock,
+// mantenimiento, facturas...) de forma irreversible — reservada solo a Admin.
+const puedeFusion = (req) => req.usuario?.rol === 'admin';
 // Informes/exportaciones consolidadas de Compras: reservado a puestos con el módulo "ampliado"
 const leerInformesCompras = (req, res, next) => {
   if (req.usuario?.rol === 'admin' || req.permisos?.compras_informes?.leer || req.permisos?.finanzas?.leer) return next();
@@ -49,7 +83,7 @@ function calcularFechaEntregaOC(fecha, modo_plazo, dias_plazo, items, fallback) 
 
 // ── Proveedores ────────────────────────────────────────────────────────────────
 
-router.get('/proveedores', verificarToken, (req, res) => {
+router.get('/proveedores', verificarToken, leerProveedores, (req, res) => {
   const { buscar, todos } = req.query;
   const soloActivos = todos !== '1';
   let where = soloActivos ? 'WHERE activo=1' : '';
@@ -72,7 +106,7 @@ router.post('/proveedores', verificarToken, body('nombre').trim().notEmpty(), (r
           categoria_provision, fecha_seleccion, frecuencia_evaluacion, responsable_seleccion, responsable_evaluacion } = req.body;
   try {
     const r = db.prepare('INSERT INTO proveedores (nombre,cuit,contacto,telefono,email,direccion,localidad,cp,vendedor,condicion_pago,critico,categoria_provision,fecha_seleccion,frecuencia_evaluacion,responsable_seleccion,responsable_evaluacion) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(nombre, cuit||'', contacto||'', telefono||'', email||'', direccion||'', localidad||'', cp||'', vendedor||'', condicion_pago||'TRANSF. BANCARIA', critico?1:0,
+      .run(nombre, formatCuit(cuit), contacto||'', telefono||'', email||'', direccion||'', localidad||'', cp||'', vendedor||'', condicion_pago||'TRANSF. BANCARIA', critico?1:0,
            categoria_provision||'', fecha_seleccion||'', frecuencia_evaluacion||'Anual', responsable_seleccion||'', responsable_evaluacion||'');
     res.status(201).json(db.prepare('SELECT * FROM proveedores WHERE id=?').get(r.lastInsertRowid));
   } catch(e) {
@@ -82,7 +116,7 @@ router.post('/proveedores', verificarToken, body('nombre').trim().notEmpty(), (r
 });
 
 // Buscar proveedor por ID (incluyendo inactivos, para impresión de OC)
-router.get('/proveedores/buscar', verificarToken, (req, res) => {
+router.get('/proveedores/buscar', verificarToken, leerProveedores, (req, res) => {
   const { id, nombre } = req.query;
   if (id) {
     const p = db.prepare('SELECT * FROM proveedores WHERE id=?').get(id);
@@ -107,7 +141,7 @@ router.post('/proveedores/fusionar', verificarToken, (req, res) => {
     // Actualizar datos del master con los valores elegidos
     const { nombre, cuit, contacto, telefono, email, direccion, localidad, cp, vendedor, condicion_pago } = datos || {};
     db.prepare('UPDATE proveedores SET nombre=?,cuit=?,contacto=?,telefono=?,email=?,direccion=?,localidad=?,cp=?,vendedor=?,condicion_pago=? WHERE id=?')
-      .run(nombre??master.nombre, cuit??master.cuit, contacto??master.contacto, telefono??master.telefono,
+      .run(nombre??master.nombre, cuit!=null ? formatCuit(cuit) : master.cuit, contacto??master.contacto, telefono??master.telefono,
            email??master.email, direccion??master.direccion, localidad??master.localidad, cp??master.cp,
            vendedor??master.vendedor, condicion_pago??master.condicion_pago, master_id);
     const masterNombre = db.prepare('SELECT nombre FROM proveedores WHERE id=?').get(master_id).nombre;
@@ -327,7 +361,7 @@ router.put('/proveedores/:id', verificarToken, (req, res) => {
   const { nombre, cuit, contacto, telefono, email, direccion, localidad, cp, vendedor, condicion_pago, critico,
           categoria_provision, fecha_seleccion, frecuencia_evaluacion, responsable_seleccion, responsable_evaluacion } = req.body;
   db.prepare('UPDATE proveedores SET nombre=?,cuit=?,contacto=?,telefono=?,email=?,direccion=?,localidad=?,cp=?,vendedor=?,condicion_pago=?,critico=?,categoria_provision=?,fecha_seleccion=?,frecuencia_evaluacion=?,responsable_seleccion=?,responsable_evaluacion=? WHERE id=?')
-    .run(nombre??p.nombre, cuit??p.cuit, contacto??p.contacto, telefono??p.telefono,
+    .run(nombre??p.nombre, cuit!=null ? formatCuit(cuit) : p.cuit, contacto??p.contacto, telefono??p.telefono,
          email??p.email, direccion??p.direccion, localidad??p.localidad, cp??p.cp,
          vendedor??p.vendedor, condicion_pago??p.condicion_pago, critico!=null?critico:p.critico,
          categoria_provision??p.categoria_provision??'', fecha_seleccion??p.fecha_seleccion??'',
@@ -429,22 +463,82 @@ function nextNumeroOC() {
   return '000001';
 }
 
-router.get('/oc', verificarToken, leerCompras, (req, res) => {
-  const { estado, proveedor_id, desde, hasta, buscar, page=1, limit=50 } = req.query;
+router.get('/oc', verificarToken, leerOCListado, (req, res) => {
+  const { estado, proveedor_id, desde, hasta, buscar, excluirFacturadas, sinFactura, page=1, limit=50 } = req.query;
   const conds=[], params=[];
   if (estado)       { conds.push('o.estado=?');          params.push(estado); }
   if (proveedor_id) { conds.push('o.proveedor_id=?');    params.push(proveedor_id); }
   if (desde)        { conds.push('o.fecha>=?');           params.push(desde); }
   if (hasta)        { conds.push('o.fecha<=?');           params.push(hasta); }
   if (buscar)       { const b = buscarCondicion(buscar, ['o.numero','o.proveedor_nombre']); conds.push(b.cond); params.push(...b.params); }
+  // "OC sin factura" es un listado de seguimiento para reclamar/vincular — las OC
+  // de antes del 01/07/2026 son datos importados de planillas viejas que nunca
+  // van a completarse con una factura real (ver CLAUDE.md, "Datos confiables").
+  if (sinFactura)   { conds.push(`${sqlFechaIso('o.fecha')} >= '2026-07-01'`); }
   const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';
   const offset = (parseInt(page)-1)*parseInt(limit);
-  const total  = db.prepare(`SELECT COUNT(*) as c FROM ordenes_compra o ${where}`).get(...params).c;
+  // El "ciclo" de una OC está completo cuando ya se facturó (neto_gravado) al
+  // menos lo mismo que su neto original (oc_items) — a esas no tiene sentido
+  // ofrecerlas para elegir en una factura nueva. Tolerancia de $1 por redondeos.
+  //
+  // Ambos lados hay que compararlos en la MISMA moneda (pesos): el neto de
+  // oc_items está en la moneda propia de la OC (o.moneda/o.tasa_cambio), y
+  // cada factura puede haberse cargado en pesos o en la moneda original del
+  // comprobante (su propia moneda/tasa_cambio) — sin esta conversión, una OC
+  // en USD con facturas ya cargadas en pesos comparaba montos de unidades
+  // distintas y la OC desaparecía del selector aunque le quedara saldo.
+  //
+  // Muchas OC viejas quedaron con tasa_cambio=0 (se cargaban sin TC antes de
+  // resolverlo automáticamente al crearlas) — para esas, en vez de mostrar la
+  // OC como si no tuviera forma de convertirse, se busca el tipo_cambio del
+  // sistema más cercano (a la fecha de la OC), como último recurso: la tasa
+  // propia de la OC ya es la que se usó para facturarla, y no debe pisarse con
+  // una entrada de tipo_cambio posterior que ni siquiera existía cuando se
+  // cargó la OC. Mismo orden de prioridad que Control OC y Seguimiento OC
+  // Compras — antes eran opuestos y una misma OC podía mostrar dos totales
+  // distintos según la pantalla.
+  const tcDia = `(
+    SELECT tc.valor FROM tipo_cambio tc
+    WHERE tc.moneda = o.moneda AND tc.fecha <= o.fecha AND tc.fecha != ''
+    ORDER BY tc.fecha DESC, tc.id DESC LIMIT 1
+  )`;
+  const tcResuelto = `COALESCE(o.tc_control_manual, NULLIF(o.tasa_cambio,0), ${tcDia})`;
+  const havingPartes = [];
+  if (excluirFacturadas) {
+    havingPartes.push(`(
+         (CASE WHEN o.moneda IN ('PESO','PESOS') OR o.moneda IS NULL OR o.moneda=''
+               THEN COALESCE(SUM(i.cantidad*i.precio_final),0)
+               ELSE COALESCE(SUM(i.cantidad*i.precio_final),0) * COALESCE(${tcResuelto}, 1) END)
+         - COALESCE(MAX(fc.facturado_pesos),0)
+       ) > 1`);
+  }
+  // Para "OC recibidas sin factura" (Administración: a quién reclamarle o
+  // vincular una factura que ya está cargada) — ninguna fila en facturas_compra
+  // apunta todavía a esta OC (fc.facturado_pesos queda NULL tras el LEFT JOIN).
+  if (sinFactura) havingPartes.push('MAX(fc.facturado_pesos) IS NULL');
+  const having = havingPartes.length ? `HAVING ${havingPartes.join(' AND ')}` : '';
+  const fromJoins = `
+    FROM ordenes_compra o
+    LEFT JOIN oc_items i ON o.id=i.oc_id
+    LEFT JOIN (
+      SELECT oc_id,
+        SUM(CASE WHEN moneda IN ('PESO','PESOS') OR moneda IS NULL OR moneda=''
+                 THEN neto_gravado
+                 ELSE neto_gravado * COALESCE(NULLIF(tasa_cambio,0), 1) END) AS facturado_pesos
+      FROM facturas_compra WHERE oc_id IS NOT NULL GROUP BY oc_id
+    ) fc ON fc.oc_id = o.id
+  `;
+  const total  = db.prepare(`
+    SELECT COUNT(*) as c FROM (
+      SELECT o.id ${fromJoins} ${where} GROUP BY o.id ${having}
+    )
+  `).get(...params).c;
   const datos  = db.prepare(`
     SELECT o.*, COUNT(CASE WHEN i.descripcion!='' THEN 1 END) as n_items,
-           SUM(i.cantidad * i.precio_final) as total_usd
-    FROM ordenes_compra o LEFT JOIN oc_items i ON o.id=i.oc_id
-    ${where} GROUP BY o.id ORDER BY o.id DESC LIMIT ? OFFSET ?
+           SUM(i.cantidad * i.precio_final) as total_usd,
+           ${tcResuelto} AS tc_resuelto
+    ${fromJoins}
+    ${where} GROUP BY o.id ${having} ORDER BY o.id DESC LIMIT ? OFFSET ?
   `).all(...params, parseInt(limit), offset);
   res.json({ total, pagina: parseInt(page), datos });
 });
@@ -491,7 +585,7 @@ router.get('/ultimo-precio', verificarToken, leerCompras, (req, res) => {
   } : null);
 });
 
-router.get('/oc/:id', verificarToken, leerCompras, (req, res) => {
+router.get('/oc/:id', verificarToken, leerOCListado, (req, res) => {
   const oc = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(req.params.id);
   if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
   const items = db.prepare(`
@@ -499,7 +593,12 @@ router.get('/oc/:id', verificarToken, leerCompras, (req, res) => {
     FROM oc_items i LEFT JOIN productos p ON p.id = i.producto_id
     WHERE i.oc_id=? ORDER BY i.item_num
   `).all(oc.id);
-  res.json({ ...oc, items });
+  const facturas = db.prepare(`
+    SELECT id, tipo_factura, numero, fecha, neto_gravado, importe, moneda, pago_confirmado
+    FROM facturas_compra WHERE oc_id=? ORDER BY fecha DESC, id DESC
+  `).all(oc.id);
+  const cuotas = cargarCuotasCompra([oc.id])[oc.id] || [];
+  res.json({ ...oc, items, facturas, cuotas });
 });
 
 // Items sin codificar — para revisión del admin
@@ -526,12 +625,13 @@ router.patch('/oc/items/:itemId/codificar', verificarToken, (req, res) => {
   res.json({ ok: true, codigo: prod.codigo });
 });
 
-function actualizarCatalogoDesdeOC(items, moneda, fecha, proveedor_id) {
+// Si al crear una OC en moneda extranjera no se cargó tasa_cambio a mano,
+function actualizarCatalogoDesdeOC(items, moneda, fecha, proveedor_id, proveedor_nombre) {
   for (const it of (items || [])) {
     const precio = parseFloat(it.precio_final) || 0;
     if (it.producto_id && precio > 0) {
-      db.prepare('UPDATE productos SET precio_costo=?, precio_moneda=?, precio_fecha=? WHERE id=?')
-        .run(precio, moneda || 'DÓLAR', fecha || '', it.producto_id);
+      db.prepare('UPDATE productos SET precio_costo=?, precio_moneda=?, precio_fecha=?, proveedor=COALESCE(NULLIF(?,\'\'), proveedor) WHERE id=?')
+        .run(precio, moneda || 'DÓLAR', fecha || '', proveedor_nombre || '', it.producto_id);
     }
   }
   if (proveedor_id) {
@@ -543,6 +643,68 @@ function actualizarCatalogoDesdeOC(items, moneda, fecha, proveedor_id) {
   }
 }
 
+function cargarCuotasCompra(ocIds) {
+  if (!ocIds.length) return {};
+  const placeholders = ocIds.map(() => '?').join(',');
+  const filas = db.prepare(`
+    SELECT c.*, fc.numero AS factura_numero, fc.fecha AS factura_fecha,
+           fc.neto_gravado AS factura_neto, fc.importe AS factura_importe,
+           fc.moneda AS factura_moneda, fc.pago_confirmado AS factura_pago_confirmado
+    FROM oc_compra_cuotas c
+    LEFT JOIN facturas_compra fc ON fc.id = c.factura_id
+    WHERE c.oc_id IN (${placeholders})
+    ORDER BY c.oc_id, c.orden
+  `).all(...ocIds);
+  const porOC = {};
+  for (const f of filas) (porOC[f.oc_id] ??= []).push(f);
+  return porOC;
+}
+
+// Una misma factura puede repartirse en varias cuotas de ESTA OC (ej: un solo
+// comprobante que cubre anticipo + saldo) — lo que no puede pasar es que quede
+// vinculada a cuotas de OTRA OC, eso sí sería un error de carga.
+function guardarCuotasCompra(ocId, cuotas) {
+  validarPctCuotas(cuotas);
+  const facturasUsadas = [...new Set((cuotas || []).map(c => c.factura_id).filter(Boolean))];
+  if (facturasUsadas.length) {
+    const placeholders = facturasUsadas.map(() => '?').join(',');
+    const conflictoCuota = db.prepare(`
+      SELECT 1 FROM oc_compra_cuotas WHERE factura_id IN (${placeholders}) AND oc_id != ? LIMIT 1
+    `).get(...facturasUsadas, ocId);
+    if (conflictoCuota) { const err = new Error('Factura ya vinculada a otra OC'); err.codigo = 'FACTURA_EN_USO'; throw err; }
+    // La factura también puede estar vinculada por afuera de las cuotas (vía el
+    // botón "Vincular factura" clásico, que solo setea facturas_compra.oc_id) —
+    // ese caso no lo agarra el chequeo de arriba, hay que mirar oc_id también.
+    const conflictoOcId = db.prepare(`
+      SELECT 1 FROM facturas_compra WHERE id IN (${placeholders}) AND oc_id IS NOT NULL AND oc_id != ? LIMIT 1
+    `).get(...facturasUsadas, ocId);
+    if (conflictoOcId) { const err = new Error('Factura ya vinculada a otra OC'); err.codigo = 'FACTURA_EN_USO'; throw err; }
+  }
+  db.prepare('DELETE FROM oc_compra_cuotas WHERE oc_id=?').run(ocId);
+  const ins = db.prepare(`
+    INSERT INTO oc_compra_cuotas (oc_id, orden, tipo, pct, monto_planeado, fecha_estimada, factura_id)
+    VALUES (?,?,?,?,?,?,?)
+  `);
+  // "" (campo vacío, lo más común — casi nunca se completa "Monto planeado" a
+  // mano) NO es lo mismo que null para `??`, y guardar el string vacío tal
+  // cual rompía la comparación NULLIF(monto_planeado, 0) de Control OC (un
+  // texto vacío nunca es igual a 0 en SQLite, así que nunca caía al cálculo
+  // por %). Acá se normaliza a un número real o null antes de guardar.
+  const numOrNull = v => (v === '' || v == null) ? null : parseFloat(v);
+  (cuotas || []).forEach((c, i) => {
+    ins.run(ocId, i + 1, c.tipo || 'avance', numOrNull(c.pct), numOrNull(c.monto_planeado), c.fecha_estimada || '', c.factura_id || null);
+  });
+  // Si una cuota vino con factura_id, esa factura queda vinculada a la OC
+  // igual que con el botón "Vincular factura" — para que Control OC (que
+  // agrupa por facturas_compra.oc_id) la vea sin necesidad de hacerlo dos veces.
+  if (facturasUsadas.length) {
+    const oc = db.prepare('SELECT numero FROM ordenes_compra WHERE id=?').get(ocId);
+    const placeholders = facturasUsadas.map(() => '?').join(',');
+    db.prepare(`UPDATE facturas_compra SET oc_id=?, oc_numero=? WHERE id IN (${placeholders})`)
+      .run(ocId, oc?.numero || '', ...facturasUsadas);
+  }
+}
+
 router.post('/oc', verificarToken, body('proveedor_nombre').trim().notEmpty(), (req, res) => {
   if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const errs = validationResult(req);
@@ -550,16 +712,20 @@ router.post('/oc', verificarToken, body('proveedor_nombre').trim().notEmpty(), (
 
   const { proveedor_id, proveedor_nombre, proveedor_cuit, fecha, moneda, tasa_cambio,
           autorizado_por, elaborado_por, condicion_pago, lugar_entrega, presupuesto_n,
-          observaciones, fecha_entrega_est, estado_doc, modo_plazo, dias_plazo, items } = req.body;
+          observaciones, fecha_entrega_est, estado_doc, modo_plazo, dias_plazo, items, cuotas } = req.body;
+
+  const errItems = validarItemsOC(items);
+  if (errItems) return res.status(400).json({ error: errItems });
 
   const numero = nextNumeroOC();
-  const fechaOC = fecha||new Date().toISOString().slice(0,10);
+  const fechaOC = fecha||hoyArgentina();
   const modoPlazoOC = modo_plazo === 'ITEM' ? 'ITEM' : 'OC';
   const fechaEntregaCalc = calcularFechaEntregaOC(fechaOC, modoPlazoOC, dias_plazo, items, fecha_entrega_est);
+  const tasaCambioOC = tasa_cambio ? parseFloat(tasa_cambio) : tasaCambioSistema(moneda||'DÓLAR', fechaOC);
   const trx = db.transaction(() => {
     const r = db.prepare(`INSERT INTO ordenes_compra (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,moneda,tasa_cambio,autorizado_por,elaborado_por,condicion_pago,lugar_entrega,presupuesto_n,observaciones,fecha_entrega_est,estado_doc,modo_plazo,dias_plazo,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(numero, fechaOC, proveedor_id||null, proveedor_nombre,
-           proveedor_cuit||'', moneda||'DÓLAR', tasa_cambio||0, autorizado_por||'', elaborado_por||'',
+           formatCuit(proveedor_cuit), moneda||'DÓLAR', tasaCambioOC, autorizado_por||'', elaborado_por||'',
            condicion_pago||'TRANSF. BANCARIA', lugar_entrega||'e-intra', presupuesto_n||'', observaciones||'',
            fechaEntregaCalc, estado_doc||'', modoPlazoOC, dias_plazo!=null && dias_plazo!=='' ? parseInt(dias_plazo,10) : null, req.usuario.id);
     const oc_id = r.lastInsertRowid;
@@ -571,12 +737,23 @@ router.post('/oc', verificarToken, body('proveedor_nombre').trim().notEmpty(), (
                it.dias_plazo!=null && it.dias_plazo!=='' ? parseInt(it.dias_plazo,10) : null, it.sin_codificar ? 1 : 0);
       }
     }
+    if (cuotas?.length) guardarCuotasCompra(oc_id, cuotas);
     return oc_id;
   });
-  const oc_id = trx();
-  actualizarCatalogoDesdeOC(items, moneda, fecha, proveedor_id);
+  let oc_id;
+  try { oc_id = trx(); }
+  catch (e) {
+    if (e.codigo === 'FACTURA_EN_USO') return res.status(409).json({ error: 'Una de las facturas ya está vinculada a otra OC' });
+    if (e.codigo === 'CUOTAS_PCT_INVALIDO') return res.status(400).json({ error: e.message });
+    throw e;
+  }
+  actualizarCatalogoDesdeOC(items, moneda, fecha, proveedor_id, proveedor_nombre);
   const oc = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(oc_id);
-  res.status(201).json({ ...oc, items: db.prepare('SELECT * FROM oc_items WHERE oc_id=? ORDER BY item_num').all(oc_id) });
+  res.status(201).json({
+    ...oc,
+    items: db.prepare('SELECT * FROM oc_items WHERE oc_id=? ORDER BY item_num').all(oc_id),
+    cuotas: cargarCuotasCompra([oc_id])[oc_id] || [],
+  });
 });
 
 router.put('/oc/:id', verificarToken, (req, res) => {
@@ -588,7 +765,10 @@ router.put('/oc/:id', verificarToken, (req, res) => {
           autorizado_por, elaborado_por, condicion_pago, lugar_entrega, presupuesto_n,
           observaciones, estado, fecha_entrega_est, numero_remito, fecha_recepcion,
           estado_doc, nro_factura, importe_facturado, fecha_vencimiento, pago_confirmado,
-          modo_plazo, dias_plazo, items } = req.body;
+          modo_plazo, dias_plazo, items, cuotas } = req.body;
+
+  const errItems = validarItemsOC(items);
+  if (errItems) return res.status(400).json({ error: errItems });
 
   const fechaOC = fecha??oc.fecha;
   const modoPlazoOC = (modo_plazo ?? oc.modo_plazo) === 'ITEM' ? 'ITEM' : 'OC';
@@ -598,7 +778,7 @@ router.put('/oc/:id', verificarToken, (req, res) => {
 
   const trx = db.transaction(() => {
     db.prepare(`UPDATE ordenes_compra SET proveedor_id=?,proveedor_nombre=?,proveedor_cuit=?,fecha=?,moneda=?,tasa_cambio=?,autorizado_por=?,elaborado_por=?,condicion_pago=?,lugar_entrega=?,presupuesto_n=?,observaciones=?,estado=?,fecha_entrega_est=?,numero_remito=?,fecha_recepcion=?,estado_doc=?,nro_factura=?,importe_facturado=?,fecha_vencimiento=?,pago_confirmado=?,modo_plazo=?,dias_plazo=?,updated_at=datetime('now','localtime') WHERE id=?`)
-      .run(proveedor_id??oc.proveedor_id, proveedor_nombre??oc.proveedor_nombre, proveedor_cuit??oc.proveedor_cuit,
+      .run(proveedor_id??oc.proveedor_id, proveedor_nombre??oc.proveedor_nombre, proveedor_cuit!=null ? formatCuit(proveedor_cuit) : oc.proveedor_cuit,
            fechaOC, moneda??oc.moneda, tasa_cambio??oc.tasa_cambio, autorizado_por??oc.autorizado_por,
            elaborado_por??oc.elaborado_por, condicion_pago??oc.condicion_pago, lugar_entrega??oc.lugar_entrega,
            presupuesto_n??oc.presupuesto_n, observaciones??oc.observaciones, estado??oc.estado,
@@ -617,10 +797,20 @@ router.put('/oc/:id', verificarToken, (req, res) => {
                it.dias_plazo!=null && it.dias_plazo!=='' ? parseInt(it.dias_plazo,10) : null, it.cant_recibida||0, it.sin_codificar ? 1 : 0);
       }
     }
+    if (cuotas !== undefined) guardarCuotasCompra(req.params.id, cuotas);
   });
-  trx();
+  try { trx(); }
+  catch (e) {
+    if (e.codigo === 'FACTURA_EN_USO') return res.status(409).json({ error: 'Una de las facturas ya está vinculada a otra OC' });
+    if (e.codigo === 'CUOTAS_PCT_INVALIDO') return res.status(400).json({ error: e.message });
+    throw e;
+  }
   const updated = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(req.params.id);
-  res.json({ ...updated, items: db.prepare('SELECT * FROM oc_items WHERE oc_id=? ORDER BY item_num').all(req.params.id) });
+  res.json({
+    ...updated,
+    items: db.prepare('SELECT * FROM oc_items WHERE oc_id=? ORDER BY item_num').all(req.params.id),
+    cuotas: cargarCuotasCompra([Number(req.params.id)])[req.params.id] || [],
+  });
 });
 
 // Recibir OC → crea ingresos pendientes (stock se confirma desde el módulo Stock)
@@ -633,7 +823,7 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
   if (oc.estado === 'Cancelada') return res.status(400).json({ error: 'OC cancelada' });
 
   const { recepciones, fecha, numero_remito, producto_ids } = req.body;
-  const fechaRec = fecha || new Date().toISOString().slice(0,10);
+  const fechaRec = fecha || hoyArgentina();
 
   const insIngreso = db.prepare(`
     INSERT INTO ingresos_pendientes
@@ -654,6 +844,7 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
     // y no debe dejar que la OC se marque como "Recibida" por completo.
     const items = db.prepare('SELECT * FROM oc_items WHERE oc_id=?').all(oc.id);
     let todosRecibidos = true;
+    const itemsRecibidos = [];
     for (const item of items) {
       const pendiente = item.cantidad - item.cant_recibida;
       if (pendiente <= 0) continue; // ya estaba completo, no afecta el estado
@@ -670,8 +861,14 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
       insIngreso.run(oc.id, oc.numero, oc.proveedor_nombre, item.id, item.producto_id,
         prod?.codigo||'', prod?.descripcion||item.descripcion||'', prod?.unidad||item.unidad||'UND.',
         real, item.precio_final||0, numero_remito||'', fechaRec);
+      itemsRecibidos.push(item);
       if (real < pendiente) todosRecibidos = false;
     }
+    // Igual que al crear la OC: el precio de costo del material en stock se
+    // actualiza con lo pagado en la OC — antes solo pasaba al crearla, así que
+    // un item codificado recién al recibir (o editado después) nunca actualizaba
+    // el precio en el catálogo.
+    actualizarCatalogoDesdeOC(itemsRecibidos, oc.moneda, fechaRec, oc.proveedor_id, oc.proveedor_nombre);
     const nuevoEstado = todosRecibidos ? 'Recibida' : 'Parcial';
     const itemsActualizados = db.prepare('SELECT * FROM oc_items WHERE oc_id=?').all(oc.id);
     const fechaEntregaCalc = calcularFechaEntregaOC(oc.fecha, oc.modo_plazo, oc.dias_plazo, itemsActualizados, oc.fecha_entrega_est);
@@ -697,9 +894,101 @@ router.post('/oc/:id/resetear-recepcion', verificarToken, (req, res) => {
 
 router.delete('/oc/:id', verificarToken, (req, res) => {
   if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
-  db.prepare('DELETE FROM oc_items WHERE oc_id=?').run(req.params.id);
-  db.prepare('DELETE FROM ordenes_compra WHERE id=?').run(req.params.id);
+  const oc = db.prepare('SELECT id FROM ordenes_compra WHERE id=?').get(req.params.id);
+  if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
+  try {
+    db.transaction(() => {
+      db.prepare('DELETE FROM oc_items WHERE oc_id=?').run(req.params.id);
+      db.prepare('DELETE FROM ordenes_compra WHERE id=?').run(req.params.id);
+    })();
+  } catch (e) {
+    if (e.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+      return res.status(409).json({ error: 'No se puede eliminar: la OC ya tiene facturas, ingresos o cuotas de facturación vinculadas.' });
+    }
+    throw e;
+  }
   res.json({ mensaje: 'OC eliminada' });
+});
+
+// Facturas de compra SIN OC vinculada — candidatas para asociar a una OC
+// desde el propio detalle de la OC (complementa el selector de OC que ya
+// existe del lado de la factura).
+router.get('/facturas-sin-oc', verificarToken, leerOCListado, (req, res) => {
+  const { buscar, proveedor_id } = req.query;
+  const conds = ['f.oc_id IS NULL'];
+  const params = [];
+  if (proveedor_id) { conds.push('f.proveedor_id=?'); params.push(proveedor_id); }
+  if (buscar) { const b = buscarCondicion(buscar, ['f.numero', 'f.proveedor_nombre']); conds.push(b.cond); params.push(...b.params); }
+  const rows = db.prepare(`
+    SELECT f.id, f.tipo_factura, f.numero, f.fecha, f.proveedor_nombre, f.proveedor_id,
+           f.neto_gravado, f.importe, f.moneda
+    FROM facturas_compra f
+    WHERE ${conds.join(' AND ')}
+    ORDER BY f.fecha DESC, f.id DESC
+    LIMIT 50
+  `).all(...params);
+  res.json(rows);
+});
+
+// Vincula una factura de compra ya cargada (sin OC) a esta OC — para cuando
+// la factura se cargó antes de elegir la OC en su propio formulario, o se
+// cargó sin ninguna. Para desvincular, se edita la factura y se le quita la
+// OC desde su propio formulario (ya soportado).
+router.patch('/oc/:id/vincular-factura', verificarToken, (req, res) => {
+  // Administración también carga/vincula facturas de compra (mismo criterio
+  // que leerOCListado para la lectura) — sin esto, alguien con permiso solo de
+  // administracion.escribir no podía usar "OC recibidas sin factura".
+  if (!req.permisos?.compras?.escribir && !req.permisos?.administracion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  const oc = db.prepare('SELECT id, numero FROM ordenes_compra WHERE id=?').get(req.params.id);
+  if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
+  const { factura_id } = req.body;
+  if (!factura_id) return res.status(400).json({ error: 'Falta factura_id' });
+  const factura = db.prepare('SELECT id, oc_id FROM facturas_compra WHERE id=?').get(factura_id);
+  if (!factura) return res.status(404).json({ error: 'Factura no encontrada' });
+  if (factura.oc_id && factura.oc_id !== oc.id) return res.status(409).json({ error: 'Esa factura ya está vinculada a otra OC' });
+  db.prepare('UPDATE facturas_compra SET oc_id=?, oc_numero=? WHERE id=?').run(oc.id, oc.numero, factura_id);
+  res.json({ ok: true });
+});
+
+// Vincula (o desvincula, factura_id=null) una cuota de facturación puntual a
+// una factura de compra real — a diferencia del botón de arriba (que vincula
+// la factura a la OC entera), esto además vincula la factura a la OC si hace
+// falta. Varias cuotas de la MISMA OC pueden compartir la misma factura (un
+// solo comprobante que cubre anticipo + saldo); se rechaza si la usa una
+// cuota de OTRA OC.
+router.patch('/oc/:ocId/cuotas/:cuotaId/vincular-factura', verificarToken, (req, res) => {
+  if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  const cuota = db.prepare('SELECT id FROM oc_compra_cuotas WHERE id=? AND oc_id=?').get(req.params.cuotaId, req.params.ocId);
+  if (!cuota) return res.status(404).json({ error: 'Cuota no encontrada' });
+  const { factura_id } = req.body;
+  if (factura_id) {
+    const enOtraCuota = db.prepare('SELECT id FROM oc_compra_cuotas WHERE factura_id=? AND oc_id!=?').get(factura_id, req.params.ocId);
+    if (enOtraCuota) return res.status(409).json({ error: 'Esa factura ya está vinculada a otra OC' });
+    const oc = db.prepare('SELECT id, numero FROM ordenes_compra WHERE id=?').get(req.params.ocId);
+    const factura = db.prepare('SELECT id, oc_id FROM facturas_compra WHERE id=?').get(factura_id);
+    if (!factura) return res.status(404).json({ error: 'Factura no encontrada' });
+    if (factura.oc_id && factura.oc_id !== oc.id) return res.status(409).json({ error: 'Esa factura ya está vinculada a otra OC' });
+    db.prepare('UPDATE facturas_compra SET oc_id=?, oc_numero=? WHERE id=?').run(oc.id, oc.numero, factura_id);
+  }
+  db.prepare('UPDATE oc_compra_cuotas SET factura_id=? WHERE id=?').run(factura_id || null, req.params.cuotaId);
+  res.json({ ok: true });
+});
+
+// Desvincula una factura de esta OC (botón directo en "Facturas vinculadas" —
+// hasta ahora solo se podía sacar editando la factura y eligiendo "PENDIENTE"
+// en su propio formulario, una interacción poco clara). También limpia
+// cualquier cuota de ESTA OC que la tuviera vinculada, para no dejar una
+// cuota apuntando a una factura que ya no forma parte de la OC.
+router.patch('/oc/:id/desvincular-factura', verificarToken, (req, res) => {
+  if (!req.permisos?.compras?.escribir && !req.permisos?.administracion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  const { factura_id } = req.body;
+  if (!factura_id) return res.status(400).json({ error: 'Falta factura_id' });
+  const factura = db.prepare('SELECT id, oc_id FROM facturas_compra WHERE id=?').get(factura_id);
+  if (!factura) return res.status(404).json({ error: 'Factura no encontrada' });
+  if (String(factura.oc_id) !== String(req.params.id)) return res.status(400).json({ error: 'Esa factura no está vinculada a esta OC' });
+  db.prepare("UPDATE facturas_compra SET oc_id=NULL, oc_numero='' WHERE id=?").run(factura_id);
+  db.prepare('UPDATE oc_compra_cuotas SET factura_id=NULL WHERE oc_id=? AND factura_id=?').run(req.params.id, factura_id);
+  res.json({ ok: true });
 });
 
 router.get('/exportar/oc', verificarToken, leerInformesCompras, (req, res) => {
@@ -746,7 +1035,7 @@ router.get('/oc/:id/exportar', verificarToken, leerCompras, (req, res) => {
 
   // Proveedor
   aoa.push([`EMITIDA PARA: ${oc.proveedor_nombre}`]);
-  aoa.push([`CUIT: ${oc.proveedor_cuit||prov?.cuit||''}`, '', `Localidad: ${prov?.localidad||''}`, '', `Cód. Postal: ${prov?.cp||''}`, '', `Moneda: ${oc.moneda||'DÓLAR'}`]);
+  aoa.push([`CUIT: ${formatCuit(oc.proveedor_cuit||prov?.cuit||'')}`, '', `Localidad: ${prov?.localidad||''}`, '', `Cód. Postal: ${prov?.cp||''}`, '', `Moneda: ${oc.moneda||'DÓLAR'}`]);
   aoa.push([`Teléfono: ${prov?.telefono||''}`, '', `Dirección: ${prov?.direccion||''}`]);
   aoa.push([`Vendedor: ${prov?.vendedor||''}`, '', `E-Mail: ${prov?.email||''}`]);
   aoa.push([`Condición de Compra: ${oc.condicion_pago||''}`, '', '', '', `Tasa Cambio: ${conTC ? oc.tasa_cambio : '—'}`]);
@@ -835,7 +1124,7 @@ router.post('/migrar', verificarToken, (req, res) => {
 
   db.transaction(() => {
     for (const p of proveedores) {
-      const r = insProv.run(p.nombre||'Sin nombre', p.cuit||'', p.telefono||'', p.email||'',
+      const r = insProv.run(p.nombre||'Sin nombre', formatCuit(p.cuit), p.telefono||'', p.email||'',
         p.direccion||'', p.localidad||'', p.cp||'', p.vendedor||'', p.cond_compra||'');
       if (r.changes) provCreados++;
     }
@@ -843,7 +1132,7 @@ router.post('/migrar', verificarToken, (req, res) => {
       const prov = getProv.get(oc.prov_nombre || '');
       const r = insOC.run(
         oc.numero, oc.fecha?.slice(0,10)||'', prov?.id||null,
-        oc.prov_nombre||'', oc.prov_cuit||'', 'Recibida',
+        oc.prov_nombre||'', formatCuit(oc.prov_cuit), 'Recibida',
         oc.moneda||'DÓLAR', oc.tasa_cambio||0,
         oc.cond_compra||'', oc.lugar_entrega||'',
         oc.autorizado_por||'', oc.elaborado_por||'',
@@ -924,8 +1213,12 @@ router.post('/form49/generar-oc-proveedor', verificarToken, (req, res) => {
           condicion_pago, observaciones, items, fuente_numeros } = req.body;
   if (!proveedor_nombre?.trim()) return res.status(400).json({ error: 'Falta proveedor' });
   if (!items?.length) return res.status(400).json({ error: 'Sin ítems seleccionados' });
+  const errItems = validarItemsOC(items);
+  if (errItems) return res.status(400).json({ error: errItems });
   const numero = nextNumeroOC();
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = hoyArgentina();
+  const fechaOC = fecha||hoy;
+  const tasaCambioOC = tasa_cambio ? parseFloat(tasa_cambio) : tasaCambioSistema(moneda||'PESOS', fechaOC);
   const obs = observaciones?.trim() ||
     `Generada desde ingresos sin OC${fuente_numeros?.length ? ': ' + fuente_numeros.join(', ') : ''}`;
   const oc_id = db.transaction(() => {
@@ -933,9 +1226,9 @@ router.post('/form49/generar-oc-proveedor', verificarToken, (req, res) => {
       (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,moneda,tasa_cambio,
        condicion_pago,lugar_entrega,observaciones,estado,fecha_recepcion,created_by)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(numero, fecha||hoy, proveedor_id||null, proveedor_nombre, proveedor_cuit||'',
-           moneda||'PESOS', parseFloat(tasa_cambio)||0,
-           condicion_pago||'', 'e-intra', obs, 'Recibida', fecha||hoy, req.usuario.id);
+      .run(numero, fechaOC, proveedor_id||null, proveedor_nombre, formatCuit(proveedor_cuit),
+           moneda||'PESOS', tasaCambioOC,
+           condicion_pago||'', 'e-intra', obs, 'Recibida', fechaOC, req.usuario.id);
     const oc_id = r.lastInsertRowid;
     for (const [i, it] of items.entries()) {
       db.prepare(`INSERT INTO oc_items
@@ -987,14 +1280,16 @@ router.post('/form49', verificarToken, (req, res) => {
           autorizado_por, recibido_por, elaborado_por, observaciones,
           moneda, tasa_cambio, condicion_pago, lugar_entrega, presupuesto_n, items } = req.body;
   if (!proveedor_nombre?.trim()) return res.status(400).json({ error: 'Proveedor es obligatorio' });
+  const errItems = validarItemsOC(items);
+  if (errItems) return res.status(400).json({ error: errItems });
   const numero = nextNumeroF49();
   const trx = db.transaction(() => {
     const r = db.prepare(`INSERT INTO form49_ingresos
       (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,proyecto,autorizado_por,recibido_por,
        elaborado_por,observaciones,moneda,tasa_cambio,condicion_pago,lugar_entrega,presupuesto_n,created_by)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(numero, fecha||new Date().toISOString().slice(0,10),
-           proveedor_id||null, proveedor_nombre, proveedor_cuit||'',
+      .run(numero, fecha||hoyArgentina(),
+           proveedor_id||null, proveedor_nombre, formatCuit(proveedor_cuit),
            proyecto||'', autorizado_por||'', recibido_por||'', elaborado_por||'', observaciones||'',
            moneda||'PESOS', parseFloat(tasa_cambio)||0, condicion_pago||'', lugar_entrega||'', presupuesto_n||'',
            req.usuario.id);
@@ -1014,13 +1309,15 @@ router.put('/form49/:id', verificarToken, (req, res) => {
   const { proveedor_id, proveedor_nombre, proveedor_cuit, fecha, proyecto,
           autorizado_por, recibido_por, elaborado_por, observaciones,
           moneda, tasa_cambio, condicion_pago, lugar_entrega, presupuesto_n, items } = req.body;
+  const errItems = validarItemsOC(items);
+  if (errItems) return res.status(400).json({ error: errItems });
   db.transaction(() => {
     db.prepare(`UPDATE form49_ingresos SET
       proveedor_id=?,proveedor_nombre=?,proveedor_cuit=?,fecha=?,proyecto=?,
       autorizado_por=?,recibido_por=?,elaborado_por=?,observaciones=?,
       moneda=?,tasa_cambio=?,condicion_pago=?,lugar_entrega=?,presupuesto_n=?
       WHERE id=?`)
-      .run(proveedor_id??f.proveedor_id, proveedor_nombre??f.proveedor_nombre, proveedor_cuit??f.proveedor_cuit??'',
+      .run(proveedor_id??f.proveedor_id, proveedor_nombre??f.proveedor_nombre, proveedor_cuit!=null ? formatCuit(proveedor_cuit) : (f.proveedor_cuit??''),
            fecha??f.fecha, proyecto??f.proyecto,
            autorizado_por??f.autorizado_por, recibido_por??f.recibido_por, elaborado_por??f.elaborado_por??'',
            observaciones??f.observaciones,
@@ -1052,9 +1349,14 @@ router.post('/form49/:id/generar-oc', verificarToken, (req, res) => {
 
   const { fecha, moneda, tasa_cambio, condicion_pago, nro_factura, observaciones, items } = req.body;
   if (!items?.length) return res.status(400).json({ error: 'Se requieren ítems con precios' });
+  const errItems = validarItemsOC(items);
+  if (errItems) return res.status(400).json({ error: errItems });
 
   const numero = nextNumeroOC();
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = hoyArgentina();
+  const fechaOC = fecha||f.fecha||hoy;
+  const monedaOC = moneda||f.moneda||'PESOS';
+  const tasaCambioOC = parseFloat(tasa_cambio) || f.tasa_cambio || tasaCambioSistema(monedaOC, fechaOC);
 
   const oc_id = db.transaction(() => {
     const r = db.prepare(`INSERT INTO ordenes_compra
@@ -1062,8 +1364,8 @@ router.post('/form49/:id/generar-oc', verificarToken, (req, res) => {
        autorizado_por,elaborado_por,condicion_pago,lugar_entrega,presupuesto_n,
        observaciones,estado,nro_factura,fecha_recepcion,created_by)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(numero, fecha||f.fecha, f.proveedor_id||null, f.proveedor_nombre, f.proveedor_cuit||'',
-           moneda||f.moneda||'PESOS', parseFloat(tasa_cambio)||f.tasa_cambio||0,
+      .run(numero, fechaOC, f.proveedor_id||null, f.proveedor_nombre, formatCuit(f.proveedor_cuit),
+           monedaOC, tasaCambioOC,
            f.autorizado_por||'', f.elaborado_por||'',
            condicion_pago||f.condicion_pago||'CTA. CTE.', f.lugar_entrega||'e-intra',
            f.presupuesto_n||'',

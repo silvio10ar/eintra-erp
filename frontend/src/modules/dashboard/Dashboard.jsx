@@ -118,8 +118,8 @@ export default function Dashboard() {
   useEffect(() => {
     cargar()
     api.get('/rrhh/mi-ayer').then(r => setMiAyer(r.data)).catch(() => setMiAyer(null))
-    api.get('/rrhh/resumen-ayer').then(r => setResumenAyer(r.data)).catch(() => {})
-    api.get('/mensajes/no-leidos').then(r => setNoLeidosMsgs(r.data?.count || 0)).catch(() => {})
+    api.get('/rrhh/resumen-ayer').then(r => setResumenAyer(r.data)).catch(e => console.error(e))
+    api.get('/mensajes/no-leidos').then(r => setNoLeidosMsgs(r.data?.count || 0)).catch(e => console.error(e))
   }, [])
 
   const handleActualizar = async () => {

@@ -40,7 +40,7 @@ export default function Mensajes({ onCambioNoLeidos }) {
   useEffect(() => { cargar() }, [cargar])
 
   useEffect(() => {
-    api.get('/mensajes/usuarios/lista').then(r => setUsuarios(r.data)).catch(() => {})
+    api.get('/mensajes/usuarios/lista').then(r => setUsuarios(r.data)).catch(e => console.error(e))
   }, [])
 
   const abrirMensaje = async m => {
@@ -53,6 +53,7 @@ export default function Mensajes({ onCambioNoLeidos }) {
   }
 
   const eliminar = async id => {
+    if (!confirm('¿Eliminar este mensaje?')) return
     await api.delete(`/mensajes/${id}`)
     setSelMsg(null)
     cargar()

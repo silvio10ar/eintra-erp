@@ -4,9 +4,35 @@ const { body, validationResult } = require('express-validator')
 const { db } = require('../db/database')
 const { verificarToken } = require('../middleware/auth')
 const { buscarCondicion } = require('../helpers/buscar')
+const { tasaCambioSistema } = require('../helpers/tipoCambio')
+const { hoyArgentina } = require('../helpers/fecha')
 
 const router = express.Router()
 router.use(verificarToken)
+
+// El precio de cada material se carga en la moneda que vino en la OC/factura
+// (precio_moneda) — para la lista se muestra también convertido a las otras
+// dos, usando pesos como moneda puente (mismo criterio que el resto del
+// sistema: tasaCambioSistema, tabla tipo_cambio). Si no hay tasa cargada para
+// alguna moneda, esa conversión queda en null (el frontend la muestra como "—").
+function conPreciosConvertidos(p, tcDolar, tcEuro) {
+  const costo = p.precio_costo || 0
+  let pesos = null, dolares = null, euros = null
+  if (p.precio_moneda === 'DÓLAR') {
+    dolares = costo
+    pesos = tcDolar ? costo * tcDolar : null
+  } else if (p.precio_moneda === 'EURO') {
+    euros = costo
+    pesos = tcEuro ? costo * tcEuro : null
+  } else {
+    pesos = costo
+  }
+  if (pesos != null) {
+    if (dolares == null) dolares = tcDolar ? pesos / tcDolar : null
+    if (euros == null) euros = tcEuro ? pesos / tcEuro : null
+  }
+  return { ...p, precio_pesos: pesos, precio_dolares: dolares, precio_euros: euros }
+}
 
 const puedeL = req => !!(req.permisos?.materiales?.leer || req.permisos?.materiales?.escribir)
 const puedeE = req => !!req.permisos?.materiales?.escribir
@@ -25,16 +51,29 @@ router.get('/next-codigo/:prefix', (req, res) => {
   res.json({ codigo: candidate })
 })
 
-// GET / — listado completo (con búsqueda opcional)
+// GET / — listado filtrado. El frontend no pide nada sin al menos un filtro
+// activo (buscar/familia/alerta/soloVencidos) — mostrar de entrada el catálogo
+// completo (miles de materiales) es lo que hacía sentir lenta la pantalla.
 router.get('/', (req, res) => {
   if (!puedeL(req)) return res.status(403).json({ error: 'Sin permisos' })
-  const { buscar } = req.query
+  const { buscar, familia, alerta, soloVencidos } = req.query
   const conds = ['activo=1'], params = []
   if (buscar) {
     const b = buscarCondicion(buscar, ['codigo', 'descripcion', 'proveedor'])
     conds.push(b.cond); params.push(...b.params)
   }
-  res.json(db.prepare(`SELECT * FROM productos WHERE ${conds.join(' AND ')} ORDER BY descripcion`).all(...params))
+  if (familia) { conds.push('substr(codigo,1,1)=?'); params.push(familia) }
+  if (alerta === 'bajo')    conds.push('stock_actual > 0 AND stock_minimo > 0 AND stock_actual <= stock_minimo')
+  if (alerta === 'agotado') conds.push('stock_actual <= 0')
+  if (alerta === 'ok')      conds.push('stock_actual > 0')
+  if (soloVencidos === '1') {
+    conds.push(`precio_critico=1 AND precio_frecuencia_dias>0 AND precio_fecha!='' AND julianday('now','localtime')-julianday(precio_fecha) >= precio_frecuencia_dias`)
+  }
+  const rows = db.prepare(`SELECT * FROM productos WHERE ${conds.join(' AND ')} ORDER BY descripcion`).all(...params)
+  const hoy = hoyArgentina()
+  const tcDolar = tasaCambioSistema('DÓLAR', hoy)
+  const tcEuro = tasaCambioSistema('EURO', hoy)
+  res.json(rows.map(p => conPreciosConvertidos(p, tcDolar, tcEuro)))
 })
 
 // POST / — crear producto (stock_actual siempre 0, no se expone)
@@ -45,12 +84,13 @@ router.post('/',
     if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
     const errs = validationResult(req)
     if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() })
-    const { codigo, descripcion, categoria, unidad, stock_minimo, ubicacion, precio_costo, precio_venta, proveedor, codigo_generado } = req.body
+    const { codigo, descripcion, categoria, unidad, stock_minimo, ubicacion, precio_costo, precio_moneda, precio_venta, proveedor, codigo_generado, precio_critico, precio_frecuencia_dias } = req.body
+    const precio_fecha = (precio_costo || precio_venta) ? hoyArgentina() : ''
     try {
       const r = db.prepare(`
-        INSERT INTO productos (codigo, descripcion, categoria, unidad, stock_actual, stock_minimo, ubicacion, precio_costo, precio_venta, proveedor, codigo_generado)
-        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
-      `).run(codigo, descripcion, categoria||'', unidad||'UND.', stock_minimo||0, ubicacion||'', precio_costo||0, precio_venta||0, proveedor||'', codigo_generado||0)
+        INSERT INTO productos (codigo, descripcion, categoria, unidad, stock_actual, stock_minimo, ubicacion, precio_costo, precio_moneda, precio_venta, proveedor, codigo_generado, precio_fecha, precio_critico, precio_frecuencia_dias)
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(codigo, descripcion, categoria||'', unidad||'UND.', stock_minimo||0, ubicacion||'', precio_costo||0, precio_moneda||'PESOS', precio_venta||0, proveedor||'', codigo_generado||0, precio_fecha, precio_critico ? 1 : 0, precio_frecuencia_dias||0)
       res.status(201).json(db.prepare('SELECT * FROM productos WHERE id=?').get(r.lastInsertRowid))
     } catch(e) {
       if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'El código ya existe' })
@@ -64,42 +104,37 @@ router.put('/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const p = db.prepare('SELECT * FROM productos WHERE id=? AND activo=1').get(req.params.id)
   if (!p) return res.status(404).json({ error: 'Producto no encontrado' })
-  const { codigo, descripcion, categoria, unidad, stock_minimo, ubicacion, precio_costo, precio_venta, proveedor, codigo_generado } = req.body
+  const { codigo, descripcion, categoria, unidad, stock_minimo, ubicacion, precio_costo, precio_moneda, precio_venta, proveedor, codigo_generado, precio_critico, precio_frecuencia_dias } = req.body
   if (!codigo?.trim() || !descripcion?.trim()) return res.status(400).json({ error: 'Código y descripción requeridos' })
+  const nuevoCosto = precio_costo ?? p.precio_costo
+  const nuevaVenta = precio_venta ?? p.precio_venta
+  const nuevaMoneda = precio_moneda || p.precio_moneda
+  // La fecha solo se actualiza si el precio realmente cambió, no en cada edición del material.
+  const cambioPrecio = Number(nuevoCosto) !== Number(p.precio_costo) || Number(nuevaVenta) !== Number(p.precio_venta) || nuevaMoneda !== p.precio_moneda
+  const precio_fecha = cambioPrecio ? hoyArgentina() : p.precio_fecha
   try {
     db.prepare(`
       UPDATE productos
       SET codigo=?, descripcion=?, categoria=?, unidad=?, stock_minimo=?, ubicacion=?,
-          precio_costo=?, precio_venta=?, proveedor=?,
+          precio_costo=?, precio_moneda=?, precio_venta=?, proveedor=?,
           codigo_generado=COALESCE(?, codigo_generado),
+          precio_fecha=?, precio_critico=?, precio_frecuencia_dias=?,
           updated_at=datetime('now','localtime')
       WHERE id=?
     `).run(codigo, descripcion, categoria??p.categoria, unidad??p.unidad,
            stock_minimo??p.stock_minimo, ubicacion??p.ubicacion,
-           precio_costo??p.precio_costo, precio_venta??p.precio_venta,
+           nuevoCosto, nuevaMoneda, nuevaVenta,
            proveedor??p.proveedor,
            codigo_generado != null ? codigo_generado : null,
+           precio_fecha,
+           precio_critico != null ? (precio_critico ? 1 : 0) : p.precio_critico,
+           precio_frecuencia_dias ?? p.precio_frecuencia_dias,
            req.params.id)
     res.json(db.prepare('SELECT * FROM productos WHERE id=?').get(req.params.id))
   } catch(e) {
     if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'El código ya existe' })
     throw e
   }
-})
-
-// PUT /:id/codigo-futuro — asignar/actualizar código futuro
-router.put('/:id/codigo-futuro', (req, res) => {
-  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
-  const p = db.prepare('SELECT id FROM productos WHERE id=? AND activo=1').get(req.params.id)
-  if (!p) return res.status(404).json({ error: 'Producto no encontrado' })
-  const { codigo_futuro, codigo_futuro_estado } = req.body
-  const estadosValidos = ['pendiente', 'asignado', 'validado']
-  const estado = estadosValidos.includes(codigo_futuro_estado) ? codigo_futuro_estado : 'asignado'
-  db.prepare(`
-    UPDATE productos SET codigo_futuro=?, codigo_futuro_estado=?, updated_at=datetime('now','localtime')
-    WHERE id=?
-  `).run(codigo_futuro || '', estado, req.params.id)
-  res.json(db.prepare('SELECT * FROM productos WHERE id=?').get(req.params.id))
 })
 
 // DELETE /:id — solo si stock_actual = 0

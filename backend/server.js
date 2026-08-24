@@ -29,6 +29,10 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 const uploadsDir = process.env.UPLOADS_PATH || path.resolve(__dirname, '../uploads');
+// Los documentos de Calidad son sensibles (pueden requerir revocarse el acceso
+// cuando pasan a obsoletos) — se descargan solo por la ruta autenticada
+// GET /api/v1/calidad/documentos/:id/archivo, nunca de forma estática/pública.
+app.use('/uploads/documentos_calidad', (req, res) => res.status(403).json({ error: 'Acceso restringido' }));
 app.use('/uploads', express.static(uploadsDir));
 
 // Health-check: para monitoreo externo y para el propio deploy (ver deploy.ps1)
@@ -46,6 +50,8 @@ app.use('/api/v1/stock',      require('./routes/stock'));
 app.use('/api/v1/compras',    require('./routes/compras'));
 app.use('/api/v1/ventas',     require('./routes/ventas'));
 app.use('/api/v1/proyectos',  require('./routes/proyectos'));
+app.use('/api/v1/analisis-proyectos', require('./routes/analisisProyectos'));
+app.use('/api/v1/costeo-equipos', require('./routes/costeoEquipos'));
 app.use('/api/v1/produccion', require('./routes/produccion'));
 app.use('/api/v1/finanzas',   require('./routes/finanzas'));
 app.use('/api/v1/dashboard',  require('./routes/dashboard'));
@@ -53,8 +59,8 @@ app.use('/api/v1/mantenimiento', require('./routes/mantenimiento'));
 app.use('/api/v1/evaluaciones',  require('./routes/evaluaciones'));
 app.use('/api/v1/rrhh',          require('./routes/rrhh'));
 app.use('/api/v1/codificacion',        require('./routes/codificacion'));
-app.use('/api/v1/codificacion-futura', require('./routes/codificacion-futura'));
 app.use('/api/v1/materiales',    require('./routes/materiales'));
+app.use('/api/v1/pedidos-precio', require('./routes/pedidosPrecio'));
 app.use('/api/v1/configuracion', require('./routes/configuracion'));
 app.use('/api/v1/mensajes',      require('./routes/mensajes'));
 app.use('/api/v1/crm',           require('./routes/crm'));
@@ -62,6 +68,7 @@ app.use('/api/v1/calidad',       require('./routes/calidad'));
 app.use('/api/v1/formularios',   require('./routes/formularios'));
 app.use('/api/v1/gantt',         require('./routes/gantt'));
 app.use('/api/v1/facturas',      require('./routes/facturas'));
+app.use('/api/v1/tareas-gerencia', require('./routes/tareasGerencia'));
 
 const frontendDist = isProd
   ? (process.env.FRONTEND_DIST || path.resolve(__dirname, '../frontend/dist'))
@@ -82,5 +89,21 @@ app.use((err, req, res, _next) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ERP E-INTRA → http://localhost:${PORT}`);
 });
+
+// HTTPS opcional (necesario para que el service worker / instalación de la PWA
+// funcione fuera de localhost) — solo se levanta si existen los certificados en
+// backend/certs/. Corre en paralelo al servidor HTTP, no lo reemplaza.
+const HTTPS_PORT  = process.env.HTTPS_PORT || 3443;
+const SSL_KEY     = process.env.SSL_KEY_PATH  || path.resolve(__dirname, 'certs/key.pem');
+const SSL_CERT    = process.env.SSL_CERT_PATH || path.resolve(__dirname, 'certs/cert.pem');
+if (fs.existsSync(SSL_KEY) && fs.existsSync(SSL_CERT)) {
+  const https = require('https');
+  https.createServer({ key: fs.readFileSync(SSL_KEY), cert: fs.readFileSync(SSL_CERT) }, app)
+    .listen(HTTPS_PORT, '0.0.0.0', () => {
+      console.log(`ERP E-INTRA (HTTPS) → https://localhost:${HTTPS_PORT}`);
+    });
+} else {
+  console.log('[https] Certificados no encontrados en backend/certs/ — solo corre HTTP.');
+}
 
 module.exports = { app };

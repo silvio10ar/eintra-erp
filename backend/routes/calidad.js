@@ -11,6 +11,9 @@ const router = express.Router()
 router.use(verificarToken)
 
 const puedeE = req => !!req.permisos?.calidad?.escribir
+// Corta antes de que multer escriba el archivo a disco — si el chequeo fuera
+// dentro del handler, un usuario sin permiso ya habría subido el archivo.
+const soloEscribirCalidad = (req, res, next) => puedeE(req) ? next() : res.status(403).json({ error: 'Sin permisos' })
 
 // ── Documentos de Calidad (control de documentos ISO 9001:2015, cláusula 7.5) ──
 // Sin gate de calidad.leer/escribir en las lecturas: la Política de Calidad, en
@@ -65,8 +68,7 @@ router.get('/documentos/:id/archivo', (req, res) => {
   res.download(full, doc.archivo_nombre_original || path.basename(full))
 })
 
-router.post('/documentos', uploadDoc.single('archivo'), (req, res) => {
-  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+router.post('/documentos', soloEscribirCalidad, uploadDoc.single('archivo'), (req, res) => {
   const { codigo, titulo, categoria, aprobado_por, fecha_aprobacion, observaciones } = req.body
   if (!codigo?.trim() || !titulo?.trim()) return res.status(400).json({ error: 'Código y título son requeridos' })
   if (!req.file) return res.status(400).json({ error: 'Falta el archivo (PDF, JPG o PNG)' })
@@ -81,8 +83,7 @@ router.post('/documentos', uploadDoc.single('archivo'), (req, res) => {
   res.status(201).json({ id: r.lastInsertRowid })
 })
 
-router.post('/documentos/:codigo/revision', uploadDoc.single('archivo'), (req, res) => {
-  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+router.post('/documentos/:codigo/revision', soloEscribirCalidad, uploadDoc.single('archivo'), (req, res) => {
   const vigente = db.prepare("SELECT * FROM documentos_calidad WHERE codigo=? AND estado='Vigente'").get(req.params.codigo)
   if (!vigente) return res.status(404).json({ error: 'No existe un documento vigente con ese código' })
   if (!req.file) return res.status(400).json({ error: 'Falta el archivo (PDF, JPG o PNG)' })
@@ -115,6 +116,170 @@ router.put('/documentos/:id', (req, res) => {
 })
 
 router.use(puede.leer('calidad'))
+
+// ── Objetivos de Calidad medibles (ISO 9001:2015, cláusula 6.2) ───────────────
+// Las 4 fuentes automáticas nunca persisten un valor: se recalculan en cada
+// request a partir de las tablas de origen (no_conformidad, ordenes_trabajo,
+// evaluaciones_proveedor, calidad_inspeccion). Solo la fuente "manual" guarda
+// mediciones cargadas a mano, para métricas que el sistema todavía no tiene.
+function limitesPeriodo(periodicidad, ref = new Date()) {
+  const y = ref.getFullYear()
+  const m = ref.getMonth()
+  const pad = n => String(n).padStart(2, '0')
+  if (periodicidad === 'mensual') {
+    const ultimoDia = new Date(y, m + 1, 0).getDate()
+    return { periodo: `${y}-${pad(m + 1)}`, desde: `${y}-${pad(m + 1)}-01`, hasta: `${y}-${pad(m + 1)}-${pad(ultimoDia)}`, anio: y }
+  }
+  if (periodicidad === 'trimestral') {
+    const q = Math.floor(m / 3) + 1
+    const mDesde = (q - 1) * 3
+    const mHasta = mDesde + 2
+    const ultimoDia = new Date(y, mHasta + 1, 0).getDate()
+    return { periodo: `${y}-Q${q}`, desde: `${y}-${pad(mDesde + 1)}-01`, hasta: `${y}-${pad(mHasta + 1)}-${pad(ultimoDia)}`, anio: y }
+  }
+  return { periodo: `${y}`, desde: `${y}-01-01`, hasta: `${y}-12-31`, anio: y }
+}
+
+function calcularValorFuente(fuente, { desde, hasta, anio }) {
+  if (fuente === 'nc_cerradas_plazo') {
+    const r = db.prepare(`
+      SELECT COUNT(*) total,
+        SUM(CASE WHEN estado='Cerrada' AND fecha_cierre<=fecha_limite THEN 1 ELSE 0 END) en_plazo
+      FROM no_conformidad WHERE fecha BETWEEN ? AND ?
+    `).get(desde, hasta)
+    return r.total > 0 ? Math.round((r.en_plazo / r.total) * 1000) / 10 : null
+  }
+  if (fuente === 'ot_entregas_tiempo') {
+    const r = db.prepare(`
+      SELECT COUNT(*) total,
+        SUM(CASE WHEN fecha_cierre<>'' AND fecha_cierre<=fecha_fin_est THEN 1 ELSE 0 END) a_tiempo
+      FROM ordenes_trabajo WHERE fecha_cierre BETWEEN ? AND ? AND fecha_cierre<>''
+    `).get(desde, hasta)
+    return r.total > 0 ? Math.round((r.a_tiempo / r.total) * 1000) / 10 : null
+  }
+  if (fuente === 'eval_proveedores_puntaje') {
+    const r = db.prepare(`SELECT AVG(puntaje) prom FROM evaluaciones_proveedor WHERE anio=?`).get(anio)
+    return r.prom != null ? Math.round(r.prom * 10) / 10 : null
+  }
+  if (fuente === 'inspecciones_aprobadas') {
+    const r = db.prepare(`
+      SELECT COUNT(*) total, SUM(CASE WHEN resultado='Aprobado' THEN 1 ELSE 0 END) aprob
+      FROM calidad_inspeccion WHERE fecha BETWEEN ? AND ?
+    `).get(desde, hasta)
+    return r.total > 0 ? Math.round((r.aprob / r.total) * 1000) / 10 : null
+  }
+  return null // 'manual' se resuelve aparte, leyendo objetivo_calidad_medicion
+}
+
+// Listado liviano de puestos (id+nombre) para el selector de responsable — la
+// ruta completa /auth/puestos es solo-admin, y acá alcanza con el nombre.
+router.get('/objetivos/puestos', (req, res) => {
+  res.json(db.prepare('SELECT id, nombre FROM puestos ORDER BY nombre').all())
+})
+
+router.get('/objetivos', (req, res) => {
+  const objetivos = db.prepare(`
+    SELECT o.*, p.nombre AS puesto_nombre
+    FROM objetivo_calidad o
+    LEFT JOIN puestos p ON p.id = o.responsable_puesto_id
+    WHERE o.estado='Activo'
+    ORDER BY o.nombre
+  `).all()
+  const out = objetivos.map(o => {
+    const periodo = limitesPeriodo(o.periodicidad)
+    let valor_actual
+    if (o.fuente === 'manual') {
+      const m = db.prepare('SELECT valor FROM objetivo_calidad_medicion WHERE objetivo_id=? AND periodo=?').get(o.id, periodo.periodo)
+      valor_actual = m ? m.valor : null
+    } else {
+      valor_actual = calcularValorFuente(o.fuente, periodo)
+    }
+    return { ...o, periodo_actual: periodo.periodo, valor_actual }
+  })
+  res.json(out)
+})
+
+router.post('/objetivos', (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const { nombre, descripcion, fuente, meta, unidad, periodicidad, responsable_puesto_id, responsable_nombre } = req.body
+  if (!nombre?.trim()) return res.status(400).json({ error: 'nombre requerido' })
+  if (meta === undefined || meta === null || isNaN(+meta)) return res.status(400).json({ error: 'meta requerida' })
+  const info = db.prepare(`
+    INSERT INTO objetivo_calidad (nombre, descripcion, fuente, meta, unidad, periodicidad, responsable_puesto_id, responsable_nombre, created_by)
+    VALUES (?,?,?,?,?,?,?,?,?)
+  `).run(nombre.trim(), descripcion || '', fuente || 'manual', +meta, unidad || '%', periodicidad || 'anual',
+         responsable_puesto_id || null, responsable_nombre || '', req.usuario.id)
+  res.status(201).json({ id: info.lastInsertRowid })
+})
+
+router.put('/objetivos/:id', (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const ob = db.prepare('SELECT * FROM objetivo_calidad WHERE id=?').get(req.params.id)
+  if (!ob) return res.status(404).json({ error: 'No encontrado' })
+  const { nombre, descripcion, fuente, meta, unidad, periodicidad, responsable_puesto_id, responsable_nombre, estado } = req.body
+  db.prepare(`
+    UPDATE objetivo_calidad SET nombre=?, descripcion=?, fuente=?, meta=?, unidad=?, periodicidad=?,
+      responsable_puesto_id=?, responsable_nombre=?, estado=? WHERE id=?
+  `).run(
+    nombre ?? ob.nombre, descripcion ?? ob.descripcion, fuente ?? ob.fuente, meta ?? ob.meta, unidad ?? ob.unidad,
+    periodicidad ?? ob.periodicidad, responsable_puesto_id ?? ob.responsable_puesto_id, responsable_nombre ?? ob.responsable_nombre,
+    estado ?? ob.estado, req.params.id
+  )
+  res.json({ ok: true })
+})
+
+router.delete('/objetivos/:id', (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const ob = db.prepare('SELECT * FROM objetivo_calidad WHERE id=?').get(req.params.id)
+  if (!ob) return res.status(404).json({ error: 'No encontrado' })
+  const tieneMediciones = db.prepare('SELECT COUNT(*) n FROM objetivo_calidad_medicion WHERE objetivo_id=?').get(req.params.id).n
+  if (tieneMediciones > 0) {
+    db.prepare("UPDATE objetivo_calidad SET estado='Cerrado' WHERE id=?").run(req.params.id)
+    return res.json({ ok: true, cerrado: true })
+  }
+  db.prepare('DELETE FROM objetivo_calidad WHERE id=?').run(req.params.id)
+  res.json({ ok: true, eliminado: true })
+})
+
+router.get('/objetivos/:id/serie', (req, res) => {
+  const ob = db.prepare('SELECT * FROM objetivo_calidad WHERE id=?').get(req.params.id)
+  if (!ob) return res.status(404).json({ error: 'No encontrado' })
+  if (ob.fuente === 'manual') {
+    const rows = db.prepare('SELECT periodo, valor, observaciones, created_at FROM objetivo_calidad_medicion WHERE objetivo_id=? ORDER BY periodo DESC').all(req.params.id)
+    return res.json(rows)
+  }
+  const n = ob.periodicidad === 'mensual' ? 12 : ob.periodicidad === 'trimestral' ? 8 : 5
+  const hoy = new Date()
+  const out = []
+  for (let i = 0; i < n; i++) {
+    let ref
+    if (ob.periodicidad === 'mensual') ref = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1)
+    else if (ob.periodicidad === 'trimestral') ref = new Date(hoy.getFullYear(), hoy.getMonth() - i * 3, 1)
+    else ref = new Date(hoy.getFullYear() - i, 0, 1)
+    const periodo = limitesPeriodo(ob.periodicidad, ref)
+    out.push({ periodo: periodo.periodo, valor: calcularValorFuente(ob.fuente, periodo) })
+  }
+  res.json(out)
+})
+
+router.post('/objetivos/:id/medicion', (req, res) => {
+  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const ob = db.prepare('SELECT * FROM objetivo_calidad WHERE id=?').get(req.params.id)
+  if (!ob) return res.status(404).json({ error: 'No encontrado' })
+  if (ob.fuente !== 'manual') return res.status(400).json({ error: 'Este objetivo tiene una fuente automática, no admite carga manual' })
+  const { periodo, valor, observaciones } = req.body
+  if (!periodo?.trim() || valor === undefined || valor === null || isNaN(+valor)) {
+    return res.status(400).json({ error: 'periodo y valor son requeridos' })
+  }
+  db.prepare(`
+    INSERT INTO objetivo_calidad_medicion (objetivo_id, periodo, valor, observaciones, created_by)
+    VALUES (?,?,?,?,?)
+    ON CONFLICT(objetivo_id, periodo) DO UPDATE SET
+      valor=excluded.valor, observaciones=excluded.observaciones,
+      created_by=excluded.created_by, created_at=datetime('now','localtime')
+  `).run(req.params.id, periodo.trim(), +valor, observaciones || '', req.usuario.id)
+  res.status(201).json({ ok: true })
+})
 
 const ETAPAS_DEFAULT = [
   'Corte de materiales',
@@ -209,14 +374,19 @@ router.post('/hojas-ruta', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { proyecto_id, descripcion, cliente_nombre, responsable, fecha_inicio, fecha_fin_est, observaciones } = req.body
   if (!descripcion?.trim()) return res.status(400).json({ error: 'Descripción requerida' })
-  const numero = nextNumHR()
-  const r = db.prepare(`
-    INSERT INTO hoja_ruta (numero, proyecto_id, descripcion, cliente_nombre, responsable, fecha_inicio, fecha_fin_est, observaciones)
-    VALUES (?,?,?,?,?,?,?,?)
-  `).run(numero, proyecto_id || null, descripcion.trim(), cliente_nombre || '', responsable || '', fecha_inicio || '', fecha_fin_est || '', observaciones || '')
-  const hrId = r.lastInsertRowid
-  const insEtapa = db.prepare('INSERT INTO hoja_ruta_etapa (hoja_ruta_id, nombre, orden) VALUES (?,?,?)')
-  ETAPAS_DEFAULT.forEach((nombre, i) => insEtapa.run(hrId, nombre, i + 1))
+  // Número + INSERT en una sola transacción: sin esto, dos altas casi
+  // simultáneas podrían leer el mismo máximo y terminar con el mismo número.
+  const { hrId, numero } = db.transaction(() => {
+    const numero = nextNumHR()
+    const r = db.prepare(`
+      INSERT INTO hoja_ruta (numero, proyecto_id, descripcion, cliente_nombre, responsable, fecha_inicio, fecha_fin_est, observaciones)
+      VALUES (?,?,?,?,?,?,?,?)
+    `).run(numero, proyecto_id || null, descripcion.trim(), cliente_nombre || '', responsable || '', fecha_inicio || '', fecha_fin_est || '', observaciones || '')
+    const hrId = r.lastInsertRowid
+    const insEtapa = db.prepare('INSERT INTO hoja_ruta_etapa (hoja_ruta_id, nombre, orden) VALUES (?,?,?)')
+    ETAPAS_DEFAULT.forEach((nombre, i) => insEtapa.run(hrId, nombre, i + 1))
+    return { hrId, numero }
+  })()
   res.status(201).json({ id: hrId, numero })
 })
 
@@ -285,12 +455,15 @@ router.post('/no-conformidades', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { hoja_ruta_id, proyecto_id, fecha, tipo, descripcion, causa, detectado_por, accion_correctiva, responsable, fecha_limite } = req.body
   if (!descripcion?.trim()) return res.status(400).json({ error: 'Descripción requerida' })
-  const numero = nextNumNC()
-  const r = db.prepare(`
-    INSERT INTO no_conformidad (numero, hoja_ruta_id, proyecto_id, fecha, tipo, descripcion, causa, detectado_por, accion_correctiva, responsable, fecha_limite)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)
-  `).run(numero, hoja_ruta_id || null, proyecto_id || null, fecha || '', tipo || 'Producto', descripcion.trim(), causa || '', detectado_por || '', accion_correctiva || '', responsable || '', fecha_limite || '')
-  res.status(201).json({ id: r.lastInsertRowid, numero })
+  const { id, numero } = db.transaction(() => {
+    const numero = nextNumNC()
+    const r = db.prepare(`
+      INSERT INTO no_conformidad (numero, hoja_ruta_id, proyecto_id, fecha, tipo, descripcion, causa, detectado_por, accion_correctiva, responsable, fecha_limite)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `).run(numero, hoja_ruta_id || null, proyecto_id || null, fecha || '', tipo || 'Producto', descripcion.trim(), causa || '', detectado_por || '', accion_correctiva || '', responsable || '', fecha_limite || '')
+    return { id: r.lastInsertRowid, numero }
+  })()
+  res.status(201).json({ id, numero })
 })
 
 router.put('/no-conformidades/:id', (req, res) => {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
+import { formatCuit } from '../../utils/cuit'
 
 const FUENTE_COLOR = {
   'Maestro':      'primary',
@@ -90,6 +91,8 @@ export default function FusionProveedores({ canWrite }) {
     if (!canWrite) return
     const rows = modal.rows
     const canonRow = rows[canonIdx]
+
+    if (!confirm(`Se van a fusionar ${rows.length} proveedores en "${canonNombre}", reasignando todo su historial de compras. Esta acción no se puede deshacer. ¿Confirmás?`)) return
 
     // master_id: el id del canónico si tiene entrada en maestro, si no null (se crea)
     const master_id = canonRow.proveedor_id || null
@@ -349,7 +352,8 @@ export default function FusionProveedores({ canWrite }) {
                 <div className="mb-3">
                   <label className="form-label small fw-semibold">CUIT</label>
                   <input className="form-control form-control-sm" placeholder="Sin CUIT"
-                    value={canonCuit} onChange={e => setCanonCuit(e.target.value)} />
+                    value={canonCuit} onChange={e => setCanonCuit(e.target.value)}
+                    onBlur={e => setCanonCuit(formatCuit(e.target.value))} />
                 </div>
 
                 {/* Resumen de qué se va a hacer */}

@@ -1,6 +1,8 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs   = require('fs');
+const { formatCuit } = require('../helpers/cuit');
+const { encontrarRaiz } = require('../helpers/organigrama');
 if (!process.env.NODE_ENV) require('dotenv').config();
 
 const rawPath = process.env.DB_PATH || './db/eintra_erp.db';
@@ -250,6 +252,7 @@ function inicializar() {
       created_by   INTEGER REFERENCES usuarios(id),
       created_at   TEXT DEFAULT (datetime('now','localtime'))
     );
+    CREATE INDEX IF NOT EXISTS idx_proyecto_costos_proyecto ON proyecto_costos(proyecto_id);
 
     -- ── Producción ────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS ordenes_trabajo (
@@ -290,6 +293,8 @@ function inicializar() {
       descripcion   TEXT DEFAULT '',
       observaciones TEXT DEFAULT ''
     );
+    CREATE INDEX IF NOT EXISTS idx_ot_tareas_ot ON ot_tareas(ot_id);
+    CREATE INDEX IF NOT EXISTS idx_ot_partes_ot ON ot_partes(ot_id);
 
     -- ── Finanzas ──────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS cuentas_financieras (
@@ -331,10 +336,15 @@ function inicializar() {
 
     CREATE INDEX IF NOT EXISTS idx_mov_caja_fecha  ON movimientos_caja(fecha);
     CREATE INDEX IF NOT EXISTS idx_mov_caja_tipo   ON movimientos_caja(tipo);
+    CREATE INDEX IF NOT EXISTS idx_mov_caja_cuenta ON movimientos_caja(cuenta_id);
     CREATE INDEX IF NOT EXISTS idx_ot_estado       ON ordenes_trabajo(estado);
     CREATE INDEX IF NOT EXISTS idx_proyectos_estado ON proyectos(estado);
     CREATE INDEX IF NOT EXISTS idx_ppto_estado     ON presupuestos(estado);
     CREATE INDEX IF NOT EXISTS idx_oc_estado       ON ordenes_compra(estado);
+    CREATE INDEX IF NOT EXISTS idx_oc_proveedor    ON ordenes_compra(proveedor_id);
+    CREATE INDEX IF NOT EXISTS idx_oc_fecha        ON ordenes_compra(fecha);
+    CREATE INDEX IF NOT EXISTS idx_oc_items_oc     ON oc_items(oc_id);
+    CREATE INDEX IF NOT EXISTS idx_oc_items_producto ON oc_items(producto_id);
   `);
 
   // ── Columnas extra en movimientos_stock (idempotente) ────────────────────────
@@ -366,6 +376,26 @@ function inicializar() {
   try { db.exec(`ALTER TABLE oc_items ADD COLUMN estado_factura TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE oc_items ADD COLUMN sin_codificar INTEGER DEFAULT 0`) } catch(e) {}
 
+  // Cuotas de facturación de una OC de compra (anticipo + saldo, avances, etc.)
+  // — mismo patrón que fin_oc_cliente_cuotas, para que Control OC deje de
+  // marcar como error una OC que se factura de a partes mientras todavía
+  // falta la próxima cuota, en vez de comparar siempre contra el total.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS oc_compra_cuotas (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      oc_id          INTEGER NOT NULL REFERENCES ordenes_compra(id) ON DELETE CASCADE,
+      orden          INTEGER NOT NULL DEFAULT 1,
+      tipo           TEXT DEFAULT 'avance',
+      pct            REAL,
+      monto_planeado REAL,
+      fecha_estimada TEXT DEFAULT '',
+      factura_id     INTEGER REFERENCES facturas_compra(id),
+      created_at     TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_oc_compra_cuotas_oc ON oc_compra_cuotas(oc_id);
+    CREATE INDEX IF NOT EXISTS idx_oc_compra_cuotas_factura ON oc_compra_cuotas(factura_id);
+  `);
+
   // ── Form 11 — Selección y Evaluación de Proveedores (idempotente) ────────────
   try { db.exec(`ALTER TABLE proveedores ADD COLUMN categoria_provision TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE proveedores ADD COLUMN fecha_seleccion TEXT DEFAULT ''`) } catch(e) {}
@@ -382,6 +412,18 @@ function inicializar() {
   // Precio de última compra en catálogo de productos
   try { db.exec(`ALTER TABLE productos ADD COLUMN precio_moneda TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE productos ADD COLUMN precio_fecha  TEXT DEFAULT ''`) } catch(e) {}
+
+  // Precios críticos: algunos materiales necesitan que su precio se revise
+  // cada cierto tiempo (ej. mensual) aunque nadie haya tocado nada — sin esto
+  // "precio_fecha" solo se actualiza cuando alguien lo edita a mano o entra
+  // una OC nueva, y un precio viejo puede quedar sin detectarse por meses.
+  // precio_frecuencia_dias en 0 = no crítico (default, la gran mayoría).
+  try { db.exec(`ALTER TABLE productos ADD COLUMN precio_critico INTEGER DEFAULT 0`) } catch(e) {}
+  try { db.exec(`ALTER TABLE productos ADD COLUMN precio_frecuencia_dias INTEGER DEFAULT 0`) } catch(e) {}
+  // El scan de "precios vencidos" (generarPedidosVencidos en pedidosPrecio.js)
+  // filtra por activo+precio_critico en cada corrida — sin este índice hace un
+  // full table scan de productos cada vez.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_productos_activo_critico ON productos(activo, precio_critico)`);
 
   // Futura codificación — para migración gradual
   try { db.exec(`ALTER TABLE productos ADD COLUMN codigo_futuro        TEXT    DEFAULT ''`) } catch(e) {}
@@ -522,7 +564,7 @@ function inicializar() {
       ejecutor_tipo   TEXT DEFAULT 'interno',
       ejecutor_nombre TEXT DEFAULT '',
       observaciones   TEXT DEFAULT '',
-      plan_id         INTEGER,
+      plan_id         INTEGER REFERENCES mant_plan(id),
       created_by      INTEGER REFERENCES usuarios(id),
       created_at      TEXT DEFAULT (datetime('now','localtime')),
       updated_at      TEXT DEFAULT (datetime('now','localtime'))
@@ -595,7 +637,7 @@ function inicializar() {
       'Mantenimiento (Técnico)':      [ ['mantenimiento',1,1], ['stock',1,0] ],
       'Depósito':                     [ ['stock',1,1] ],
       'Comprador':                    [ ['compras',1,1], ['partes',1,1], ['stock',1,0] ],
-      'Gerente de Compras':           [ ['compras',1,1], ['compras_fusion',1,1], ['compras_informes',1,0], ['partes',1,1], ['stock',1,0] ],
+      'Gerente de Compras':           [ ['compras',1,1], ['compras_informes',1,0], ['partes',1,1], ['stock',1,0] ],
       'Coordinación de Proyectos':    [ ['proyectos',1,1] ],
       'Administración':               [ ['administracion',1,1] ],
       'Vendedor':                     [ ['ventas',1,1], ['proyectos',1,0] ],
@@ -698,7 +740,7 @@ function inicializar() {
     CREATE TABLE IF NOT EXISTS mant_historial_estados (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       equipo_id       INTEGER NOT NULL REFERENCES mant_equipos(id),
-      fecha           TEXT NOT NULL DEFAULT (date('now')),
+      fecha           TEXT NOT NULL DEFAULT (date('now','localtime')),
       estado_anterior TEXT DEFAULT '',
       estado_nuevo    TEXT NOT NULL,
       motivo          TEXT DEFAULT '',
@@ -734,10 +776,19 @@ function inicializar() {
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
 
+    -- Antes se creaba de forma perezosa (al cargar routes/rrhh.js) en vez de
+    -- acá con el resto del esquema — movida para que rrhh_registros y
+    -- pedidos_stock puedan declarar su FK a actividad_id correctamente.
+    CREATE TABLE IF NOT EXISTS rrhh_actividades (
+      id     INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre TEXT NOT NULL,
+      activo INTEGER DEFAULT 1
+    );
+
     CREATE TABLE IF NOT EXISTS rrhh_registros (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       fecha        TEXT NOT NULL,
-      empleado_id  INTEGER NOT NULL REFERENCES rrhh_empleados(id),
+      empleado_id  INTEGER REFERENCES rrhh_empleados(id) ON DELETE SET NULL,
       proyecto_id  INTEGER REFERENCES rrhh_proyectos(id),
       categoria_id INTEGER REFERENCES rrhh_categorias(id),
       hora_inicio  TEXT DEFAULT '',
@@ -745,7 +796,8 @@ function inicializar() {
       horas        REAL NOT NULL DEFAULT 0,
       modulo       TEXT DEFAULT '',
       descripcion  TEXT DEFAULT '',
-      created_at   TEXT DEFAULT (datetime('now','localtime'))
+      created_at   TEXT DEFAULT (datetime('now','localtime')),
+      actividad_id INTEGER REFERENCES rrhh_actividades(id)
     );
 
     CREATE INDEX IF NOT EXISTS idx_rrhh_reg_fecha    ON rrhh_registros(fecha);
@@ -829,7 +881,7 @@ function inicializar() {
     CREATE TABLE IF NOT EXISTS rrhh_asistencia (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       dispositivo_id  INTEGER REFERENCES rrhh_dispositivos(id),
-      empleado_id     INTEGER REFERENCES rrhh_empleados(id),
+      empleado_id     INTEGER REFERENCES rrhh_empleados(id) ON DELETE SET NULL,
       empleado_nombre TEXT DEFAULT '',
       empleado_ext    TEXT DEFAULT '',
       fecha           TEXT NOT NULL,
@@ -858,6 +910,10 @@ function inicializar() {
   try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN dni            TEXT DEFAULT ''`); } catch(e) {}
   try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN fecha_ingreso  TEXT DEFAULT ''`); } catch(e) {}
   try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN fecha_egreso   TEXT DEFAULT ''`); } catch(e) {}
+  // Costo por hora: dato sensible (tipo sueldo) usado por el módulo de Análisis
+  // de Proyectos para calcular el costo de mano de obra — se redacta en las
+  // lecturas normales de RRHH, ver CAMPOS_SENSIBLES_EMPLEADO en rrhh.js.
+  try { db.exec(`ALTER TABLE rrhh_empleados ADD COLUMN costo_hora     REAL DEFAULT 0`); } catch(e) {}
 
   // Historial de puestos por empleado: uno o más puestos a la vez, con vigencia
   db.exec(`
@@ -953,7 +1009,11 @@ function inicializar() {
     ['REYES JORGE','contratista'],
     ['RUBEN HURTADO','contratista'],
   ];
-  {
+  // Solo en una base recién creada: si ya hay algún empleado cargado (aunque se
+  // hayan borrado otros), no volver a insertar esta lista — si no, un empleado
+  // borrado "resucita" en el próximo reinicio del servidor al no haber ya fila
+  // con ese nombre que bloquee el INSERT OR IGNORE.
+  if (db.prepare('SELECT COUNT(*) c FROM rrhh_empleados').get().c === 0) {
     const ins = db.prepare('INSERT OR IGNORE INTO rrhh_empleados (nombre,tipo) VALUES (?,?)');
     for (const [n,t] of EMPS_RRHH) ins.run(n,t);
   }
@@ -1174,7 +1234,8 @@ function inicializar() {
           horas        REAL DEFAULT 0,
           modulo       TEXT DEFAULT '',
           descripcion  TEXT DEFAULT '',
-          created_at   TEXT DEFAULT (datetime('now','localtime'))
+          created_at   TEXT DEFAULT (datetime('now','localtime')),
+          actividad_id INTEGER REFERENCES rrhh_actividades(id)
         );
         INSERT INTO rrhh_registros_new SELECT * FROM rrhh_registros;
         DROP TABLE rrhh_registros;
@@ -1187,6 +1248,72 @@ function inicializar() {
       console.log('Migración: rrhh_registros.proyecto_id ahora referencia proyectos(id)');
     }
   } catch(e) { console.log('migration rrhh_registros FK:', e.message) }
+
+  // ── Migrar rrhh_registros.empleado_id → nullable + ON DELETE SET NULL ────────
+  // Permite eliminar definitivamente un empleado inactivo y conservar sus horas
+  // cargadas en proyectos (quedan sin empleado asociado) en vez de solo poder
+  // desactivarlo cuando ya tiene partes cargados.
+  try {
+    const check2 = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='rrhh_registros'`).get();
+    if (check2?.sql && !check2.sql.includes('ON DELETE SET NULL')) {
+      db.pragma('foreign_keys = OFF');
+      db.exec(`
+        DROP TABLE IF EXISTS rrhh_registros_new;
+        CREATE TABLE rrhh_registros_new (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          fecha        TEXT NOT NULL,
+          empleado_id  INTEGER REFERENCES rrhh_empleados(id) ON DELETE SET NULL,
+          proyecto_id  INTEGER REFERENCES proyectos(id),
+          categoria_id INTEGER REFERENCES rrhh_categorias(id),
+          hora_inicio  TEXT DEFAULT '',
+          hora_fin     TEXT DEFAULT '',
+          horas        REAL DEFAULT 0,
+          modulo       TEXT DEFAULT '',
+          descripcion  TEXT DEFAULT '',
+          created_at   TEXT DEFAULT (datetime('now','localtime')),
+          actividad_id INTEGER REFERENCES rrhh_actividades(id)
+        );
+        INSERT INTO rrhh_registros_new SELECT * FROM rrhh_registros;
+        DROP TABLE rrhh_registros;
+        ALTER TABLE rrhh_registros_new RENAME TO rrhh_registros;
+        CREATE INDEX IF NOT EXISTS idx_rrhh_reg_fecha    ON rrhh_registros(fecha);
+        CREATE INDEX IF NOT EXISTS idx_rrhh_reg_empleado ON rrhh_registros(empleado_id);
+        CREATE INDEX IF NOT EXISTS idx_rrhh_reg_proyecto ON rrhh_registros(proyecto_id);
+      `);
+      db.pragma('foreign_keys = ON');
+      console.log('Migración: rrhh_registros.empleado_id ahora es nullable con ON DELETE SET NULL');
+    }
+  } catch(e) { console.log('migration rrhh_registros empleado_id nullable:', e.message) }
+
+  // ── Migrar rrhh_asistencia.empleado_id → ON DELETE SET NULL (mismo motivo) ───
+  try {
+    const check3 = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='rrhh_asistencia'`).get();
+    if (check3?.sql && !check3.sql.includes('ON DELETE SET NULL')) {
+      db.pragma('foreign_keys = OFF');
+      db.exec(`
+        CREATE TABLE rrhh_asistencia_new (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          dispositivo_id  INTEGER REFERENCES rrhh_dispositivos(id),
+          empleado_id     INTEGER REFERENCES rrhh_empleados(id) ON DELETE SET NULL,
+          empleado_nombre TEXT DEFAULT '',
+          empleado_ext    TEXT DEFAULT '',
+          fecha           TEXT NOT NULL,
+          hora            TEXT NOT NULL,
+          tipo_acceso     TEXT DEFAULT '',
+          temperatura     REAL,
+          created_at      TEXT DEFAULT (datetime('now','localtime')),
+          UNIQUE(dispositivo_id, empleado_ext, fecha, hora)
+        );
+        INSERT INTO rrhh_asistencia_new SELECT * FROM rrhh_asistencia;
+        DROP TABLE rrhh_asistencia;
+        ALTER TABLE rrhh_asistencia_new RENAME TO rrhh_asistencia;
+        CREATE INDEX IF NOT EXISTS idx_rrhh_asist_fecha ON rrhh_asistencia(fecha);
+        CREATE INDEX IF NOT EXISTS idx_rrhh_asist_emp   ON rrhh_asistencia(empleado_id);
+      `);
+      db.pragma('foreign_keys = ON');
+      console.log('Migración: rrhh_asistencia.empleado_id ahora tiene ON DELETE SET NULL');
+    }
+  } catch(e) { console.log('migration rrhh_asistencia empleado_id nullable:', e.message) }
 
   // ── Entrega de documentación (Form 56) ───────────────────────────────────────
   db.exec(`
@@ -1261,6 +1388,7 @@ function inicializar() {
     );
     CREATE INDEX IF NOT EXISTS idx_fact_compra_fecha ON facturas_compra(fecha);
     CREATE INDEX IF NOT EXISTS idx_fact_compra_prov  ON facturas_compra(proveedor_id);
+    CREATE INDEX IF NOT EXISTS idx_fact_compra_oc    ON facturas_compra(oc_id);
 
     CREATE TABLE IF NOT EXISTS facturas_venta (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1293,6 +1421,7 @@ function inicializar() {
   if (!colsFC.includes('iva_21'))         db.prepare('ALTER TABLE facturas_compra ADD COLUMN iva_21 REAL DEFAULT 0').run();
   if (!colsFC.includes('iva_10_5'))       db.prepare('ALTER TABLE facturas_compra ADD COLUMN iva_10_5 REAL DEFAULT 0').run();
   if (!colsFC.includes('iva_27'))         db.prepare('ALTER TABLE facturas_compra ADD COLUMN iva_27 REAL DEFAULT 0').run();
+  if (!colsFC.includes('nc_factura_id'))  db.prepare('ALTER TABLE facturas_compra ADD COLUMN nc_factura_id INTEGER REFERENCES facturas_compra(id)').run();
   if (!colsFC.includes('otros_imp'))      db.prepare('ALTER TABLE facturas_compra ADD COLUMN otros_imp REAL DEFAULT 0').run();
   if (!colsFC.includes('perc_iva'))       db.prepare('ALTER TABLE facturas_compra ADD COLUMN perc_iva REAL DEFAULT 0').run();
   if (!colsFC.includes('perc_iibb'))      db.prepare('ALTER TABLE facturas_compra ADD COLUMN perc_iibb REAL DEFAULT 0').run();
@@ -1308,6 +1437,8 @@ function inicializar() {
   if (!colsFV.includes('oc'))               db.prepare("ALTER TABLE facturas_venta ADD COLUMN oc TEXT DEFAULT ''").run();
   if (!colsFV.includes('neto_gravado'))     db.prepare('ALTER TABLE facturas_venta ADD COLUMN neto_gravado REAL DEFAULT 0').run();
   if (!colsFV.includes('iva_21'))           db.prepare('ALTER TABLE facturas_venta ADD COLUMN iva_21 REAL DEFAULT 0').run();
+  if (!colsFV.includes('iva_10_5'))         db.prepare('ALTER TABLE facturas_venta ADD COLUMN iva_10_5 REAL DEFAULT 0').run();
+  if (!colsFV.includes('nc_factura_id'))    db.prepare('ALTER TABLE facturas_venta ADD COLUMN nc_factura_id INTEGER REFERENCES facturas_venta(id)').run();
   if (!colsFV.includes('ret_iibb'))         db.prepare('ALTER TABLE facturas_venta ADD COLUMN ret_iibb REAL DEFAULT 0').run();
   if (!colsFV.includes('ret_iva'))          db.prepare('ALTER TABLE facturas_venta ADD COLUMN ret_iva REAL DEFAULT 0').run();
   if (!colsFV.includes('ret_gcia'))         db.prepare('ALTER TABLE facturas_venta ADD COLUMN ret_gcia REAL DEFAULT 0').run();
@@ -1334,7 +1465,8 @@ function inicializar() {
       observaciones      TEXT DEFAULT '',
       created_by         INTEGER REFERENCES usuarios(id),
       created_at         TEXT DEFAULT (datetime('now','localtime'))
-    )
+    );
+    CREATE INDEX IF NOT EXISTS idx_pagos_fc ON pagos_factura_compra(factura_id);
   `);
 
   // ── Pagos de facturas de venta ────────────────────────────────────────────────
@@ -1365,22 +1497,94 @@ function inicializar() {
   if (!colsPagosFV.includes('ret_contratista')) db.prepare('ALTER TABLE pagos_factura_venta ADD COLUMN ret_contratista REAL DEFAULT 0').run();
   if (!colsPagosFV.includes('ret_ss'))          db.prepare('ALTER TABLE pagos_factura_venta ADD COLUMN ret_ss REAL DEFAULT 0').run();
 
+  // Un pago puede cargarse en una moneda distinta a la de la factura (ej. factura en
+  // USD pagada con una transferencia en pesos al TC del día) — sin esta columna,
+  // pagos en moneda extranjera se sumaban como si "importe" ya fuera pesos.
+  if (!colsPagosFV.includes('tasa_cambio')) db.prepare('ALTER TABLE pagos_factura_venta ADD COLUMN tasa_cambio REAL DEFAULT 1').run();
+  const colsPagosFC = db.prepare('PRAGMA table_info(pagos_factura_compra)').all().map(c => c.name);
+  if (!colsPagosFC.includes('tasa_cambio')) db.prepare('ALTER TABLE pagos_factura_compra ADD COLUMN tasa_cambio REAL DEFAULT 1').run();
+
   // Migrar anticipos existentes a pagos_factura_venta (idempotente)
   try {
     const conAnticipo = db.prepare(`
-      SELECT id, anticipo, fecha_anticipo, moneda FROM facturas_venta
+      SELECT id, anticipo, fecha_anticipo, moneda, tasa_cambio FROM facturas_venta
       WHERE anticipo > 0
       AND NOT EXISTS (SELECT 1 FROM pagos_factura_venta WHERE factura_id = facturas_venta.id)
     `).all();
     const insPago = db.prepare(`
-      INSERT INTO pagos_factura_venta (factura_id, tipo, forma_pago, importe, moneda, fecha, estado)
-      VALUES (?, 'anticipo', 'transferencia', ?, ?, ?, 'confirmado')
+      INSERT INTO pagos_factura_venta (factura_id, tipo, forma_pago, importe, moneda, tasa_cambio, fecha, estado)
+      VALUES (?, 'anticipo', 'transferencia', ?, ?, ?, ?, 'confirmado')
     `);
     for (const f of conAnticipo) {
-      insPago.run(f.id, f.anticipo, f.moneda || 'PESO', f.fecha_anticipo || '');
+      insPago.run(f.id, f.anticipo, f.moneda || 'PESO', f.tasa_cambio || 1, f.fecha_anticipo || '');
     }
     if (conAnticipo.length > 0) console.log(`Migrados ${conAnticipo.length} anticipos a pagos_factura_venta`);
-  } catch(e) { console.log('Migración anticipos:', e.message) }
+  } catch(e) { console.log('Migración anticipos venta:', e.message) }
+
+  // Idem para facturas de compra — este puente nunca existió de este lado, dejando
+  // anticipos ya cargados desconectados del saldo calculado a partir de los pagos.
+  try {
+    const conAnticipoC = db.prepare(`
+      SELECT id, anticipo, fecha_anticipo, moneda, tasa_cambio FROM facturas_compra
+      WHERE anticipo > 0
+      AND NOT EXISTS (SELECT 1 FROM pagos_factura_compra WHERE factura_id = facturas_compra.id)
+    `).all();
+    const insPagoC = db.prepare(`
+      INSERT INTO pagos_factura_compra (factura_id, tipo, forma_pago, importe, moneda, tasa_cambio, fecha, estado)
+      VALUES (?, 'anticipo', 'transferencia', ?, ?, ?, ?, 'confirmado')
+    `);
+    for (const f of conAnticipoC) {
+      insPagoC.run(f.id, f.anticipo, f.moneda || 'PESO', f.tasa_cambio || 1, f.fecha_anticipo || '');
+    }
+    if (conAnticipoC.length > 0) console.log(`Migrados ${conAnticipoC.length} anticipos a pagos_factura_compra`);
+  } catch(e) { console.log('Migración anticipos compra:', e.message) }
+
+  // Antes de esta sesión, un pago con E-CHEQ no contaba como "pagado" para la
+  // factura hasta confirmar la acreditación — facturas ya saldadas solo con
+  // E-CHEQ quedaron con pago_confirmado=0 (se ven "Pendiente" en Seguimiento
+  // OC Compras aunque el E-CHEQ ya se entregó). pago_confirmado es un valor
+  // guardado que solo se recalcula al tocar el pago de nuevo, así que hace
+  // falta recalcularlo una vez con el criterio nuevo al desplegar este fix.
+  const totalPesosCol = (importeCol, monedaCol, tcCol) =>
+    `(CASE WHEN ${monedaCol} IN ('PESO','PESOS') OR ${monedaCol} IS NULL OR ${monedaCol}='' THEN ${importeCol} ELSE ${importeCol} * COALESCE(${tcCol},1) END)`;
+  migrar('recalcular_pago_confirmado_echeq', () => {
+    const pagadoC = db.prepare(`
+      SELECT factura_id, COALESCE(SUM(CASE WHEN estado='confirmado' OR forma_pago='e-cheq'
+        THEN ${totalPesosCol('importe', 'moneda', 'tasa_cambio')} ELSE 0 END), 0) AS total
+      FROM pagos_factura_compra WHERE factura_id=?
+    `);
+    const facturasC = db.prepare(`
+      SELECT id, importe, moneda, tasa_cambio FROM facturas_compra
+      WHERE pago_confirmado = 0
+        AND EXISTS (SELECT 1 FROM pagos_factura_compra WHERE factura_id = facturas_compra.id AND forma_pago='e-cheq')
+    `).all();
+    const updC = db.prepare("UPDATE facturas_compra SET pago_confirmado=1, updated_at=datetime('now','localtime') WHERE id=?");
+    let nC = 0;
+    for (const f of facturasC) {
+      const totalFactura = f.moneda === 'PESO' || f.moneda === 'PESOS' || !f.moneda ? (f.importe||0) : (f.importe||0) * (f.tasa_cambio||1);
+      if (pagadoC.get(f.id).total >= totalFactura - 0.01) { updC.run(f.id); nC++; }
+    }
+
+    const pagadoV = db.prepare(`
+      SELECT factura_id, COALESCE(SUM(CASE WHEN estado='confirmado' OR forma_pago='e-cheq'
+        THEN ${totalPesosCol('importe', 'moneda', 'tasa_cambio')} + COALESCE(ret_iibb,0)+COALESCE(ret_iva,0)+COALESCE(ret_gcia,0)+COALESCE(ret_contratista,0)+COALESCE(ret_ss,0)
+        ELSE 0 END), 0) AS total
+      FROM pagos_factura_venta WHERE factura_id=?
+    `);
+    const facturasV = db.prepare(`
+      SELECT id, importe, moneda, tasa_cambio FROM facturas_venta
+      WHERE pago_confirmado = 0
+        AND EXISTS (SELECT 1 FROM pagos_factura_venta WHERE factura_id = facturas_venta.id AND forma_pago='e-cheq')
+    `).all();
+    const updV = db.prepare("UPDATE facturas_venta SET pago_confirmado=1, updated_at=datetime('now','localtime') WHERE id=?");
+    let nV = 0;
+    for (const f of facturasV) {
+      const totalFactura = f.moneda === 'PESO' || f.moneda === 'PESOS' || !f.moneda ? (f.importe||0) : (f.importe||0) * (f.tasa_cambio||1);
+      if (pagadoV.get(f.id).total >= totalFactura - 0.01) { updV.run(f.id); nV++; }
+    }
+
+    if (nC > 0 || nV > 0) console.log(`Recalculadas ${nC} facturas de compra y ${nV} de venta pagadas con E-CHEQ`);
+  });
 
   // ── Saldo bancario ────────────────────────────────────────────────────────────
   db.exec(`
@@ -1402,7 +1606,8 @@ function inicializar() {
       fecha      TEXT DEFAULT '',
       created_by INTEGER REFERENCES usuarios(id),
       created_at TEXT DEFAULT (datetime('now','localtime'))
-    )
+    );
+    CREATE INDEX IF NOT EXISTS idx_tc_moneda_fecha ON tipo_cambio(moneda, fecha);
   `)
 
   // ── Servicios recurrentes ─────────────────────────────────────────────────────
@@ -1461,6 +1666,96 @@ function inicializar() {
 
   try { db.exec(`ALTER TABLE fin_oc_clientes ADD COLUMN cliente_id INTEGER REFERENCES clientes(id)`) } catch(e) {}
   try { db.exec(`ALTER TABLE fin_oc_clientes ADD COLUMN proyecto_id INTEGER REFERENCES proyectos(id)`) } catch(e) {}
+
+  // Cuotas de facturación de una OC de cliente — reemplaza el esquema fijo de
+  // 2 hitos (anticipo/final) por una cantidad variable de pagos, cada uno
+  // vinculable a una factura de venta real (factura_id), en vez de copiar
+  // fecha/monto como hacía la pantalla vieja.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS fin_oc_cliente_cuotas (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      oc_cliente_id    INTEGER NOT NULL REFERENCES fin_oc_clientes(id) ON DELETE CASCADE,
+      orden            INTEGER NOT NULL DEFAULT 1,
+      tipo             TEXT DEFAULT 'avance',
+      pct              REAL,
+      monto_planeado   REAL,
+      fecha_estimada   TEXT DEFAULT '',
+      factura_id       INTEGER REFERENCES facturas_venta(id),
+      fecha_cobro      TEXT DEFAULT '',
+      pago_id          INTEGER REFERENCES pagos_factura_venta(id),
+      created_at       TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_oc_cuotas_oc ON fin_oc_cliente_cuotas(oc_cliente_id);
+  `);
+  try { db.exec(`ALTER TABLE fin_oc_cliente_cuotas ADD COLUMN fecha_cobro TEXT DEFAULT ''`) } catch(e) {}
+  // pago_id: vincula la cuota a un pago puntual ya registrado en el modal de
+  // Pagos de esa factura (confirmado/pendiente, e-cheq/transferencia, fecha de
+  // acreditación real) — reemplaza tener que tipear una fecha de cobro a mano,
+  // que quedaba desconectada de los pagos reales ya cargados en el sistema.
+  try { db.exec(`ALTER TABLE fin_oc_cliente_cuotas ADD COLUMN pago_id INTEGER REFERENCES pagos_factura_venta(id)`) } catch(e) {}
+  // A diferencia de factura_id (que sí puede repetirse entre cuotas de una
+  // misma OC, porque un solo comprobante se cobra en partes), un pago_id es un
+  // movimiento de dinero puntual — no puede contarse dos veces en dos cuotas.
+  // Se crea recién acá (después del ALTER de arriba) para que la columna ya
+  // exista en bases viejas que todavía no la tenían.
+  migrar('indice_unico_pago_cuotas', () => {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_oc_cuotas_pago_unico ON fin_oc_cliente_cuotas(pago_id)');
+  });
+
+  // Caso real: una cuota se cobra combinando varios medios de pago (ej. dos
+  // e-cheques + una transferencia por el total de la cuota) — la columna
+  // pago_id de arriba solo admitía UN pago por cuota. Se reemplaza por esta
+  // tabla de vínculo (N pagos por cuota); pago_id queda sin usarse en cuotas
+  // nuevas, pero no se borra (dato histórico de cuotas cargadas antes).
+  migrar('crear_fin_oc_cliente_cuota_pagos', () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS fin_oc_cliente_cuota_pagos (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        cuota_id   INTEGER NOT NULL REFERENCES fin_oc_cliente_cuotas(id) ON DELETE CASCADE,
+        pago_id    INTEGER NOT NULL REFERENCES pagos_factura_venta(id),
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cuota_pagos_pago ON fin_oc_cliente_cuota_pagos(pago_id);
+      CREATE INDEX IF NOT EXISTS idx_cuota_pagos_cuota ON fin_oc_cliente_cuota_pagos(cuota_id);
+    `);
+    // Volcar los vínculos existentes (1 por cuota) a la tabla nueva, para no perderlos.
+    const conPago = db.prepare('SELECT id, pago_id FROM fin_oc_cliente_cuotas WHERE pago_id IS NOT NULL').all();
+    const ins = db.prepare('INSERT INTO fin_oc_cliente_cuota_pagos (cuota_id, pago_id) VALUES (?,?)');
+    for (const c of conPago) ins.run(c.id, c.pago_id);
+  });
+
+  // Caso real: se factura el 100% de la OC en una sola factura, pero el
+  // cliente la paga en cuotas/plazos — varias cuotas comparten entonces la
+  // misma factura_id, cada una con su propia fecha de cobro. Por eso NO puede
+  // haber una restricción UNIQUE sobre factura_id (se probó y bloqueaba este
+  // caso real) — lo único que se sigue evitando es que la misma factura quede
+  // vinculada a cuotas de OC *distintas* (eso sí sería un error de carga), y
+  // esa validación se hace en el código de guardado, no con un índice.
+  migrar('quitar_unicidad_factura_cuotas', () => {
+    db.exec('DROP INDEX IF EXISTS idx_oc_cuotas_factura_unica');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_oc_cuotas_factura ON fin_oc_cliente_cuotas(factura_id)');
+  });
+
+  // Migración única: las OC de clientes cargadas antes de este cambio tenían
+  // anticipo/final como columnas fijas — se vuelcan a cuotas equivalentes para
+  // no perder ese dato. No se intenta vincular automáticamente ninguna factura
+  // (sería un emparejamiento frágil por fecha/monto) — quedan para vincularse
+  // a mano una vez desde la pantalla nueva.
+  migrar('migrar_fin_oc_clientes_a_cuotas', () => {
+    const filas = db.prepare(`
+      SELECT id, anticipo_pct, monto_anticipo_usd, final_pct, monto_final_usd
+      FROM fin_oc_clientes
+      WHERE (anticipo_pct IS NOT NULL) OR (final_pct IS NOT NULL)
+    `).all();
+    const ins = db.prepare(`
+      INSERT INTO fin_oc_cliente_cuotas (oc_cliente_id, orden, tipo, pct, monto_planeado)
+      VALUES (?,?,?,?,?)
+    `);
+    for (const f of filas) {
+      if (f.anticipo_pct != null) ins.run(f.id, 1, 'anticipo', f.anticipo_pct, f.monto_anticipo_usd);
+      if (f.final_pct != null)    ins.run(f.id, 2, 'saldo_final', f.final_pct, f.monto_final_usd);
+    }
+  });
 
   // ── Directivas del programa ───────────────────────────────────────────────────
   db.exec(`
@@ -1569,6 +1864,7 @@ function inicializar() {
       created_at         TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_nc_estado ON no_conformidad(estado);
+    CREATE INDEX IF NOT EXISTS idx_nc_hoja_ruta ON no_conformidad(hoja_ruta_id);
 
     CREATE TABLE IF NOT EXISTS calidad_inspeccion (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1608,6 +1904,37 @@ function inicializar() {
         created_at              TEXT DEFAULT (datetime('now','localtime'))
       );
       CREATE INDEX idx_doc_calidad_codigo ON documentos_calidad(codigo);
+    `)
+  })
+
+  // ── Objetivos de Calidad medibles (ISO 9001:2015, cláusula 6.2) ───────────────
+  migrar('crear_objetivos_calidad', () => {
+    db.exec(`
+      CREATE TABLE objetivo_calidad (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre                TEXT NOT NULL,
+        descripcion           TEXT DEFAULT '',
+        fuente                TEXT NOT NULL DEFAULT 'manual'
+          CHECK(fuente IN ('nc_cerradas_plazo','ot_entregas_tiempo','eval_proveedores_puntaje','inspecciones_aprobadas','manual')),
+        meta                  REAL NOT NULL,
+        unidad                TEXT NOT NULL DEFAULT '%',
+        periodicidad          TEXT NOT NULL DEFAULT 'anual' CHECK(periodicidad IN ('mensual','trimestral','anual')),
+        responsable_puesto_id INTEGER REFERENCES puestos(id),
+        responsable_nombre    TEXT DEFAULT '',
+        estado                TEXT NOT NULL DEFAULT 'Activo' CHECK(estado IN ('Activo','Cerrado')),
+        created_by            INTEGER REFERENCES usuarios(id),
+        created_at            TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE TABLE objetivo_calidad_medicion (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        objetivo_id   INTEGER NOT NULL REFERENCES objetivo_calidad(id) ON DELETE CASCADE,
+        periodo       TEXT NOT NULL,
+        valor         REAL NOT NULL,
+        observaciones TEXT DEFAULT '',
+        created_by    INTEGER REFERENCES usuarios(id),
+        created_at    TEXT DEFAULT (datetime('now','localtime')),
+        UNIQUE(objetivo_id, periodo)
+      );
     `)
   })
 
@@ -1824,6 +2151,280 @@ function inicializar() {
 
   // Migraciones incrementales
   try { db.exec(`ALTER TABLE gantt_plantilla_tarea ADD COLUMN plantilla_set_id INTEGER DEFAULT NULL`) } catch (_) {}
+  try { db.exec(`ALTER TABLE proyecto_tarea ADD COLUMN area_responsable TEXT DEFAULT ''`) } catch (_) {}
+
+  // ── Cambio de contraseña obligatorio (seguridad): NULL = todavía no la
+  // cambió por su cuenta (usuario nuevo, contraseña reseteada por un admin, o
+  // un admin pidió el cambio vía PATCH /usuarios/:id/forzar-cambio-password) —
+  // /auth/login exige cambiarla mientras esté en NULL. No hace falta ningún
+  // backfill aparte: alcanza con agregar la columna para que todos los
+  // usuarios existentes queden con NULL y les toque cambiarla en su próximo login.
+  migrar('password_changed_at', () => {
+    db.exec(`ALTER TABLE usuarios ADD COLUMN password_changed_at TEXT`);
+  });
+
+  // ── Pedido de Stock: solicitud interna de materiales ──────────────────────────
+  // Un usuario con permiso de "pedidos_stock" pide materiales del catálogo; queda
+  // pendiente hasta que alguien con permiso de "stock" confirma la entrega (total
+  // o parcial) — recién ahí se descuenta stock_actual y queda el movimiento en el
+  // kardex (movimientos_stock, tipo_doc='pedido_stock'), igual que ya se hace con
+  // los ingresos de una OC.
+  migrar('crear_pedidos_stock', () => {
+    db.exec(`
+      CREATE TABLE pedidos_stock (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        fecha              TEXT DEFAULT (datetime('now','localtime')),
+        solicitante_id     INTEGER REFERENCES usuarios(id),
+        solicitante_nombre TEXT DEFAULT '',
+        estado             TEXT NOT NULL DEFAULT 'Pendiente' CHECK(estado IN ('Pendiente','Parcial','Entregado','Cancelado')),
+        observaciones      TEXT DEFAULT '',
+        proyecto_id        INTEGER,
+        actividad_id       INTEGER REFERENCES rrhh_actividades(id),
+        created_at         TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX idx_pedido_stock_solicitante ON pedidos_stock(solicitante_id);
+      CREATE INDEX idx_pedido_stock_estado ON pedidos_stock(estado);
+
+      CREATE TABLE pedido_stock_items (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        pedido_id          INTEGER NOT NULL REFERENCES pedidos_stock(id) ON DELETE CASCADE,
+        producto_id        INTEGER NOT NULL REFERENCES productos(id),
+        cantidad           REAL NOT NULL,
+        cantidad_entregada REAL DEFAULT 0
+      );
+      CREATE INDEX idx_pedido_stock_items_pedido ON pedido_stock_items(pedido_id);
+    `);
+  });
+
+  // Corrige instalaciones donde 'crear_pedidos_stock' ya corrió con el
+  // esquema viejo (proyecto en texto libre, sin proyecto_id/actividad_id).
+  migrar('pedidos_stock_agrega_proyecto_actividad', () => {
+    const cols = db.prepare("PRAGMA table_info(pedidos_stock)").all().map(c => c.name);
+    if (!cols.includes('proyecto_id'))  db.exec(`ALTER TABLE pedidos_stock ADD COLUMN proyecto_id INTEGER`);
+    if (!cols.includes('actividad_id')) db.exec(`ALTER TABLE pedidos_stock ADD COLUMN actividad_id INTEGER REFERENCES rrhh_actividades(id)`);
+  });
+
+  // Normaliza a formato XX-XXXXXXXX-X todos los CUIT ya guardados (venían sin
+  // guiones o con formatos mezclados, cargados a mano antes de que el propio
+  // formulario los normalizara). Reformatea solo cuando cambia algo.
+  migrar('normalizar_formato_cuit', () => {
+    const tablas = [
+      { tabla: 'proveedores',       col: 'cuit' },
+      { tabla: 'clientes',          col: 'cuit' },
+      { tabla: 'ordenes_compra',    col: 'proveedor_cuit' },
+      { tabla: 'presupuestos',      col: 'cli_cuit' },
+      { tabla: 'form49_ingresos',   col: 'proveedor_cuit' },
+      { tabla: 'facturas_compra',   col: 'cuit' },
+    ];
+    for (const { tabla, col } of tablas) {
+      const cols = db.prepare(`PRAGMA table_info(${tabla})`).all().map(c => c.name);
+      if (!cols.includes(col)) continue;
+      const filas = db.prepare(`SELECT rowid AS _rowid, ${col} AS valor FROM ${tabla} WHERE ${col} IS NOT NULL AND ${col} != ''`).all();
+      const upd = db.prepare(`UPDATE ${tabla} SET ${col}=? WHERE rowid=?`);
+      for (const f of filas) {
+        const normalizado = formatCuit(f.valor);
+        if (normalizado !== f.valor) upd.run(normalizado, f._rowid);
+      }
+    }
+  });
+
+  // Permite asignar a mano a qué gerencia pertenece cada módulo (antes se
+  // deducía siempre del organigrama vía puesto_modulos) — sin fila para un
+  // módulo, se sigue deduciendo automático como hasta ahora.
+  migrar('crear_modulo_gerencia', () => {
+    db.exec(`
+      CREATE TABLE modulo_gerencia (
+        modulo    TEXT PRIMARY KEY,
+        puesto_id INTEGER NOT NULL REFERENCES puestos(id) ON DELETE CASCADE
+      );
+    `);
+    // Semilla el comportamiento que ya venía funcionando (Finanzas siempre en
+    // la gerencia general) como configuración explícita editable, pero solo
+    // si ya hay un organigrama real armado — de instalaciones nuevas (solo
+    // con los puestos de demostración, sin jerarquía real) no hay de dónde
+    // deducir una raíz confiable todavía.
+    const puestos = db.prepare('SELECT id, reporta_a_id FROM puestos').all();
+    const raiz = encontrarRaiz(puestos);
+    if (raiz && raiz._descendientes > 0) {
+      db.prepare('INSERT OR IGNORE INTO modulo_gerencia (modulo, puesto_id) VALUES (?,?)').run('finanzas', raiz.id);
+    }
+  });
+
+  // Un admin puede "ser" cualquier usuario (POST /auth/impersonate/:id) sin
+  // pedirle la contraseña — útil para soporte, pero sin rastro quedaba sin
+  // forma de auditar quién operó como quién. admin_id nulo = login normal.
+  migrar('login_log_admin_id', () => {
+    db.exec(`ALTER TABLE login_log ADD COLUMN admin_id INTEGER REFERENCES usuarios(id)`);
+  });
+
+  // precio_fecha se agregó con default '' (ver ALTER TABLE más arriba) y desde
+  // entonces solo se completa cuando alguien vuelve a tocar el precio de ESE
+  // material puntual — los materiales que ya tenían precio cargado antes de
+  // este cambio quedaron con la fecha en blanco y no se completan solos. Se
+  // rellena una única vez con la mejor fecha disponible (updated_at o, si no
+  // hay, created_at) para que no se vean vacíos para siempre.
+  migrar('backfill_precio_fecha_productos', () => {
+    db.exec(`
+      UPDATE productos
+      SET precio_fecha = substr(COALESCE(NULLIF(updated_at,''), created_at), 1, 10)
+      WHERE precio_costo > 0 AND (precio_fecha IS NULL OR precio_fecha = '')
+    `);
+  });
+
+  // "Pedido de precio": desde Materiales o Análisis de Proyectos, cualquiera
+  // puede marcar que un material necesita que Administración le cargue el
+  // precio de costo — mismo espíritu que pedidos_stock (solicitud liviana,
+  // resuelta por alguien de otro sector), pero acá no hace falta un permiso
+  // de módulo nuevo: pedir es abierto a cualquier usuario logueado, y resolver
+  // ya lo puede hacer cualquiera con permiso de escritura de "administracion".
+  migrar('crear_materiales_pedidos_precio', () => {
+    db.exec(`
+      CREATE TABLE materiales_pedidos_precio (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        producto_id        INTEGER NOT NULL REFERENCES productos(id),
+        solicitante_id     INTEGER REFERENCES usuarios(id),
+        solicitante_nombre TEXT DEFAULT '',
+        estado             TEXT NOT NULL DEFAULT 'Pendiente' CHECK(estado IN ('Pendiente','Resuelto','Cancelado')),
+        observaciones      TEXT DEFAULT '',
+        created_at         TEXT DEFAULT (datetime('now','localtime')),
+        resuelto_at        TEXT DEFAULT ''
+      );
+      CREATE INDEX idx_pedido_precio_producto ON materiales_pedidos_precio(producto_id);
+      CREATE INDEX idx_pedido_precio_estado ON materiales_pedidos_precio(estado);
+    `);
+  });
+
+  // Bug ya corregido en el código (actualizarCatalogoDesdeOC en compras.js
+  // copiaba el precio de la OC al catálogo pero nunca el proveedor) dejó
+  // materiales con precio cargado por OC pero sin proveedor. Se completa una
+  // única vez con el proveedor de la OC más reciente que tenga ese material,
+  // SOLO para los que hoy están sin proveedor — nunca pisa uno ya cargado a mano.
+  migrar('backfill_proveedor_productos_desde_oc', () => {
+    db.exec(`
+      UPDATE productos
+      SET proveedor = (
+        SELECT oc.proveedor_nombre
+        FROM oc_items oi
+        JOIN ordenes_compra oc ON oc.id = oi.oc_id
+        WHERE oi.producto_id = productos.id AND oc.proveedor_nombre != ''
+        ORDER BY oc.fecha DESC, oc.id DESC
+        LIMIT 1
+      )
+      WHERE (proveedor IS NULL OR proveedor = '') AND EXISTS (
+        SELECT 1 FROM oc_items oi
+        JOIN ordenes_compra oc ON oc.id = oi.oc_id
+        WHERE oi.producto_id = productos.id AND oc.proveedor_nombre != ''
+      )
+    `);
+  });
+
+  // Costeo de Equipos: reemplaza la planilla Excel que usa el gerente de
+  // Ingeniería para cotizar plantas/equipos (materiales + mano de obra, por
+  // "módulo" de equipo, con un margen sobre cada uno). Un costeo completo se
+  // guarda de una — el frontend manda el documento entero (módulos + ítems) en
+  // cada guardado, reemplazando lo anterior, en vez de altas/bajas item por
+  // item (misma idea que ya se usa para oc_items).
+  migrar('crear_costeo_equipos', () => {
+    db.exec(`
+      CREATE TABLE costeos_equipos (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre             TEXT NOT NULL DEFAULT '',
+        cliente            TEXT DEFAULT '',
+        fecha              TEXT DEFAULT (date('now','localtime')),
+        utilidad_material  REAL DEFAULT 1.8,
+        utilidad_mano_obra REAL DEFAULT 1.8,
+        utilidad_extra     REAL DEFAULT 1.05,
+        tipo_cambio        REAL DEFAULT 0,
+        observaciones      TEXT DEFAULT '',
+        creado_por         INTEGER REFERENCES usuarios(id),
+        created_at         TEXT DEFAULT (datetime('now','localtime')),
+        updated_at         TEXT DEFAULT (datetime('now','localtime'))
+      );
+
+      CREATE TABLE costeo_modulos (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        costeo_id  INTEGER NOT NULL REFERENCES costeos_equipos(id) ON DELETE CASCADE,
+        orden      INTEGER NOT NULL DEFAULT 1,
+        nombre     TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX idx_costeo_modulos_costeo ON costeo_modulos(costeo_id);
+
+      CREATE TABLE costeo_items (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        modulo_id        INTEGER NOT NULL REFERENCES costeo_modulos(id) ON DELETE CASCADE,
+        orden            INTEGER NOT NULL DEFAULT 1,
+        tipo             TEXT NOT NULL DEFAULT 'material' CHECK(tipo IN ('material','mano_obra','otro')),
+        producto_id      INTEGER REFERENCES productos(id),
+        descripcion      TEXT NOT NULL DEFAULT '',
+        unidad           TEXT DEFAULT '',
+        cantidad         REAL DEFAULT 0,
+        precio_unitario  REAL DEFAULT 0
+      );
+      CREATE INDEX idx_costeo_items_modulo ON costeo_items(modulo_id);
+    `);
+  });
+
+  // El primer deploy de "Costeo de Equipos" creó costeo_items con
+  // CHECK(tipo IN ('material','mano_obra')) — el tipo 'otro' (material que
+  // todavía no está en el catálogo) se agregó después, pero un CHECK ya
+  // creado no se puede ensanchar con ALTER TABLE en SQLite: hay que
+  // reconstruir la tabla. Esto es lo que causaba el "Error interno del
+  // servidor" al guardar un costeo en instalaciones donde la tabla ya
+  // existía de antes — acá se reconstruye preservando todos los datos.
+  // Si la tabla ya tenía el CHECK correcto (instalación nueva), esto solo
+  // copia las mismas filas sin cambiar nada — inofensivo.
+  migrar('costeo_items_permite_tipo_otro', () => {
+    db.exec(`
+      CREATE TABLE costeo_items_nuevo (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        modulo_id        INTEGER NOT NULL REFERENCES costeo_modulos(id) ON DELETE CASCADE,
+        orden            INTEGER NOT NULL DEFAULT 1,
+        tipo             TEXT NOT NULL DEFAULT 'material' CHECK(tipo IN ('material','mano_obra','otro')),
+        producto_id      INTEGER REFERENCES productos(id),
+        descripcion      TEXT NOT NULL DEFAULT '',
+        unidad           TEXT DEFAULT '',
+        cantidad         REAL DEFAULT 0,
+        precio_unitario  REAL DEFAULT 0
+      );
+      INSERT INTO costeo_items_nuevo (id, modulo_id, orden, tipo, producto_id, descripcion, unidad, cantidad, precio_unitario)
+        SELECT id, modulo_id, orden, tipo, producto_id, descripcion, unidad, cantidad, precio_unitario FROM costeo_items;
+      DROP TABLE costeo_items;
+      ALTER TABLE costeo_items_nuevo RENAME TO costeo_items;
+      CREATE INDEX idx_costeo_items_modulo ON costeo_items(modulo_id);
+    `);
+  });
+
+  // El código del material iba pegado adelante de la descripción
+  // ("COD0001 — nombre"), lo que hacía imposible tener una columna de código
+  // propia. Se agrega la columna y, para los ítems que ya vienen de un
+  // material del catálogo (producto_id), se separa el código que la propia
+  // app había concatenado — es reconocible porque empieza exactamente con
+  // "<código del producto> — ".
+  migrar('agrega_codigo_costeo_items', () => {
+    db.exec(`ALTER TABLE costeo_items ADD COLUMN codigo TEXT DEFAULT ''`)
+    const rows = db.prepare(`
+      SELECT ci.id, ci.descripcion, p.codigo AS codigo_producto
+      FROM costeo_items ci JOIN productos p ON p.id = ci.producto_id
+      WHERE ci.producto_id IS NOT NULL AND ci.descripcion LIKE p.codigo || ' — %'
+    `).all()
+    const actualizar = db.prepare(`UPDATE costeo_items SET codigo=?, descripcion=? WHERE id=?`)
+    for (const r of rows) {
+      actualizar.run(r.codigo_producto, r.descripcion.slice((r.codigo_producto + ' — ').length), r.id)
+    }
+  })
+
+  // Todo retiro de stock (pedido o salida directa) tiene que quedar con quién
+  // lo autorizó — antes no había ningún campo para eso. Se guarda tanto el id
+  // (para poder mandarle la notificación) como el nombre (para que el dato
+  // sobreviva aunque a ese usuario lo desactiven después).
+  migrar('agrega_autorizante_retiro_stock', () => {
+    db.exec(`
+      ALTER TABLE pedidos_stock ADD COLUMN autorizado_por_id INTEGER REFERENCES usuarios(id);
+      ALTER TABLE pedidos_stock ADD COLUMN autorizado_por_nombre TEXT DEFAULT '';
+      ALTER TABLE movimientos_stock ADD COLUMN autorizado_por_id INTEGER REFERENCES usuarios(id);
+      ALTER TABLE movimientos_stock ADD COLUMN autorizado_por_nombre TEXT DEFAULT '';
+    `)
+  })
 }
 
 module.exports = { db, inicializar, migrar };

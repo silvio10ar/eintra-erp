@@ -9,6 +9,26 @@
 body {
   background-color: #f0f2f5;
   font-family: 'Segoe UI', system-ui, sans-serif;
+  position: relative;
+}
+
+/* Fondo fijo al viewport vía pseudo-elemento en vez de background-attachment:
+   fixed en el body — con body creciendo por tablas largas (Materiales, Stock),
+   "fixed" hacía que "cover" escalara la imagen contra todo el alto del
+   documento (quedaba gigante/recortada) y además fuerza repintados costosos
+   en cada scroll en varios navegadores. Un ::before con position:fixed queda
+   siempre del tamaño del viewport y se compone en su propia capa. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(240,242,245,.55), rgba(240,242,245,.55)),
+    url('./assets/fondo-eintra.webp');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 /* ── Inputs numéricos sin flechas (evita superposición en columnas angostas) ── */
@@ -34,6 +54,12 @@ body {
   z-index: 1030;
   display: flex;
   flex-direction: column;
+  transition: transform 0.25s ease;
+}
+
+/* ── Fondo oscuro detrás del menú abierto en celular ── */
+.sidebar-backdrop {
+  display: none;
 }
 
 .sidebar-brand {
@@ -103,6 +129,7 @@ body {
 .main-content {
   margin-left: var(--sidebar-width);
   min-height: 100vh;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -123,6 +150,7 @@ body {
 
 .page-content {
   flex: 1;
+  min-width: 0;
   padding: 1.5rem;
 }
 
@@ -164,10 +192,13 @@ body {
 /* ── Login ───────────────────────────────────────── */
 .login-page {
   min-height: 100vh;
-  background: linear-gradient(135deg, #1a2332 0%, #243447 100%);
+  background:
+    linear-gradient(135deg, rgba(15,25,40,.55) 0%, rgba(20,35,55,.45) 100%),
+    url('./assets/fondo-eintra.webp') center/cover no-repeat;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
+  padding-bottom: 6vh;
 }
 
 .login-card {
@@ -185,5 +216,13 @@ body {
 /* ── Responsive ──────────────────────────────────── */
 @media (max-width: 991.98px) {
   .sidebar { transform: translateX(-100%); }
+  .sidebar.sidebar-open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,.35); }
   .main-content { margin-left: 0; }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.45);
+    z-index: 1025;
+  }
 }

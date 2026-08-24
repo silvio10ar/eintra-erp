@@ -3,6 +3,7 @@ const router  = express.Router()
 const { db }  = require('../db/database')
 const { verificarToken, puede } = require('../middleware/auth')
 const { buscarCondicion } = require('../helpers/buscar')
+const { formatCuit } = require('../helpers/cuit')
 const leerCRM     = puede.leer('crm')
 const escribirCRM = puede.escribir('crm')
 
@@ -120,17 +121,19 @@ router.get('/empresas', verificarToken, leerCRM, (req, res) => {
   const offset = (parseInt(page) - 1) * parseInt(limit)
 
   const total = db.prepare(`SELECT COUNT(*) c FROM crm_empresas e WHERE ${w}`).get(...p).c
+  // Subqueries en vez de LEFT JOIN a contactos + cotizaciones a la vez: unir
+  // ambas tablas directamente generaba un producto cruzado (fan-out) que
+  // multiplicaba SUM(presupuestado)/SUM(ganado) por la cantidad de contactos
+  // de cada empresa (COUNT DISTINCT no sufría esto, pero las sumas sí).
   const datos = db.prepare(`
     SELECT e.*,
-      COUNT(DISTINCT ct.id) contactos_count,
-      COUNT(DISTINCT c.id)  cotizaciones_count,
-      SUM(c.presupuestado)  total_presupuestado,
-      SUM(c.ganado)         total_ganado
+      (SELECT COUNT(*) FROM crm_contactos WHERE empresa_id=e.id AND activo=1) contactos_count,
+      (SELECT COUNT(*) FROM crm_cotizaciones WHERE empresa_id=e.id) cotizaciones_count,
+      (SELECT COALESCE(SUM(presupuestado),0) FROM crm_cotizaciones WHERE empresa_id=e.id) total_presupuestado,
+      (SELECT COALESCE(SUM(ganado),0) FROM crm_cotizaciones WHERE empresa_id=e.id) total_ganado
     FROM crm_empresas e
-    LEFT JOIN crm_contactos ct ON ct.empresa_id=e.id AND ct.activo=1
-    LEFT JOIN crm_cotizaciones c ON c.empresa_id=e.id
     WHERE ${w}
-    GROUP BY e.id ORDER BY e.nombre ASC
+    ORDER BY e.nombre ASC
     LIMIT ? OFFSET ?
   `).all(...p, parseInt(limit), offset)
 
@@ -182,7 +185,7 @@ router.post('/empresas/:id/crear-cliente', verificarToken, escribirCRM, (req, re
     INSERT INTO clientes (nombre,contacto,telefono,email,cuit,direccion,localidad,cp,condicion_pago)
     VALUES (?,?,?,?,?,?,?,?,?)
   `).run(emp.nombre, ct?.nombre||'', ct?.telefono||'', ct?.mail||'',
-         cuit, direccion, localidad, cp, condicion_pago)
+         formatCuit(cuit), direccion, localidad, cp, condicion_pago)
 
   res.status(201).json({ id: r.lastInsertRowid })
 })

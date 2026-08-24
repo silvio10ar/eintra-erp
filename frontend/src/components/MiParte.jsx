@@ -47,7 +47,7 @@ export default function MiParte({ show, onClose }) {
       setCategorias(c.data)
       setProyectos(p.data.filter(x => x.estado === 'Activo'))
       setActividades(a.data.filter(x => x.activo))
-    }).catch(() => {})
+    }).catch(e => console.error(e))
   }, [show])
 
   const cargarRegistros = useCallback(() => {
@@ -57,7 +57,7 @@ export default function MiParte({ show, onClose }) {
         if (r.data === null) { setSinEmpleado(true); setCargados([]) }
         else                 { setSinEmpleado(false); setCargados(r.data) }
       })
-      .catch(() => {})
+      .catch(e => console.error(e))
       .finally(() => setLoadReg(false))
   }, [fecha])
 

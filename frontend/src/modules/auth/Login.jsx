@@ -52,7 +52,7 @@ export default function Login() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} noValidate>
+        <form onSubmit={handleSubmit} noValidate autoComplete="off">
           <div className="mb-3">
             <label className="form-label fw-medium small">Usuario</label>
             <div className="input-group">
@@ -68,7 +68,7 @@ export default function Login() {
                 onChange={handleChange}
                 required
                 autoFocus={!lastUser}
-                autoComplete="username"
+                autoComplete="off"
               />
             </div>
           </div>

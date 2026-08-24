@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
 import api from '../../api/client'
 import DateInput from '../../components/DateInput'
+import { getToken } from '../../store/authStore'
 
 const CATEGORIAS = ['Manual', 'Política', 'Procedimiento', 'Instructivo', 'Registro']
 const fmtF = f => f ? f.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -82,7 +83,18 @@ export default function FormDocumentos({ canWrite }) {
     } finally { setSavingRevision(false) }
   }
 
-  const verArchivo = id => window.open(`/api/v1/calidad/documentos/${id}/archivo`, '_blank')
+  const verArchivo = async id => {
+    try {
+      const resp = await fetch(`/api/v1/calidad/documentos/${id}/archivo`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      if (!resp.ok) throw new Error('No se pudo abrir el archivo')
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank')
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    } catch (err) {
+      alert(err.message || 'No se pudo abrir el archivo')
+    }
+  }
 
   if (loading) return (
     <div className="d-flex justify-content-center py-5"><div className="spinner-border text-secondary" /></div>

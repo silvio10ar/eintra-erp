@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import ExcelJS from 'exceljs'
 import api from '../../api/client'
 import DateInput from '../../components/DateInput'
 import Estructura from './Estructura'
 import { fmtHorasMinutos as fmtH } from '../../utils/horas'
+import { puedeLeer } from '../../store/authStore'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 // ── Estilo corporativo para exports .xlsx (ExcelJS) ───────────────────────────
 const CORP = {
@@ -149,6 +150,7 @@ export default function RRHH() {
   const [fAsistFecha,  setFAsistFecha]  = useState(new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }))
   const [fAsistEmp,    setFAsistEmp]    = useState('')
   const [empDispositivo, setEmpDispositivo] = useState([])
+  const [cargandoEmpDisp, setCargandoEmpDisp] = useState(false)
 
   // informes
   const hoy = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' })
@@ -170,25 +172,27 @@ export default function RRHH() {
 
   // ── datos maestros ─────────────────────────────────────────────────────────
   useEffect(() => {
+    // /rrhh/proyectos: listado liviano sin costos, abierto a cualquier usuario
+    // autenticado — a diferencia de /proyectos (requiere permiso del módulo
+    // Proyectos), así que un usuario con "rrhh" pero sin "proyectos" no se
+    // queda con TODO el módulo sin cargar (Promise.all corta ante el primer 403).
     Promise.all([
       api.get('/rrhh/categorias'),
       api.get('/rrhh/empleados'),
       api.get('/rrhh/proyectos'),
       api.get('/rrhh/dispositivos'),
       api.get('/rrhh/asistencia/empleados-dispositivo'),
-      api.get('/proyectos?estado=Activo'),
       api.get('/rrhh/actividades'),
-      api.get('/proyectos'),
-    ]).then(([c, e, pm, d, ed, pa, act, ptodos]) => {
+    ]).then(([c, e, p, d, ed, act]) => {
       setCategorias(c.data)
       setEmpleados(e.data)
-      setProyectosMain(pm.data)
+      setProyectosMain(p.data)
       setDispositivos(d.data)
       setEmpDispositivo(ed.data)
       setActividades(act.data)
-      setProyectosActivos(pa.data)
-      setProyectosTodos(ptodos.data)
-    }).catch(() => {})
+      setProyectosActivos(p.data.filter(x => x.estado === 'Activo'))
+      setProyectosTodos(p.data)
+    }).catch(e => console.error(e))
   }, [])
 
   const [verLecturas, setVerLecturas] = useState(false)
@@ -200,7 +204,7 @@ export default function RRHH() {
       ...(fAsistEmp && { empleado_id: fAsistEmp }),
     }).toString()
     const endpoint = verLecturas ? `/rrhh/asistencia?${q}` : `/rrhh/asistencia/resumen?${q}`
-    api.get(endpoint).then(r => setAsistencia(r.data)).catch(() => {})
+    api.get(endpoint).then(r => setAsistencia(r.data)).catch(e => console.error(e))
   }, [fAsistFecha, fAsistEmp, verLecturas])
 
   // ── dashboard ──────────────────────────────────────────────────────────────
@@ -209,7 +213,7 @@ export default function RRHH() {
     const q = new URLSearchParams({ year, ...(month && { month }) }).toString()
     api.get(`/rrhh/dashboard?${q}`)
       .then(r => setDash(r.data))
-      .catch(() => {})
+      .catch(e => console.error(e))
       .finally(() => setLoading(false))
   }, [year, month])
 
@@ -224,7 +228,7 @@ export default function RRHH() {
     }).toString()
     api.get(`/rrhh/registros?${q}`)
       .then(r => setRegistros(r.data))
-      .catch(() => {})
+      .catch(e => console.error(e))
       .finally(() => setLoading(false))
   }, [year, month, fEmp, fProy])
 
@@ -235,7 +239,7 @@ export default function RRHH() {
   // ── feriados (para el informe de asistencia) ──────────────────────────────
   const cargarFeriados = useCallback(() => {
     const anio = (infDesde || hoy).slice(0, 4)
-    api.get('/rrhh/feriados', { params: { anio } }).then(r => setFeriados(r.data)).catch(() => {})
+    api.get('/rrhh/feriados', { params: { anio } }).then(r => setFeriados(r.data)).catch(e => console.error(e))
   }, [infDesde])
   useEffect(() => { if (tab === 'informes' && infTab === 'asistencia') cargarFeriados() }, [tab, infTab, cargarFeriados])
 
@@ -248,6 +252,7 @@ export default function RRHH() {
     } catch (e) { alert(e.response?.data?.error || 'Error al agregar feriado') }
   }
   async function eliminarFeriado(fecha) {
+    if (!confirm('¿Eliminar este feriado?')) return
     try {
       await api.delete(`/rrhh/feriados/${fecha}`)
       cargarFeriados()
@@ -284,7 +289,31 @@ export default function RRHH() {
   }
 
   function cargarEmpDispositivo() {
-    api.get('/rrhh/asistencia/empleados-dispositivo').then(r => setEmpDispositivo(r.data)).catch(() => {})
+    setCargandoEmpDisp(true)
+    api.get('/rrhh/asistencia/empleados-dispositivo').then(async r => {
+      const historicos = r.data
+      const disp = dispositivos[0]
+      if (!disp) { setEmpDispositivo(historicos); return }
+      // Además de lo que ya fichó, se le pregunta al dispositivo en vivo quién
+      // está enrolado — así un empleado recién agregado ahí aparece de una,
+      // sin tener que esperar a que fiche por primera vez.
+      try {
+        const ru = await api.post(`/rrhh/dispositivos/${disp.id}/usuarios`)
+        const porExt = new Map(historicos.map(h => [h.empleado_ext, h]))
+        for (const u of (ru.data.usuarios || [])) {
+          if (!u.employeeNo || porExt.has(u.employeeNo)) continue
+          porExt.set(u.employeeNo, {
+            empleado_ext: u.employeeNo, nombre_dispositivo: u.nombre, dias: 0, lecturas: 0,
+            empleado_id: u.empleado_id, nombre_erp: u.empleado_nombre,
+          })
+        }
+        setEmpDispositivo(Array.from(porExt.values()).sort((a, b) => (a.nombre_dispositivo || '').localeCompare(b.nombre_dispositivo || '')))
+      } catch (e) {
+        setEmpDispositivo(historicos)
+        alert('No se pudo consultar en vivo la lista de usuarios del dispositivo:\n' + (e.response?.data?.error || e.message) +
+          '\n\nSe muestra lo que ya se sincronizó antes.')
+      }
+    }).catch(e => console.error(e)).finally(() => setCargandoEmpDisp(false))
   }
 
   function sincronizar() {
@@ -338,16 +367,11 @@ export default function RRHH() {
   function eliminarEmpleado(emp) {
     const msg = `¿Eliminar a ${emp.nombre}?` +
       (emp.total_registros > 0
-        ? `\n\nTiene ${emp.total_registros} registros de horas. Se ocultará de la lista pero se conservarán los datos históricos.`
+        ? `\n\nTiene ${emp.total_registros} registros de horas. El empleado se elimina, pero esas horas se conservan (quedan sin empleado asociado) para no perder los datos históricos de proyectos.`
         : '\n\nNo tiene registros. Se eliminará definitivamente.')
     if (!confirm(msg)) return
     api.delete(`/rrhh/empleados/${emp.id}`)
-      .then(r => {
-        if (r.data.accion === 'desactivado') {
-          alert(`${emp.nombre} fue ocultado de la lista. Sus ${r.data.registros} registros de horas se conservan.`)
-        }
-        reloadEmpleados()
-      })
+      .then(() => reloadEmpleados())
       .catch(() => alert('Error al eliminar'))
   }
 
@@ -628,8 +652,8 @@ export default function RRHH() {
             </button>
             <button className="btn btn-sm btn-outline-danger py-0"
               onClick={() => eliminarEmpleado(e)}
-              title={e.activo ? (e.total_registros > 0 ? 'Ocultar de la lista (conserva historial)' : 'Eliminar definitivamente') : 'Reactivar en edición'}>
-              <i className={`bi bi-${e.activo ? 'trash' : 'eye-slash'}`}/>
+              title={e.total_registros > 0 ? 'Eliminar (conserva las horas cargadas, sin empleado asociado)' : 'Eliminar definitivamente'}>
+              <i className="bi bi-trash"/>
             </button>
           </td>
         </tr>
@@ -699,9 +723,9 @@ export default function RRHH() {
             <i className="bi bi-person-badge"/>
             Empleados detectados en el fichador
             <span className="badge bg-white text-dark ms-1">{empDispositivo.length}</span>
-            <button className="btn btn-sm btn-outline-light ms-auto py-0"
-              onClick={cargarEmpDispositivo} title="Actualizar">
-              <i className="bi bi-arrow-repeat"/>
+            <button className="btn btn-sm btn-outline-light ms-auto py-0" disabled={cargandoEmpDisp}
+              onClick={cargarEmpDispositivo} title="Actualizar (consulta también los usuarios enrolados en el dispositivo)">
+              {cargandoEmpDisp ? <span className="spinner-border spinner-border-sm"/> : <i className="bi bi-arrow-repeat"/>}
             </button>
           </div>
           {empDispositivo.length === 0 ? (
@@ -1421,7 +1445,7 @@ export default function RRHH() {
                 </div>
                 <div className="col-md-4">
                   <label className="form-label fw-semibold">Horas *</label>
-                  <input type="number" className="form-control form-control-sm"
+                  <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm"
                     step="0.01" min="0" max="24"
                     value={m.horas||''} onChange={e => upd('horas', e.target.value)}/>
                 </div>
@@ -1494,6 +1518,14 @@ export default function RRHH() {
                   <input type="date" className="form-control form-control-sm"
                     value={m.fecha_ingreso||''} onChange={e => upd('fecha_ingreso', e.target.value)}/>
                 </div>
+                {puedeLeer('analisis_proyectos') && (
+                  <div className="col-md-4">
+                    <label className="form-label fw-semibold">Costo por hora</label>
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" min="0" step="0.01"
+                      title="Usado por Análisis de Proyectos para calcular el costo de mano de obra"
+                      value={m.costo_hora ?? ''} onChange={e => upd('costo_hora', e.target.value)}/>
+                  </div>
+                )}
                 {m.id && (
                   <div className="col-md-4">
                     <label className="form-label fw-semibold">Fecha de egreso</label>
@@ -1597,7 +1629,7 @@ export default function RRHH() {
                 </div>
                 <div className="col-md-4">
                   <label className="form-label fw-semibold">Puerto</label>
-                  <input type="number" className="form-control form-control-sm"
+                  <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm"
                     value={m.puerto||80} onChange={e => upd('puerto', Number(e.target.value))}/>
                 </div>
                 <div className="col-md-6">
@@ -1729,7 +1761,7 @@ export default function RRHH() {
       setLegadoLoad(true)
       api.get('/rrhh/proyectos-legado')
         .then(r => setLegado(r.data))
-        .catch(() => {})
+        .catch(e => console.error(e))
         .finally(() => setLegadoLoad(false))
     }
     // Cargar la primera vez que se muestra
@@ -2024,6 +2056,9 @@ export default function RRHH() {
       if (!infDesde || !infHasta) { alert('Seleccioná fechas'); return }
       setInfExportando(true)
       try {
+        // Carga diferida: exceljs pesa ~900KB, no tiene sentido bajarlo hasta
+        // que alguien realmente aprieta "Exportar a Excel".
+        const { default: ExcelJS } = await import('exceljs')
         const r = await api.get('/rrhh/informes/asistencia', { params: { desde: infDesde, hasta: infHasta } })
         const data = r.data
         if (!data || data.length === 0) { alert('Sin datos para el período seleccionado'); return }

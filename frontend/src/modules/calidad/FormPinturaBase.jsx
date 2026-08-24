@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -70,7 +71,7 @@ export default function FormPinturaBase({ hojasList = [], canWrite }) {
         {vals.map((v, i) => (
           <div key={i} style={{ width: 90 }}>
             <label className="form-label mb-0 text-muted" style={{ fontSize: '0.72rem' }}>Punto {i+1}</label>
-            <input type="number" className="form-control form-control-sm text-center" value={v} onChange={e => setMedicion(setter, i, e.target.value)} placeholder="μm" />
+            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm text-center" value={v} onChange={e => setMedicion(setter, i, e.target.value)} placeholder="μm" />
           </div>
         ))}
       </div>

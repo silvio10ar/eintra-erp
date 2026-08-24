@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import api from '../../api/client'
-import { puedeEscribir } from '../../store/authStore'
+import { puedeEscribir, getUser } from '../../store/authStore'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
 import DateInput from '../../components/DateInput'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const TIPOS = [
   { v:'entrada',    l:'Entrada',    c:'success' },
@@ -21,19 +22,23 @@ const fmtCod = c => {
   return c
 }
 
-const FORM_M ={ producto_id:'', tipo:'entrada', cantidad:'', fecha:hoy(), referencia:'', precio_unit:0, proveedor:'', proyecto:'', cliente_interno:'', observaciones:'' }
+const FORM_M ={ producto_id:'', tipo:'entrada', cantidad:'', fecha:hoy(), referencia:'', precio_unit:0, proveedor:'', proyecto:'', cliente_interno:'', observaciones:'', autorizado_por_id:'' }
 const FORM_H = { desde:'', hasta:'', tipo:'', campo:'todos', valor:'' }
 
 export default function Stock() {
   const canWrite = puedeEscribir('stock')
+  const esAdmin   = getUser()?.rol === 'admin'
   const location  = useLocation()
 
   /* ── Estado productos ───────────────────────────────────────────── */
   const [prods, setProds]     = useState([])
   const [ubics, setUbics]     = useState([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [selId, setSelId]     = useState(null)
   const [buscar, setBuscar]   = useState('')
+  const [buscarQuery, setBuscarQuery] = useState('')
+  const [paginaProds, setPaginaProds] = useState(1)
+  const PRODS_POR_PAGINA = 100
   const [filUbic, setFilUbic] = useState('')
   const [filAlerta, setFilAlerta] = useState(location.state?.filAlerta || '')   // ''|'ok'|'bajo'|'agotado'
 
@@ -46,6 +51,7 @@ export default function Stock() {
   const [formM, setFormM]     = useState(FORM_M)
   const [savM, setSavM]       = useState(false)
   const [errM, setErrM]       = useState('')
+  const [editandoMovId, setEditandoMovId] = useState(null) // id del movimiento en edición (admin), o null si es alta nueva
   const [buscarP, setBuscarP] = useState('')
   const [sugs, setSugs]       = useState([])
 
@@ -58,6 +64,8 @@ export default function Stock() {
   const [valoresH, setValoresH] = useState([])  // autocomplete del campo Valor
   const [provsList, setProvsList] = useState([])
   const [proyActivos, setProyActivos] = useState([])
+  const [actividadesActivas, setActividadesActivas] = useState([])
+  const [autorizantes, setAutorizantes] = useState([])
 
   /* ── Ingresos pendientes ─────────────────────────────────────────── */
   const [ingPend,      setIngPend]      = useState([])
@@ -68,16 +76,67 @@ export default function Stock() {
   const [confirmSinOC, setConfirmSinOC] = useState(null)
 
   const cargarIngPend = useCallback(() => {
-    api.get('/stock/ingresos-pendientes').then(r => setIngPend(r.data)).catch(() => {})
-    api.get('/stock/ingresos-sin-oc-pendientes').then(r => setIngPendSinOC(r.data)).catch(() => {})
+    api.get('/stock/ingresos-pendientes').then(r => setIngPend(r.data)).catch(e => console.error(e))
+    api.get('/stock/ingresos-sin-oc-pendientes').then(r => setIngPendSinOC(r.data)).catch(e => console.error(e))
   }, [])
 
   useEffect(() => { cargarIngPend() }, [cargarIngPend])
 
+  /* ── Pedidos de stock (solicitudes internas) ────────────────────────── */
+  const [pedidosPend, setPedidosPend] = useState([])
+  const [modalPedidos, setModalPedidos] = useState(false)
+  const [entregaCant, setEntregaCant] = useState({}) // { [item_id]: cantidad }
+  const [savPedido, setSavPedido] = useState(null)
+
+  const cargarPedidosPend = useCallback(() => {
+    api.get('/stock/pedidos').then(r => {
+      setPedidosPend(r.data)
+      setEntregaCant(prev => {
+        const next = { ...prev }
+        for (const ped of r.data) {
+          for (const it of ped.items) {
+            if (!(it.id in next)) next[it.id] = it.cantidad - it.cantidad_entregada
+          }
+        }
+        return next
+      })
+    }).catch(e => console.error(e))
+  }, [])
+
+  useEffect(() => { cargarPedidosPend() }, [cargarPedidosPend])
+
+  const entregarPedido = async ped => {
+    setSavPedido(ped.id)
+    try {
+      const entregas = {}
+      for (const it of ped.items) entregas[it.id] = entregaCant[it.id] ?? 0
+      await api.post(`/stock/pedidos/${ped.id}/entregar`, { entregas })
+      // Se borran los valores tipeados para este pedido: si queda algo pendiente
+      // (entrega parcial), que se recalcule de nuevo contra el saldo real, en
+      // vez de arrastrar la cantidad vieja que ya se entregó.
+      setEntregaCant(prev => { const next = { ...prev }; for (const it of ped.items) delete next[it.id]; return next })
+      cargarPedidosPend(); cargar()
+    } catch (err) {
+      alert(err.response?.data?.error ?? 'Error al confirmar la entrega')
+    } finally { setSavPedido(null) }
+  }
+
   useEffect(() => {
-    api.get('/proyectos', { params: { estado: 'Activo' } })
-      .then(r => setProyActivos(r.data))
-      .catch(() => {})
+    // /rrhh/proyectos: listado liviano sin costos, abierto a cualquier usuario
+    // autenticado — evita que este selector quede vacío para quien no tiene
+    // el permiso completo del módulo Proyectos (ver Partes.jsx, mismo caso).
+    api.get('/rrhh/proyectos')
+      .then(r => setProyActivos(r.data.filter(p => p.estado === 'Activo')))
+      .catch(e => console.error(e))
+    // Mismo motivo: /rrhh/actividades tampoco tiene gate de módulo, así que
+    // este selector se completa para cualquier usuario que registre un movimiento.
+    api.get('/rrhh/actividades')
+      .then(r => setActividadesActivas(r.data.filter(a => a.activo)))
+      .catch(e => console.error(e))
+    // Para el selector obligatorio de "Autorizado por" en un retiro (salida).
+    api.get('/stock/autorizantes')
+      .then(r => setAutorizantes(r.data))
+      .catch(e => console.error(e))
   }, [])
 
   const confirmarIngreso = async id => {
@@ -119,18 +178,40 @@ export default function Stock() {
   }
 
   /* ── Cargar productos ───────────────────────────────────────────── */
+  // Con miles de productos en el catálogo real, traer todo de entrada es lo
+  // que hacía sentir lenta la pantalla — igual que en Materiales, ahora no se
+  // pide nada hasta que haya al menos un criterio activo.
+  const hayFiltro = !!(buscarQuery || filUbic || filAlerta)
+
   const cargar = useCallback(() => {
+    if (!hayFiltro) { setProds([]); return }
     setLoading(true)
-    api.get('/stock/productos', { params: { buscar: buscar||undefined, ubicacion: filUbic||undefined, alerta: filAlerta||undefined } })
+    api.get('/stock/productos', { params: { buscar: buscarQuery||undefined, ubicacion: filUbic||undefined, alerta: filAlerta||undefined } })
       .then(r => setProds(r.data))
       .finally(() => setLoading(false))
-  }, [buscar, filUbic, filAlerta])
+  }, [buscarQuery, filUbic, filAlerta, hayFiltro])
 
   useEffect(() => { cargar() }, [cargar])
 
+  /* ── Contadores de la barra de estado ──────────────────────────────
+     Siempre reflejan el catálogo completo, no lo que esté filtrado/cargado
+     en pantalla — por eso se piden aparte, con un solo número por categoría
+     en vez de traer todas las filas. */
+  const [contadores, setContadores] = useState({ total: 0, disponibles: 0, stockBajo: 0, agotados: 0 })
+  useEffect(() => {
+    api.get('/stock/productos/contadores').then(r => setContadores(r.data)).catch(e => console.error(e))
+  }, [])
+
+  // Debounce: esperar una pausa antes de consultar, en vez de un pedido por
+  // cada letra tipeada (mismo patrón que ya usan Compras/Materiales/Finanzas).
+  useEffect(() => {
+    const t = setTimeout(() => setBuscarQuery(buscar), 300)
+    return () => clearTimeout(t)
+  }, [buscar])
+
   useEffect(() => {
     api.get('/stock/productos/ubicaciones').then(r => setUbics(r.data))
-    api.get('/compras/proveedores').then(r => setProvsList(r.data)).catch(() => {})
+    api.get('/compras/proveedores').then(r => setProvsList(r.data)).catch(e => console.error(e))
   }, [])
 
   /* ── Cargar historial ───────────────────────────────────────────── */
@@ -155,12 +236,31 @@ export default function Stock() {
       .catch(() => setValoresH([]))
   }, [filtH.campo])
 
-  /* ── Sugerencias búsqueda de producto en modal movimiento ────────── */
+  /* ── Sugerencias búsqueda de producto en modal movimiento ──────────
+     Independiente de "prods" (que ahora puede estar vacío si no hay ningún
+     filtro activo en la pantalla principal) — busca directo contra el backend. */
   useEffect(() => {
-    if (!buscarP) { setSugs([]); return }
-    const q = buscarP.toLowerCase()
-    setSugs(prods.filter(p => p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q)).slice(0, 8))
-  }, [buscarP, prods])
+    if (!buscarP || buscarP.length < 2) { setSugs([]); return }
+    const t = setTimeout(() => {
+      api.get('/stock/productos', { params: { buscar: buscarP } })
+        .then(r => setSugs(r.data.slice(0, 8)))
+        .catch(() => setSugs([]))
+    }, 250)
+    return () => clearTimeout(t)
+  }, [buscarP])
+
+  /* ── Sugerencias búsqueda de producto en "Confirmar ingreso sin OC" ──
+     Mismo motivo que arriba: no depende de "prods". */
+  useEffect(() => {
+    const q = confirmSinOC?.prodBuscar || ''
+    if (q.length < 2) return
+    const t = setTimeout(() => {
+      api.get('/stock/productos', { params: { buscar: q } })
+        .then(r => setConfirmSinOC(prev => prev ? { ...prev, prodSugs: r.data.slice(0, 8) } : prev))
+        .catch(() => {})
+    }, 250)
+    return () => clearTimeout(t)
+  }, [confirmSinOC?.prodBuscar])
 
   /* ── Producto seleccionado ──────────────────────────────────────── */
   const sel = prods.find(p => p.id === selId)
@@ -172,8 +272,24 @@ export default function Stock() {
     const p = sel
     setFormM({ ...FORM_M, tipo, fecha: hoy(), producto_id: p?.id??'' })
     setBuscarP(p ? `${p.codigo} — ${p.descripcion}` : '')
-    setSugs([]); setErrM(''); setModalM({ tipo })
+    setSugs([]); setErrM(''); setEditandoMovId(null); setModalM({ tipo })
   }
+
+  // Editar un movimiento ya cargado (admin, doble click en la fila del historial).
+  const abrirEditarMov = m => {
+    if (!esAdmin) return
+    setFormM({
+      producto_id: m.producto_id, tipo: m.tipo, cantidad: m.cantidad,
+      fecha: m.fecha?.slice(0, 10) || hoy(), referencia: m.referencia || '',
+      precio_unit: m.precio_unit || 0, proveedor: m.proveedor || '',
+      proyecto: m.proyecto || '', cliente_interno: m.cliente_interno || '',
+      observaciones: m.observaciones || '', autorizado_por_id: m.autorizado_por_id || '',
+    })
+    setBuscarP(`${m.codigo} — ${m.descripcion}`)
+    setSugs([]); setErrM(''); setEditandoMovId(m.id); setModalM({ tipo: m.tipo })
+  }
+
+  const cerrarModalM = () => { setModalM(null); setEditandoMovId(null) }
 
   /* ── Guardar ubicación ──────────────────────────────────────────── */
   const guardarUbic = async e => {
@@ -187,12 +303,21 @@ export default function Stock() {
 
   /* ── Guardar movimiento ─────────────────────────────────────────── */
   const guardarM = async e => {
-    e.preventDefault(); setSavM(true); setErrM('')
+    e.preventDefault()
+    if (formM.tipo === 'salida' && !formM.autorizado_por_id) {
+      setErrM('Elegí quién autoriza este retiro'); return
+    }
+    setSavM(true); setErrM('')
     try {
-      const { data } = await api.post('/stock/movimientos', formM)
-      setModalM(null); cargar()
-      alert(data.mensaje)
-    } catch(err) { setErrM(err.response?.data?.error ?? 'Error al registrar') }
+      if (editandoMovId) {
+        await api.put(`/stock/movimientos/${editandoMovId}`, formM)
+        cerrarModalM(); cargar(); cargarHistorial()
+      } else {
+        const { data } = await api.post('/stock/movimientos', formM)
+        setModalM(null); cargar()
+        alert(data.mensaje)
+      }
+    } catch(err) { setErrM(err.response?.data?.error ?? 'Error al guardar') }
     finally { setSavM(false) }
   }
 
@@ -214,12 +339,16 @@ export default function Stock() {
     window.open(`/api/v1/stock/exportar-historial?${params}`, '_blank')
   }
 
-  /* ── Contadores barra estado ────────────────────────────────────── */
-  const total     = prods.length
-  const disponibles = prods.filter(p => p.stock_actual > 0).length
-  const stockBajo   = prods.filter(p => p.stock_actual > 0 && p.stock_minimo > 0 && p.stock_actual <= p.stock_minimo).length
-  const agotados    = prods.filter(p => p.stock_actual <= 0).length
+  /* ── Contadores barra estado (siempre del catálogo completo, ver arriba) ── */
+  const { total, disponibles, stockBajo, agotados } = contadores
   const totalPags   = Math.ceil(totalMovs / 200)
+
+  // Paginar solo la RENDERIZACIÓN: la lista completa ya llegó filtrada del
+  // servidor (para los contadores de arriba), pero dibujar de una miles de
+  // filas en el DOM es lo que hacía lento cada re-render.
+  useEffect(() => { setPaginaProds(1) }, [prods])
+  const totalPagsProds = Math.max(1, Math.ceil(prods.length / PRODS_POR_PAGINA))
+  const prodsPagina = prods.slice((paginaProds - 1) * PRODS_POR_PAGINA, paginaProds * PRODS_POR_PAGINA)
 
   return (
     <>
@@ -245,6 +374,14 @@ export default function Stock() {
           {(ingPend.length + ingPendSinOC.length) > 0 && (
             <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
               style={{fontSize:'0.68rem'}}>{ingPend.length + ingPendSinOC.length}</span>
+          )}
+        </button>
+        <button className={`btn btn-sm position-relative ${pedidosPend.length > 0 ? 'btn-warning' : 'btn-outline-secondary'}`}
+          onClick={() => setModalPedidos(true)}>
+          <i className="bi bi-clipboard-check me-1"/>Pedidos de stock
+          {pedidosPend.length > 0 && (
+            <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+              style={{fontSize:'0.68rem'}}>{pedidosPend.length}</span>
           )}
         </button>
         <div className="dropdown">
@@ -280,7 +417,14 @@ export default function Stock() {
 
       {/* ── Tabla ─────────────────────────────────────────────────── */}
       <div className="card border-0 shadow-sm">
-        {loading
+        {!hayFiltro
+          ? (
+            <div className="text-center text-muted py-5">
+              <i className="bi bi-search fs-3 d-block mb-2"/>
+              Escribí para buscar, o elegí una ubicación / alerta de stock
+            </div>
+          )
+          : loading
           ? <div className="text-center py-5"><div className="spinner-border text-secondary"/></div>
           : <div className="table-responsive" style={{maxHeight:'calc(100vh - 300px)', overflowY:'auto'}}>
               <table className="table table-hover table-sm mb-0" style={{fontSize:'0.83rem'}}>
@@ -297,7 +441,7 @@ export default function Stock() {
                 <tbody>
                   {prods.length === 0
                     ? <tr><td colSpan={6} className="text-center text-muted py-4">Sin resultados</td></tr>
-                    : prods.map(p => {
+                    : prodsPagina.map(p => {
                         const agot = p.stock_actual <= 0
                         const bajo = !agot && p.stock_minimo > 0 && p.stock_actual <= p.stock_minimo
                         return (
@@ -323,6 +467,15 @@ export default function Stock() {
               </table>
             </div>
         }
+        {totalPagsProds > 1 && (
+          <div className="border-top px-3 py-1 d-flex align-items-center justify-content-center gap-2" style={{fontSize:'0.78rem'}}>
+            <button className="btn btn-sm btn-outline-secondary py-0 px-2" disabled={paginaProds <= 1}
+              onClick={() => setPaginaProds(p => p - 1)}>‹ Anterior</button>
+            <span className="text-muted">Página {paginaProds} de {totalPagsProds}</span>
+            <button className="btn btn-sm btn-outline-secondary py-0 px-2" disabled={paginaProds >= totalPagsProds}
+              onClick={() => setPaginaProds(p => p + 1)}>Siguiente ›</button>
+          </div>
+        )}
         {/* Barra estado */}
         <div className="border-top px-3 py-1 d-flex gap-3 text-muted" style={{fontSize:'0.78rem', background:'#f8f9fa'}}>
           <span>Total: <strong>{total}</strong></span>
@@ -398,14 +551,17 @@ export default function Stock() {
                             <th>FECHA</th><th>CÓDIGO</th><th>DESCRIPCIÓN</th><th>TIPO</th>
                             <th className="text-end">CANT.</th><th>PROVEEDOR</th>
                             <th className="text-end">PRECIO U.</th><th>PROYECTO</th>
-                            <th>CLIENTE INT.</th><th>OBS.</th>
+                            <th>CLIENTE INT.</th><th>AUTORIZÓ</th><th>OBS.</th>
                           </tr>
                         </thead>
                         <tbody>
                           {movs.length === 0
-                            ? <tr><td colSpan={10} className="text-center text-muted py-3">Sin resultados</td></tr>
+                            ? <tr><td colSpan={11} className="text-center text-muted py-3">Sin resultados</td></tr>
                             : movs.map(m => (
-                              <tr key={m.id} style={{color: m.tipo==='salida'?'#dc3545': m.tipo==='entrada'?'#198754':undefined}}>
+                              <tr key={m.id}
+                                style={{color: m.tipo==='salida'?'#dc3545': m.tipo==='entrada'?'#198754':undefined, cursor: esAdmin?'pointer':undefined}}
+                                title={esAdmin ? 'Doble click para editar' : undefined}
+                                onDoubleClick={() => abrirEditarMov(m)}>
                                 <td className="text-nowrap">{fmtF(m.fecha)}</td>
                                 <td className="fw-semibold">{m.codigo}</td>
                                 <td><div className="text-truncate" style={{maxWidth:200}} title={m.descripcion}>{m.descripcion}</div></td>
@@ -415,6 +571,7 @@ export default function Stock() {
                                 <td className="text-end">{m.precio_unit > 0 ? fmt(m.precio_unit) : '—'}</td>
                                 <td className="text-muted">{m.proyecto||'—'}</td>
                                 <td className="text-muted">{m.cliente_interno||'—'}</td>
+                                <td className="text-muted">{m.autorizado_por_nombre||'—'}</td>
                                 <td><div className="text-truncate" style={{maxWidth:150}} title={m.observaciones}>{m.observaciones||'—'}</div></td>
                               </tr>
                             ))
@@ -487,9 +644,9 @@ export default function Stock() {
             <form className="modal-content" onSubmit={guardarM}>
               <div className="modal-header">
                 <h5 className="modal-title">
-                  Registrar {TIPOS.find(t=>t.v===formM.tipo)?.l}
+                  {editandoMovId ? 'Editar movimiento' : `Registrar ${TIPOS.find(t=>t.v===formM.tipo)?.l}`}
                 </h5>
-                <button type="button" className="btn-close" onClick={()=>setModalM(null)}/>
+                <button type="button" className="btn-close" onClick={cerrarModalM}/>
               </div>
               <div className="modal-body">
                 {errM && <div className="alert alert-danger py-2 small">{errM}</div>}
@@ -503,7 +660,7 @@ export default function Stock() {
                   </div>
                   <div className="col-md-3">
                     <label className="form-label small fw-medium">Cantidad *</label>
-                    <input type="number" className="form-control" value={formM.cantidad} required min="0.001" step="any" onChange={e=>setFormM(p=>({...p,cantidad:e.target.value}))}/>
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control" value={formM.cantidad} required min="0.001" step="any" onChange={e=>setFormM(p=>({...p,cantidad:e.target.value}))}/>
                   </div>
                   <div className="col-md-3">
                     <label className="form-label small fw-medium">Fecha *</label>
@@ -538,12 +695,23 @@ export default function Stock() {
                     </select>
                   </div>
                   <div className="col-md-4">
-                    <label className="form-label small fw-medium">Proyecto</label>
+                    <label className="form-label small fw-medium">Proyecto o Actividad</label>
                     <select className="form-select" value={formM.proyecto} onChange={e=>setFormM(p=>({...p,proyecto:e.target.value}))}>
-                      <option value="">— Sin proyecto —</option>
-                      {proyActivos.map(p=>(
-                        <option key={p.id} value={p.codigo}>{fmtCod(p.codigo)} — {p.nombre}</option>
-                      ))}
+                      <option value="">— Sin asignar —</option>
+                      {proyActivos.length > 0 && (
+                        <optgroup label="Proyectos">
+                          {proyActivos.map(p=>(
+                            <option key={`p-${p.id}`} value={p.codigo}>{fmtCod(p.codigo)} — {p.nombre}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {actividadesActivas.length > 0 && (
+                        <optgroup label="Actividades">
+                          {actividadesActivas.map(a=>(
+                            <option key={`a-${a.id}`} value={a.nombre}>{a.nombre}</option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
                   </div>
                   <div className="col-md-4">
@@ -554,9 +722,20 @@ export default function Stock() {
                       placeholder="— Sin asignar —"
                     />
                   </div>
+                  {formM.tipo === 'salida' && (
+                    <div className="col-md-4">
+                      <label className="form-label small fw-medium">Autorizado por *</label>
+                      <select className="form-select" value={formM.autorizado_por_id}
+                        onChange={e => setFormM(p => ({...p, autorizado_por_id: e.target.value}))}>
+                        <option value="">— Elegir —</option>
+                        {autorizantes.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+                      </select>
+                      <div className="form-text">Le llega una notificación con lo retirado</div>
+                    </div>
+                  )}
                   <div className="col-md-4">
                     <label className="form-label small fw-medium">Precio unitario</label>
-                    <input type="number" className="form-control" value={formM.precio_unit} min="0" step="any" onChange={e=>setFormM(p=>({...p,precio_unit:parseFloat(e.target.value)||0}))}/>
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control" value={formM.precio_unit} min="0" step="any" onChange={e=>setFormM(p=>({...p,precio_unit:parseFloat(e.target.value)||0}))}/>
                   </div>
                   <div className="col-md-8">
                     <label className="form-label small fw-medium">Observaciones</label>
@@ -565,9 +744,9 @@ export default function Stock() {
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={()=>setModalM(null)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary" disabled={savM || !formM.producto_id}>
-                  {savM && <span className="spinner-border spinner-border-sm me-2"/>}Registrar
+                <button type="button" className="btn btn-secondary" onClick={cerrarModalM}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={savM || !formM.producto_id || (formM.tipo === 'salida' && !formM.autorizado_por_id)}>
+                  {savM && <span className="spinner-border spinner-border-sm me-2"/>}{editandoMovId ? 'Guardar cambios' : 'Registrar'}
                 </button>
               </div>
             </form>
@@ -671,13 +850,7 @@ export default function Stock() {
                                           placeholder="Buscar producto en catálogo..."
                                           value={confirmSinOC.prodBuscar}
                                           onChange={e => {
-                                            const q = e.target.value.toLowerCase()
-                                            setConfirmSinOC(p => ({
-                                              ...p, prodBuscar: e.target.value, prodSel: null,
-                                              prodSugs: q.length > 1
-                                                ? prods.filter(x => x.codigo?.toLowerCase().includes(q) || x.descripcion?.toLowerCase().includes(q)).slice(0,8)
-                                                : []
-                                            }))
+                                            setConfirmSinOC(p => ({ ...p, prodBuscar: e.target.value, prodSel: null, prodSugs: [] }))
                                           }} />
                                         {confirmSinOC.prodSugs?.length > 0 && (
                                           <div className="border rounded shadow bg-white position-absolute"
@@ -735,6 +908,84 @@ export default function Stock() {
               <div className="modal-footer py-2">
                 <small className="text-muted me-auto">Confirmá cada material para que ingrese al stock. Los ingresos sin OC requieren vincular un producto del catálogo.</small>
                 <button className="btn btn-secondary btn-sm" onClick={()=>setModalIngPend(false)}>Cerrar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalPedidos && (
+        <div className="modal show d-block" style={{background:'rgba(0,0,0,.5)', zIndex:1060}}>
+          <div className="modal-dialog modal-lg modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header py-2">
+                <h5 className="modal-title">
+                  <i className="bi bi-clipboard-check me-2"/>
+                  Pedidos de stock pendientes
+                  {pedidosPend.length > 0 && <span className="badge bg-warning text-dark ms-2">{pedidosPend.length}</span>}
+                </h5>
+                <button className="btn-close" onClick={()=>setModalPedidos(false)}/>
+              </div>
+              <div className="modal-body p-0">
+                {pedidosPend.length === 0
+                  ? <p className="text-center text-muted py-5">No hay pedidos de materiales pendientes.</p>
+                  : pedidosPend.map(ped => (
+                    <div key={ped.id} className="border-bottom p-3">
+                      <div className="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                          <span className="fw-semibold me-2">Pedido #{ped.id}</span>
+                          <span className="text-muted small">{ped.solicitante_nombre}</span>
+                          <span className="badge bg-light text-dark border ms-2">
+                            {ped.actividad_nombre || `${ped.proyecto_codigo} — ${ped.proyecto_nombre}`}
+                          </span>
+                          {ped.estado === 'Parcial' && <span className="badge bg-info text-dark ms-2">Parcial</span>}
+                          {ped.autorizado_por_nombre && (
+                            <span className="text-muted small ms-2">Autorizó: {ped.autorizado_por_nombre}</span>
+                          )}
+                        </div>
+                        {canWrite && (
+                          <button className="btn btn-sm btn-success" disabled={savPedido === ped.id}
+                            onClick={() => entregarPedido(ped)}>
+                            {savPedido === ped.id ? <span className="spinner-border spinner-border-sm"/> : <><i className="bi bi-check-lg me-1"/>Confirmar entrega</>}
+                          </button>
+                        )}
+                      </div>
+                      <table className="table table-sm mb-0" style={{fontSize:'0.83rem'}}>
+                        <thead className="table-light">
+                          <tr>
+                            <th>Código</th><th>Descripción</th><th className="text-end">Pedido</th>
+                            <th className="text-end">Stock</th><th style={{width:130}}>Entregar ahora</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ped.items.map(it => {
+                            const pendiente = it.cantidad - it.cantidad_entregada
+                            return (
+                              <tr key={it.id}>
+                                <td><code style={{fontSize:'0.78rem'}}>{it.codigo}</code></td>
+                                <td>{it.descripcion}</td>
+                                <td className="text-end">{fmt(pendiente)} / {fmt(it.cantidad)} {it.unidad}</td>
+                                <td className={`text-end ${it.stock_actual < pendiente ? 'text-danger fw-semibold' : ''}`}>{fmt(it.stock_actual)}</td>
+                                <td>
+                                  {canWrite && pendiente > 0 && (
+                                    <input type="number" onPaste={manejarPegadoNumero} min="0" max={pendiente} step="any" className="form-control form-control-sm"
+                                      value={entregaCant[it.id] ?? pendiente}
+                                      onChange={e => setEntregaCant(prev => ({ ...prev, [it.id]: e.target.value }))} />
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                      {ped.observaciones && <p className="text-muted small mt-2 mb-0">{ped.observaciones}</p>}
+                    </div>
+                  ))
+                }
+              </div>
+              <div className="modal-footer py-2">
+                <small className="text-muted me-auto">Se puede entregar de a parte — lo que falte queda pendiente para la próxima vez.</small>
+                <button className="btn btn-secondary btn-sm" onClick={()=>setModalPedidos(false)}>Cerrar</button>
               </div>
             </div>
           </div>

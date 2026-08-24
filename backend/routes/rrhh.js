@@ -4,6 +4,7 @@ const https   = require('https');
 const crypto  = require('crypto');
 const { db } = require('../db/database');
 const { verificarToken } = require('../middleware/auth');
+const { hoyArgentina, fechaArgentinaHace } = require('../helpers/fecha');
 
 const router = express.Router();
 const puede = req => req.usuario?.rol === 'admin' || !!(req.permisos?.rrhh?.escribir);
@@ -21,7 +22,7 @@ const leerRRHHOParte = (req, res, next) => {
 };
 
 // Fecha actual en zona horaria Argentina (evita desfase UTC)
-const hoyAR = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' })
+const hoyAR = hoyArgentina
 
 // ── Hikvision ISAPI helper (Digest Auth) ──────────────────────────────────────
 function md5(s) { return crypto.createHash('md5').update(s).digest('hex'); }
@@ -134,12 +135,12 @@ router.get('/dashboard', verificarToken, leerRRHH, (req, res) => {
   `).all(desde, hasta);
 
   const porMes = db.prepare(`
-    SELECT substr(r.fecha,1,7) AS mes, e.tipo,
+    SELECT substr(r.fecha,1,7) AS mes, COALESCE(e.tipo, 'interno') AS tipo,
            COALESCE(SUM(r.horas),0) AS horas
     FROM rrhh_registros r
-    JOIN rrhh_empleados e ON e.id = r.empleado_id
+    LEFT JOIN rrhh_empleados e ON e.id = r.empleado_id
     WHERE r.fecha LIKE ?
-    GROUP BY mes, e.tipo
+    GROUP BY mes, tipo
     ORDER BY mes
   `).all(`${year}%`);
 
@@ -261,6 +262,20 @@ router.delete('/registros/:id', verificarToken, (req, res) => {
 });
 
 // ── Empleados ─────────────────────────────────────────────────────────────────
+// Listado liviano (sin DNI/fechas/horarios) para selectores de "elegir empleado"
+// usados en Compras, Producción, Stock, Mantenimiento, Proyectos, Form49 y
+// Administración (hook useEmpleados) — abierto a cualquier autenticado, ya que
+// /empleados de abajo expone datos personales y requiere permiso de rrhh/partes.
+router.get('/empleados-basico', verificarToken, (req, res) => {
+  const rows = db.prepare(`SELECT id, nombre, tipo, activo FROM rrhh_empleados ORDER BY tipo, nombre`).all();
+  res.json(rows);
+});
+
+// Costo por hora es un dato sensible (tipo sueldo) — solo lo ve admin o quien
+// tenga acceso al módulo de Análisis de Proyectos (el que realmente lo usa),
+// no cualquiera con permiso de lectura de RRHH.
+const puedeVerCostoHora = req => req.usuario?.rol === 'admin' || !!(req.permisos?.analisis_proyectos?.leer || req.permisos?.analisis_proyectos?.escribir);
+
 router.get('/empleados', verificarToken, leerRRHHOParte, (req, res) => {
   const anio = new Date().getFullYear();
   const rows = db.prepare(`
@@ -270,25 +285,26 @@ router.get('/empleados', verificarToken, leerRRHHOParte, (req, res) => {
     FROM rrhh_empleados e
     ORDER BY e.tipo, e.nombre
   `).all(`${anio}%`);
+  if (!puedeVerCostoHora(req)) for (const r of rows) delete r.costo_hora;
   res.json(rows);
 });
 
 router.post('/empleados', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
-  const { nombre, tipo, empresa, dni, fecha_ingreso } = req.body;
+  const { nombre, tipo, empresa, dni, fecha_ingreso, costo_hora } = req.body;
   if (!nombre) return res.status(400).json({ error: 'nombre es requerido' });
-  const r = db.prepare(`INSERT INTO rrhh_empleados (nombre,tipo,empresa,dni,fecha_ingreso) VALUES (?,?,?,?,?)`)
-    .run(nombre.trim().toUpperCase(), tipo || 'interno', empresa || '', dni || '', fecha_ingreso || '');
+  const r = db.prepare(`INSERT INTO rrhh_empleados (nombre,tipo,empresa,dni,fecha_ingreso,costo_hora) VALUES (?,?,?,?,?,?)`)
+    .run(nombre.trim().toUpperCase(), tipo || 'interno', empresa || '', dni || '', fecha_ingreso || '', parseFloat(costo_hora) || 0);
   res.json({ id: r.lastInsertRowid });
 });
 
 router.put('/empleados/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
   const { nombre, tipo, empresa, activo, id_dispositivo, horario_entrada, horario_salida, obliga_fichar,
-          dni, fecha_ingreso, fecha_egreso } = req.body;
+          dni, fecha_ingreso, fecha_egreso, costo_hora } = req.body;
   const e = db.prepare('SELECT * FROM rrhh_empleados WHERE id=?').get(req.params.id);
   if (!e) return res.status(404).json({ error: 'No encontrado' });
-  db.prepare(`UPDATE rrhh_empleados SET nombre=?,tipo=?,empresa=?,activo=?,id_dispositivo=?,horario_entrada=?,horario_salida=?,obliga_fichar=?,dni=?,fecha_ingreso=?,fecha_egreso=? WHERE id=?`)
+  db.prepare(`UPDATE rrhh_empleados SET nombre=?,tipo=?,empresa=?,activo=?,id_dispositivo=?,horario_entrada=?,horario_salida=?,obliga_fichar=?,dni=?,fecha_ingreso=?,fecha_egreso=?,costo_hora=? WHERE id=?`)
     .run(nombre.trim().toUpperCase(), tipo || 'interno', empresa || '',
          activo !== undefined ? Number(activo) : 1,
          id_dispositivo || '',
@@ -296,6 +312,7 @@ router.put('/empleados/:id', verificarToken, (req, res) => {
          horario_salida  || '',
          obliga_fichar !== undefined ? Number(obliga_fichar) : 1,
          dni ?? e.dni, fecha_ingreso ?? e.fecha_ingreso, fecha_egreso ?? e.fecha_egreso,
+         costo_hora !== undefined ? parseFloat(costo_hora) || 0 : e.costo_hora,
          req.params.id);
   res.json({ ok: true });
 });
@@ -303,13 +320,11 @@ router.put('/empleados/:id', verificarToken, (req, res) => {
 router.delete('/empleados/:id', verificarToken, (req, res) => {
   if (!puede(req)) return res.status(403).json({ error: 'Sin permiso' });
   const { c } = db.prepare('SELECT COUNT(*) as c FROM rrhh_registros WHERE empleado_id=?').get(req.params.id);
-  if (c > 0) {
-    db.prepare('UPDATE rrhh_empleados SET activo=0 WHERE id=?').run(req.params.id);
-    res.json({ ok: true, accion: 'desactivado', registros: c });
-  } else {
-    db.prepare('DELETE FROM rrhh_empleados WHERE id=?').run(req.params.id);
-    res.json({ ok: true, accion: 'eliminado' });
-  }
+  // El empleado se elimina siempre. Sus partes/fichadas se conservan (para no
+  // perder las horas ya cargadas en proyectos) pero quedan sin empleado
+  // asociado, gracias a ON DELETE SET NULL en rrhh_registros/rrhh_asistencia.
+  db.prepare('DELETE FROM rrhh_empleados WHERE id=?').run(req.params.id);
+  res.json({ ok: true, accion: 'eliminado', registros: c });
 });
 
 // ── Estructura organizacional: organigrama + historial de puestos por empleado ──
@@ -378,7 +393,9 @@ router.get('/proyectos', verificarToken, (req, res) => {
 try { db.exec(`ALTER TABLE rrhh_proyectos ADD COLUMN revisado INTEGER DEFAULT 0`) } catch {}
 
 // ── Actividades internas ───────────────────────────────────────────────────────
-try { db.exec(`CREATE TABLE IF NOT EXISTS rrhh_actividades (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, activo INTEGER DEFAULT 1)`) } catch {}
+// La tabla rrhh_actividades y la columna actividad_id ya se crean en
+// database.js (con su FK correspondiente) — este ALTER queda solo por
+// compatibilidad con instalaciones viejas que la tenían sin esa columna.
 try { db.exec(`ALTER TABLE rrhh_registros ADD COLUMN actividad_id INTEGER`) } catch {}
 
 // Sin gate de módulo por el mismo motivo que /proyectos: la usa "Mi Parte" de cualquier empleado.
@@ -487,7 +504,7 @@ router.post('/dispositivos/:id/test', verificarToken, async (req, res) => {
 });
 
 // ── Debug: respuesta cruda del AcsEvent ───────────────────────────────────────
-router.post('/dispositivos/:id/debug-acs', verificarToken, async (req, res) => {
+router.post('/dispositivos/:id/debug-acs', verificarToken, leerRRHH, async (req, res) => {
   const disp = db.prepare('SELECT * FROM rrhh_dispositivos WHERE id=?').get(req.params.id);
   if (!disp) return res.status(404).json({ error: 'No encontrado' });
   const { desde, hasta } = req.body;
@@ -572,6 +589,51 @@ async function syncDispositivo(disp, desde, hasta, empMap, ins) {
 
   return { insertados, duplicados, paginas };
 }
+
+// ── Usuarios enrolados en el dispositivo (en vivo, aunque nunca hayan fichado) ──
+// A diferencia de /asistencia/empleados-dispositivo (que lee rrhh_asistencia,
+// es decir solo detecta a alguien después de su primera marcación), esto le
+// pregunta directamente al dispositivo quién está registrado — así un
+// empleado que se acaba de enrolar aparece de inmediato, sin esperar a que
+// fiche por primera vez.
+router.post('/dispositivos/:id/usuarios', verificarToken, leerRRHH, async (req, res) => {
+  const disp = db.prepare('SELECT * FROM rrhh_dispositivos WHERE id=?').get(req.params.id);
+  if (!disp) return res.status(404).json({ error: 'Dispositivo no encontrado' });
+
+  // Un empleado puede tener el ID del dispositivo configurado en su ficha ERP
+  // sin haber fichado todavía nunca — hay que resolverlo acá, si no un
+  // empleado ya vinculado (pero sin marcaciones) aparece como "sin vincular".
+  const empPorDispositivo = {};
+  for (const e of db.prepare("SELECT id, nombre, id_dispositivo FROM rrhh_empleados WHERE id_dispositivo != ''").all()) {
+    empPorDispositivo[e.id_dispositivo] = { empleado_id: e.id, empleado_nombre: e.nombre };
+  }
+
+  const PAGE = 30, MAX_PAG = 200;
+  let position = 0, paginas = 0;
+  const usuarios = [];
+  try {
+    while (paginas < MAX_PAG) {
+      const body = { UserInfoSearchCond: { searchID: '1', searchResultPosition: position, maxResults: PAGE } };
+      const data = await hikRequest(disp.ip, disp.puerto, 'POST',
+        '/ISAPI/AccessControl/UserInfo/Search?format=json', body, disp.usuario, disp.password);
+      const evt = data?.UserInfoSearch;
+      if (!evt) break;
+      const items = evt.UserInfo || [];
+      if (items.length === 0) break;
+      for (const u of items) {
+        if (!u.employeeNo) continue;
+        const vinculo = empPorDispositivo[u.employeeNo] || { empleado_id: null, empleado_nombre: null };
+        usuarios.push({ employeeNo: u.employeeNo, nombre: u.name || '', ...vinculo });
+      }
+      position += items.length;
+      paginas++;
+      if (evt.responseStatusStrg !== 'MORE') break;
+    }
+    res.json({ ok: true, usuarios });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Error al comunicarse con el dispositivo' });
+  }
+});
 
 // ── Sincronizar asistencia (un dispositivo) ───────────────────────────────────
 router.post('/dispositivos/:id/sync', verificarToken, async (req, res) => {
@@ -744,10 +806,7 @@ router.get('/asistencia', verificarToken, leerRRHH, (req, res) => {
 router.get('/partes/semana', verificarToken, leerRRHHOParte, (req, res) => {
   const dias = Math.min(Math.max(parseInt(req.query.dias) || 7, 1), 30);
   const fechas = [];
-  for (let i = dias - 1; i >= 0; i--) {
-    const d = new Date(); d.setDate(d.getDate() - i);
-    fechas.push(d.toISOString().split('T')[0]);
-  }
+  for (let i = dias - 1; i >= 0; i--) fechas.push(fechaArgentinaHace(i));
   const desde = fechas[0], hasta = fechas[fechas.length - 1];
 
   const empleados = db.prepare(
@@ -1000,7 +1059,7 @@ router.get('/informes/tareas', verificarToken, leerRRHH, (req, res) => {
   if (empleado_id) { where.push('r.empleado_id = ?'); params.push(empleado_id) }
 
   const rows = db.prepare(`
-    SELECT e.nombre AS empleado, r.fecha,
+    SELECT COALESCE(e.nombre, '(empleado eliminado)') AS empleado, r.fecha,
            COALESCE(rp.nombre, p.nombre, a.nombre, '') AS proyecto,
            COALESCE(c.codigo, '') AS codigo,
            COALESCE(c.descripcion, '') AS tarea,
@@ -1010,13 +1069,13 @@ router.get('/informes/tareas', verificarToken, leerRRHH, (req, res) => {
            r.horas,
            COALESCE(r.descripcion, '') AS observacion
     FROM rrhh_registros r
-    JOIN rrhh_empleados e ON e.id = r.empleado_id
+    LEFT JOIN rrhh_empleados e ON e.id = r.empleado_id
     LEFT JOIN rrhh_proyectos   rp ON rp.id = r.proyecto_id
     LEFT JOIN proyectos        p  ON p.id  = r.proyecto_id
     LEFT JOIN rrhh_actividades a  ON a.id  = r.actividad_id
     LEFT JOIN rrhh_categorias  c  ON c.id  = r.categoria_id
     WHERE ${where.join(' AND ')}
-    ORDER BY e.nombre, r.fecha, r.hora_inicio
+    ORDER BY empleado, r.fecha, r.hora_inicio
   `).all(...params);
 
   res.json(rows);
@@ -1030,9 +1089,7 @@ router.get('/resumen-ayer', verificarToken, (req, res) => {
     || !!(req.permisos?.partes?.leer);
   if (!puedeVer) return res.status(403).json({ error: 'Sin permiso' });
 
-  const ayer = new Date();
-  ayer.setDate(ayer.getDate() - 1);
-  const fecha = ayer.toISOString().slice(0, 10);
+  const fecha = fechaArgentinaHace(1);
 
   const fichadas = db.prepare(`
     SELECT e.id, e.nombre, COALESCE(e.obliga_fichar, 1) AS obliga_fichar,
@@ -1093,9 +1150,7 @@ router.get('/mi-ayer', verificarToken, (req, res) => {
   `).get(req.usuario.id);
   if (!u?.rrhh_empleado_id) return res.json(null);
 
-  const ayer = new Date();
-  ayer.setDate(ayer.getDate() - 1);
-  const fecha = ayer.toISOString().slice(0, 10);
+  const fecha = fechaArgentinaHace(1);
 
   const fichada = db.prepare(`
     SELECT MIN(hora) AS entrada, MAX(hora) AS salida,
@@ -1132,7 +1187,7 @@ router.get('/mi-ayer', verificarToken, (req, res) => {
 router.get('/mi-parte', verificarToken, (req, res) => {
   const u = db.prepare('SELECT rrhh_empleado_id FROM usuarios WHERE id=?').get(req.usuario.id);
   if (!u?.rrhh_empleado_id) return res.json(null);
-  const fecha = req.query.fecha || new Date().toISOString().slice(0, 10);
+  const fecha = req.query.fecha || hoyArgentina();
   const rows = db.prepare(`
     SELECT r.*, c.codigo AS cat_codigo, c.descripcion AS cat_descripcion, c.grupo AS cat_grupo,
            COALESCE(rp.nombre, p.nombre, a.nombre) AS proyecto_nombre

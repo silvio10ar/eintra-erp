@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../../api/client'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const COLORES = ['', '#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc948', '#b07aa1', '#ff9da7', '#9c755f']
 
@@ -312,7 +313,7 @@ export default function PlantillaGantt({ canWrite }) {
                           {!editData.es_grupo && (
                             <div style={{ width: 90 }}>
                               <label className="form-label mb-0" style={{ fontSize: '0.7rem' }}>Días</label>
-                              <input type="number" className="form-control form-control-sm" min={1}
+                              <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" min={1}
                                 value={editData.duracion_dias}
                                 onChange={e => setEditData(d => ({ ...d, duracion_dias: parseInt(e.target.value) || 1 }))} />
                             </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -159,7 +160,7 @@ export default function FormEPP({ canWrite }) {
                               <input type="checkbox" className="form-check-input" checked={!!it.certificacion} onChange={e => setItem(i, 'certificacion', e.target.checked)} />
                             </div>
                           </td>
-                          <td><input type="number" min="1" className="form-control form-control-sm border-0 text-center" value={it.cantidad} onChange={e => setItem(i, 'cantidad', +e.target.value)} /></td>
+                          <td><input type="number" onPaste={manejarPegadoNumero} min="1" className="form-control form-control-sm border-0 text-center" value={it.cantidad} onChange={e => setItem(i, 'cantidad', +e.target.value)} /></td>
                           <td><input type="date" className="form-control form-control-sm border-0" style={{ fontSize: '0.76rem' }} value={it.fecha_entrega} onChange={e => setItem(i, 'fecha_entrega', e.target.value)} /></td>
                           <td><button className="btn btn-xs text-danger border-0" onClick={() => delItem(i)}><i className="bi bi-x" /></button></td>
                         </tr>

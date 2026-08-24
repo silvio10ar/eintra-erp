@@ -5,7 +5,9 @@ const { verificarToken, puede: permisoModulo } = require('../middleware/auth');
 const { buscarCondicion } = require('../helpers/buscar');
 
 const router = express.Router();
-const puede = req => req.usuario?.rol === 'admin' || !!(req.permisos?.mantenimiento?.escribir);
+// req.permisos ya incluye escribir:true para admin en todo módulo (ver
+// getPermisosEfectivos) — no hace falta un bypass de rol acá aparte.
+const puede = req => !!(req.permisos?.mantenimiento?.escribir);
 const leerMant = permisoModulo.leer('mantenimiento');
 
 function logEstado(equipo_id, estado_anterior, estado_nuevo, motivo = '') {
@@ -137,11 +139,16 @@ router.put('/equipos/:id', verificarToken, (req, res) => {
   const eq = db.prepare('SELECT * FROM mant_equipos WHERE id=?').get(req.params.id);
   if (!eq) return res.status(404).json({ error: 'No encontrado' });
   const { codigo, nombre, categoria, marca, modelo, nro_serie, ubicacion, estado, observaciones } = req.body;
-  db.prepare('UPDATE mant_equipos SET codigo=?,nombre=?,categoria=?,marca=?,modelo=?,nro_serie=?,ubicacion=?,estado=?,observaciones=? WHERE id=?')
-    .run(codigo??eq.codigo, nombre??eq.nombre, categoria??eq.categoria,
-         marca??eq.marca, modelo??eq.modelo, nro_serie??eq.nro_serie,
-         ubicacion??eq.ubicacion, estado??eq.estado, observaciones??eq.observaciones,
-         req.params.id);
+  try {
+    db.prepare('UPDATE mant_equipos SET codigo=?,nombre=?,categoria=?,marca=?,modelo=?,nro_serie=?,ubicacion=?,estado=?,observaciones=? WHERE id=?')
+      .run(codigo??eq.codigo, nombre??eq.nombre, categoria??eq.categoria,
+           marca??eq.marca, modelo??eq.modelo, nro_serie??eq.nro_serie,
+           ubicacion??eq.ubicacion, estado??eq.estado, observaciones??eq.observaciones,
+           req.params.id);
+  } catch(e) {
+    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'El código ya existe' });
+    throw e;
+  }
   res.json(db.prepare('SELECT * FROM mant_equipos WHERE id=?').get(req.params.id));
 });
 

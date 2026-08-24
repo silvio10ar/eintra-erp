@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../../api/client'
 import DateInput from '../../components/DateInput'
+import { formatCuit } from '../../utils/cuit'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const fmtN = n => n ? new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 }).format(n) : '—'
 const fmtF = s => s ? s.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -50,7 +52,7 @@ export default function CRM() {
 
   // ── Loaders ─────────────────────────────────────────────────────────────
   const cargarStats = useCallback(() => {
-    api.get('/crm/stats').then(r => setStats(r.data)).catch(() => {})
+    api.get('/crm/stats').then(r => setStats(r.data)).catch(e => console.error(e))
   }, [])
 
   const cargarCots = useCallback(() => {
@@ -669,19 +671,19 @@ export default function CRM() {
                   <div className="row g-2 mb-2">
                     <div className="col-4">
                       <label className="form-label mb-1">Presupuestado</label>
-                      <input type="number" className="form-control form-control-sm"
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm"
                         value={form.presupuestado}
                         onChange={e => setForm(f => ({ ...f, presupuestado: e.target.value }))} />
                     </div>
                     <div className="col-4">
                       <label className="form-label mb-1">Ganado</label>
-                      <input type="number" className="form-control form-control-sm"
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm"
                         value={form.ganado}
                         onChange={e => setForm(f => ({ ...f, ganado: e.target.value }))} />
                     </div>
                     <div className="col-4">
                       <label className="form-label mb-1">Perdido</label>
-                      <input type="number" className="form-control form-control-sm"
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm"
                         value={form.perdido}
                         onChange={e => setForm(f => ({ ...f, perdido: e.target.value }))} />
                     </div>
@@ -780,6 +782,7 @@ export default function CRM() {
                       <label className="form-label mb-1">CUIT</label>
                       <input className="form-control form-control-sm" value={formCliente.cuit}
                         onChange={e => setFormCliente(f => ({ ...f, cuit: e.target.value }))}
+                        onBlur={e => setFormCliente(f => ({ ...f, cuit: formatCuit(e.target.value) }))}
                         placeholder="20-12345678-1" />
                     </div>
                     <div className="col-6">

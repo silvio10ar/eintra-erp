@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -161,10 +162,10 @@ export default function FormGranallado({ hojasList = [], canWrite }) {
                           <td><input className="form-control form-control-sm border-0" value={it.partida} onChange={e => setItem(i, 'partida', e.target.value)} /></td>
                           <td><input className="form-control form-control-sm border-0" value={it.nro_chapa} onChange={e => setItem(i, 'nro_chapa', e.target.value)} /></td>
                           <td><input className="form-control form-control-sm border-0" value={it.espesor} onChange={e => setItem(i, 'espesor', e.target.value)} /></td>
-                          <td><input type="number" min="0" className="form-control form-control-sm border-0 text-center" value={it.conf_a} onChange={e => setItem(i, 'conf_a', +e.target.value)} /></td>
-                          <td><input type="number" min="0" className="form-control form-control-sm border-0 text-center" value={it.noconf_a} onChange={e => setItem(i, 'noconf_a', +e.target.value)} /></td>
-                          <td><input type="number" min="0" className="form-control form-control-sm border-0 text-center" value={it.conf_b} onChange={e => setItem(i, 'conf_b', +e.target.value)} /></td>
-                          <td><input type="number" min="0" className="form-control form-control-sm border-0 text-center" value={it.noconf_b} onChange={e => setItem(i, 'noconf_b', +e.target.value)} /></td>
+                          <td><input type="number" onPaste={manejarPegadoNumero} min="0" className="form-control form-control-sm border-0 text-center" value={it.conf_a} onChange={e => setItem(i, 'conf_a', +e.target.value)} /></td>
+                          <td><input type="number" onPaste={manejarPegadoNumero} min="0" className="form-control form-control-sm border-0 text-center" value={it.noconf_a} onChange={e => setItem(i, 'noconf_a', +e.target.value)} /></td>
+                          <td><input type="number" onPaste={manejarPegadoNumero} min="0" className="form-control form-control-sm border-0 text-center" value={it.conf_b} onChange={e => setItem(i, 'conf_b', +e.target.value)} /></td>
+                          <td><input type="number" onPaste={manejarPegadoNumero} min="0" className="form-control form-control-sm border-0 text-center" value={it.noconf_b} onChange={e => setItem(i, 'noconf_b', +e.target.value)} /></td>
                           <td><input className="form-control form-control-sm border-0" value={it.observacion} onChange={e => setItem(i, 'observacion', e.target.value)} /></td>
                           <td>
                             <select className="form-select form-select-sm border-0" value={it.verificacion} onChange={e => setItem(i, 'verificacion', e.target.value)}>

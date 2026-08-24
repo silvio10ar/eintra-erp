@@ -1,27 +1,49 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import api from '../../api/client'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = f => f ? f.slice(0, 10).split('-').reverse().join('/') : '—'
 
-function NodoOrganigrama({ puesto, hijos, porPadre }) {
+// Árbol anidado clásico: cada puesto se dibuja con sus propios subordinados
+// justo debajo, en su propia rama — ramas de distinta profundidad no tienen
+// problema (no fuerza alinear todo por nivel global). La conexión visual la
+// dan las líneas de LineasConectoras, medidas por posición real de cada tarjeta.
+function NodoOrganigrama({ puesto, hijos, registrarRef }) {
   const propios = hijos[puesto.id] || []
   return (
     <div className="d-flex flex-column align-items-center">
-      <div className="card border-primary-subtle shadow-sm mb-2" style={{ minWidth: 190, maxWidth: 220 }}>
+      <div ref={el => registrarRef(puesto.id, el)} className="card border-primary-subtle shadow-sm mb-2"
+        style={{ minWidth: 190, maxWidth: 220 }}>
         <div className="card-body py-2 px-3 text-center">
           <div className="fw-semibold small">{puesto.nombre}</div>
           {puesto.area && <div className="text-muted" style={{ fontSize: '0.72rem' }}>{puesto.area}</div>}
         </div>
       </div>
       {propios.length > 0 && (
-        <div className="d-flex gap-3 flex-wrap justify-content-center border-top pt-2">
+        <div className="d-flex gap-3" style={{ flexWrap: 'nowrap', paddingTop: 24 }}>
           {propios.map(h => (
-            <NodoOrganigrama key={h.id} puesto={h} hijos={hijos} porPadre={porPadre} />
+            <NodoOrganigrama key={h.id} puesto={h} hijos={hijos} registrarRef={registrarRef} />
           ))}
         </div>
       )}
     </div>
+  )
+}
+
+// ── Líneas conectoras (en escuadra, estilo organigrama clásico) ──────────────
+// Puramente presentacional: recibe las líneas ya calculadas. El cálculo vive
+// en Estructura (ver más abajo) porque el efecto de un componente PADRE se
+// garantiza que corre después de los efectos de TODOS sus hijos (orden
+// bottom-up de React) — a diferencia de depender del orden entre hermanos,
+// que no es una garantía real y falló específicamente en el build de producción.
+function LineasConectoras({ lineas, size }) {
+  return (
+    <svg width={size.w} height={size.h}
+      style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}>
+      {lineas.map((d, i) => (
+        <path key={i} d={d} fill="none" stroke="#adb5bd" strokeWidth={1.5} />
+      ))}
+    </svg>
   )
 }
 
@@ -30,6 +52,11 @@ export default function Estructura() {
   const [empleados, setEmpleados] = useState([])
   const [sub, setSub]           = useState('organigrama')
   const [loading, setLoading]   = useState(true)
+  const chartWrapRef = useRef(null)
+  const cardRefs      = useRef({})
+  const registrarRef  = (id, el) => { cardRefs.current[id] = el }
+  const [lineas, setLineas] = useState([])
+  const [svgSize, setSvgSize] = useState({ w: 0, h: 0 })
 
   // Legajo
   const [empSel, setEmpSel]         = useState(null)
@@ -93,12 +120,6 @@ export default function Estructura() {
     } catch { alert('Error al eliminar') }
   }
 
-  if (loading) return (
-    <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '40vh' }}>
-      <div className="spinner-border text-secondary" />
-    </div>
-  )
-
   // Armar árbol: raíces = puestos sin reporta_a_id (o que apuntan a un id inexistente)
   const idsValidos = new Set(puestos.map(p => p.id))
   const hijos = {}
@@ -107,6 +128,47 @@ export default function Estructura() {
     if (padre) { hijos[padre] = hijos[padre] || []; hijos[padre].push(p) }
   })
   const raices = puestos.filter(p => !p.reporta_a_id || !idsValidos.has(p.reporta_a_id))
+  const relaciones = puestos
+    .filter(p => p.reporta_a_id && idsValidos.has(p.reporta_a_id))
+    .map(p => ({ hijoId: p.id, padreId: p.reporta_a_id }))
+
+  // El efecto de un componente padre corre garantizado después de los efectos
+  // de TODOS sus hijos (orden bottom-up de React) — a diferencia de depender
+  // del orden entre hermanos, que resultó no ser confiable en el build de
+  // producción. Por eso el cálculo de las líneas vive acá, no en un componente
+  // hijo separado.
+  useLayoutEffect(() => {
+    const recalcular = () => {
+      const wrap = chartWrapRef.current
+      if (!wrap) return
+      const wrapRect = wrap.getBoundingClientRect()
+      const nuevas = []
+      relaciones.forEach(({ hijoId, padreId }) => {
+        const hijoEl  = cardRefs.current[hijoId]
+        const padreEl = cardRefs.current[padreId]
+        if (!hijoEl || !padreEl) return
+        const hr = hijoEl.getBoundingClientRect()
+        const pr = padreEl.getBoundingClientRect()
+        const x1 = pr.left + pr.width / 2 - wrapRect.left
+        const y1 = pr.bottom - wrapRect.top
+        const x2 = hr.left + hr.width / 2 - wrapRect.left
+        const y2 = hr.top - wrapRect.top
+        const midY = y1 + (y2 - y1) / 2
+        nuevas.push(`M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`)
+      })
+      setLineas(nuevas)
+      setSvgSize({ w: wrap.scrollWidth, h: wrap.scrollHeight })
+    }
+    recalcular()
+    window.addEventListener('resize', recalcular)
+    return () => window.removeEventListener('resize', recalcular)
+  }, [puestos, sub])
+
+  if (loading) return (
+    <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '40vh' }}>
+      <div className="spinner-border text-secondary" />
+    </div>
+  )
 
   return (
     <div>
@@ -124,13 +186,17 @@ export default function Estructura() {
       </ul>
 
       {sub === 'organigrama' && (
-        <div className="card border-0 shadow-sm">
-          <div className="card-body" style={{ overflowX: 'auto' }}>
+        <div className="card border-0 shadow-sm" style={{ minWidth: 0, maxWidth: '100%' }}>
+          <div className="card-body" style={{ overflowX: 'auto', minWidth: 0, maxWidth: '100%' }}>
             {puestos.length === 0 ? (
               <p className="text-muted text-center py-4 mb-0">No hay puestos definidos. Creá puestos desde Usuarios → Permisos → Gestionar puestos.</p>
             ) : (
-              <div className="d-flex gap-4 flex-wrap justify-content-center">
-                {raices.map(p => <NodoOrganigrama key={p.id} puesto={p} hijos={hijos} />)}
+              <div ref={chartWrapRef} className="d-flex gap-4 align-items-start"
+                style={{ width: 'max-content', margin: '0 auto', position: 'relative', flexWrap: 'nowrap' }}>
+                {raices.map(p => (
+                  <NodoOrganigrama key={p.id} puesto={p} hijos={hijos} registrarRef={registrarRef} />
+                ))}
+                <LineasConectoras lineas={lineas} size={svgSize} />
               </div>
             )}
             <div className="form-text mt-3">

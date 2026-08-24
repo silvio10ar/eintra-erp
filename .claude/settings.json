@@ -28,7 +28,21 @@
       "Bash(npm --version)",
       "Bash(npm view *)",
       "Bash(DB_PATH=/c/Users/silvi/AppData/Local/Temp/claude/c--Users-silvi-eintra-erp/e4be2cb6-fb75-4983-a748-635f98a3ed89/scratchpad/test_upgrade.db NODE_ENV=test node -e ' *)",
-      "Bash(rm -f \"/c/Users/silvi/AppData/Local/Temp/claude/c--Users-silvi-eintra-erp/e4be2cb6-fb75-4983-a748-635f98a3ed89/scratchpad/test_upgrade.db\"*)"
+      "Bash(rm -f \"/c/Users/silvi/AppData/Local/Temp/claude/c--Users-silvi-eintra-erp/e4be2cb6-fb75-4983-a748-635f98a3ed89/scratchpad/test_upgrade.db\"*)",
+      "Bash(git stash *)",
+      "Bash(git apply *)",
+      "Bash(echo \"check exit: $?\")",
+      "Bash(echo \"apply exit: $?\")",
+      "Bash(git update-ref *)",
+      "Bash(rm -rf .git/refs/original/)",
+      "Bash(git reflog *)",
+      "Bash(git gc *)",
+      "Bash(xargs -I{} git grep -l \"eintra_erp_secret_2026_cambiar_en_produccion\" {})",
+      "Bash(git rev-list *)",
+      "Bash(git ls-remote *)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/silvio10ar/eintra-erp/main/backend/.env\")",
+      "Bash(sed -i '879s/validarMontosFactura\\(req.body\\)/validarMontosFactura\\(req.body, CAMPOS_MONTO_FACTURA_COMPRA\\)/' backend/routes/finanzas.js)",
+      "Bash(sed -i '906s/validarMontosFactura\\(req.body\\)/validarMontosFactura\\(req.body, CAMPOS_MONTO_FACTURA_COMPRA\\)/' backend/routes/finanzas.js)"
     ]
   }
 }

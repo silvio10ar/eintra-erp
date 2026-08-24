@@ -4,35 +4,45 @@ import { getUser, clearAuth, getPermisos, getToken } from '../store/authStore'
 import MiParte from './MiParte'
 import logo from '../assets/logo.avif'
 
-// Orden de las secciones tal como se muestran en el menú
-const GRUPOS_ORDEN = ['Comercial', 'Operaciones', 'Cadena de Suministro', 'Personas', 'Gerencia']
-
+// Las secciones del menú se agrupan por gerencia (rama del organigrama que
+// tiene asignado cada módulo — ver GET /auth/gerencias-modulos), no por
+// categorías fijas: si el organigrama cambia, el menú se reordena solo.
+// Dashboard (sin módulo) y Sistema (solo admin) quedan fijos aparte de eso.
 const TODOS_LOS_ITEMS = [
-  // ── Dashboard (siempre primero, sin sección) ───────
-  { to: '/dashboard',      label: 'Dashboard',       icon: 'speedometer2',      modulo: null,             grupo: null },
-  // ── Comercial ───────────────────────────────────────
-  { to: '/ventas',         label: 'Ventas',          icon: 'briefcase',         modulo: 'ventas',         grupo: 'Comercial' },
-  // ── Operaciones ─────────────────────────────────────
-  { to: '/proyectos',      label: 'Proyectos',       icon: 'kanban',           modulo: 'proyectos',      grupo: 'Operaciones' },
-  { to: '/produccion',     label: 'Producción',      icon: 'tools',            modulo: 'produccion',     grupo: 'Operaciones' },
-  { to: '/mantenimiento',  label: 'Mantenimiento',   icon: 'wrench-adjustable', modulo: 'mantenimiento', grupo: 'Operaciones' },
-  { to: '/calidad',        label: 'Calidad',         icon: 'clipboard2-check', modulo: 'calidad',        grupo: 'Operaciones' },
-  // ── Cadena de Suministro ────────────────────────────
-  { to: '/compras',        label: 'Compras',         icon: 'cart3',            modulo: 'compras',        grupo: 'Cadena de Suministro' },
-  { to: '/materiales',     label: 'Materiales',      icon: 'boxes',            modulo: 'materiales',     padre: 'compras' },
-  { to: '/codificacion',   label: 'Codificación',    icon: 'upc-scan',         modulo: 'codificacion',   padre: 'compras' },
-  { to: '/codificacion/futura', label: 'Codificación futura', icon: 'upc',     modulo: 'codificacion',   padre: 'compras' },
-  { to: '/stock',          label: 'Stock',           icon: 'box-seam',        modulo: 'stock',           grupo: 'Cadena de Suministro' },
-  // ── Personas ────────────────────────────────────────
-  { to: '/rrhh',           label: 'RRHH',            icon: 'people-fill',      modulo: 'rrhh',           grupo: 'Personas' },
-  { to: '/partes',         label: 'Partes',          icon: 'file-earmark-text', modulo: 'partes',        padre: 'rrhh'  },
-  // ── Gerencia (información sensible de la empresa) ──
-  { to: '/finanzas',       label: 'Finanzas',        icon: 'cash-stack',       modulo: 'finanzas',       grupo: 'Gerencia' },
-  { to: '/administracion', label: 'Administración',  icon: 'building-gear',    modulo: 'administracion', grupo: 'Gerencia' },
+  { to: '/dashboard',      label: 'Dashboard',       icon: 'speedometer2',      modulo: null },
+  { to: '/ventas',         label: 'Ventas',          icon: 'briefcase',         modulo: 'ventas' },
+  { to: '/proyectos',      label: 'Proyectos',       icon: 'kanban',           modulo: 'proyectos' },
+  { to: '/analisis-proyectos', label: 'Análisis de Proyectos', icon: 'graph-up-arrow', modulo: 'analisis_proyectos' },
+  { to: '/costeo-equipos', label: 'Costeo de Equipos', icon: 'calculator', modulo: 'costeo_equipos' },
+  // Sin módulo/permiso a propósito, igual que Dashboard: cualquier usuario
+  // autenticado tiene que poder ver sus propias tareas y las de su gente,
+  // sin que un admin le tenga que asignar un permiso aparte.
+  { to: '/mis-tareas',     label: 'Mis Tareas',      icon: 'check2-square',    modulo: null },
+  { to: '/produccion',     label: 'Producción',      icon: 'tools',            modulo: 'produccion' },
+  { to: '/mantenimiento',  label: 'Mantenimiento',   icon: 'wrench-adjustable', modulo: 'mantenimiento' },
+  { to: '/calidad',        label: 'Calidad',         icon: 'clipboard2-check', modulo: 'calidad' },
+  { to: '/compras',        label: 'Compras',         icon: 'cart3',            modulo: 'compras' },
+  { to: '/materiales',     label: 'Materiales',      icon: 'boxes',            modulo: 'materiales' },
+  { to: '/stock',          label: 'Stock',           icon: 'box-seam',        modulo: 'stock' },
+  { to: '/pedido-stock',   label: 'Pedido de Stock', icon: 'clipboard-check', modulo: 'pedidos_stock' },
+  { to: '/rrhh',           label: 'RRHH',            icon: 'people-fill',      modulo: 'rrhh' },
+  { to: '/partes',         label: 'Partes',          icon: 'file-earmark-text', modulo: 'partes' },
+  { to: '/administracion', label: 'Administración',  icon: 'building-gear',    modulo: 'administracion' },
+  { to: '/finanzas',       label: 'Finanzas',        icon: 'cash-stack',       modulo: 'finanzas' },
   // ── Sistema (solo admin) ───────────────────────────
   { to: '/configuracion',  label: 'Configuración',   icon: 'gear',              modulo: '__admin__'       },
   { to: '/usuarios',       label: 'Usuarios',        icon: 'people-gear',       modulo: '__admin__'       },
 ]
+
+// Módulos que tienen su propia entrada en el menú y por lo tanto tiene sentido
+// agruparlos por gerencia (a diferencia de "codificacion"/"crm", que viajan
+// siempre junto a su módulo padre por JERARQUIA sin item propio, o "usuarios"/
+// "compras_informes", que son solo permisos de una función puntual dentro de
+// otra pantalla). Se usa en Usuarios.jsx para no ofrecer ahí módulos que no
+// se ven agrupados en ningún lado.
+export const MODULOS_MENU = new Set(
+  TODOS_LOS_ITEMS.filter(i => i.modulo && i.modulo !== '__admin__').map(i => i.modulo)
+)
 
 const ROL_LABELS = {
   admin:       'Administrador',
@@ -51,10 +61,19 @@ export default function Layout() {
   const rol           = user?.rol ?? 'solo_lectura'
   const permisos      = getPermisos()
   const [showMiParte, setShowMiParte] = useState(false)
-  const [expandidos, setExpandidos]   = useState(new Set(['rrhh', 'compras']))
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [msgCount,   setMsgCount]     = useState(0)
   const [toast,      setToast]        = useState(null)
+  const [gerenciaModulos, setGerenciaModulos] = useState({})
+  const [raizArea,        setRaizArea]        = useState('Gerencia')
   const prevCount = useRef(null)
+
+  useEffect(() => {
+    fetch('/api/v1/auth/gerencias-modulos', { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) { setGerenciaModulos(d.modulos || {}); setRaizArea(d.raizArea || 'Gerencia') } })
+      .catch(e => console.error(e))
+  }, [])
 
   useEffect(() => {
     const poll = async () => {
@@ -77,73 +96,38 @@ export default function Layout() {
     return () => clearInterval(id)
   }, [])
 
-  const toggleExpand = modulo => setExpandidos(prev => {
-    const next = new Set(prev)
-    next.has(modulo) ? next.delete(modulo) : next.add(modulo)
-    return next
-  })
-
   const NAV_ITEMS = TODOS_LOS_ITEMS.filter(i => {
     if (i.modulo === '__admin__') return rol === 'admin'
     if (!i.modulo) return true
     if (rol === 'admin') return true
     return !!(permisos[i.modulo]?.leer || permisos[i.modulo]?.escribir)
   })
-  const visibles = new Set(NAV_ITEMS.map(i => i.modulo))
-  // Items de primer nivel: sin padre, o cuyo padre no está visible
-  const topLevel = NAV_ITEMS.filter(i => !i.padre)
+  // Un módulo sin gerencia asignada todavía (recién agregado, o ningún puesto
+  // tiene permiso sobre él) cae en la gerencia general por defecto.
+  const grupoDe = item => item.modulo ? (gerenciaModulos[item.modulo] || raizArea) : null
+  const itemsAgrupables = NAV_ITEMS.filter(i => i.modulo && i.modulo !== '__admin__')
+  const gruposPresentes = [...new Set(itemsAgrupables.map(grupoDe))]
+    .sort((a, b) => a === raizArea ? -1 : b === raizArea ? 1 : a.localeCompare(b, 'es'))
 
   const handleLogout = () => {
     clearAuth()
     navigate('/login', { replace: true })
   }
 
-  const renderItem = item => {
-    const hijos      = NAV_ITEMS.filter(c => c.padre === item.modulo)
-    const tieneHijos = hijos.length > 0
-    const expandido  = expandidos.has(item.modulo)
-    return (
-      <div key={item.to}>
-        <div style={{ display: 'flex', alignItems: 'stretch' }}>
-          <NavLink to={item.to} className="nav-link" style={{ flex: 1, minWidth: 0 }}>
-            <i className={`bi bi-${item.icon}`} />
-            {item.label}
-          </NavLink>
-          {tieneHijos && (
-            <button
-              onClick={() => toggleExpand(item.modulo)}
-              title={expandido ? 'Contraer' : 'Expandir'}
-              style={{
-                background: 'none', border: 'none',
-                padding: '0 0.75rem', flexShrink: 0,
-                color: '#5a7090', cursor: 'pointer',
-                display: 'flex', alignItems: 'center',
-                transition: 'color 0.15s',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.color = '#8b9ab0' }}
-              onMouseLeave={e => { e.currentTarget.style.color = '#5a7090' }}
-            >
-              <i className={`bi bi-chevron-${expandido ? 'down' : 'right'}`}
-                 style={{ fontSize: '0.72rem' }} />
-            </button>
-          )}
-        </div>
-        {tieneHijos && expandido && hijos.map(hijo => (
-          <NavLink key={hijo.to} to={hijo.to} className="nav-link"
-            style={{ paddingLeft: '2.25rem', fontSize: '0.82rem', opacity: 0.88 }}>
-            <span style={{ marginRight: '0.5rem', color: '#4a6080', fontSize: '0.7rem' }}>└</span>
-            <i className={`bi bi-${hijo.icon}`} />
-            {hijo.label}
-          </NavLink>
-        ))}
-      </div>
-    )
-  }
+  const renderItem = item => (
+    <NavLink key={item.to} to={item.to} className="nav-link" onClick={() => setSidebarOpen(false)}>
+      <i className={`bi bi-${item.icon}`} />
+      {item.label}
+    </NavLink>
+  )
 
   return (
     <div style={{ display: 'flex' }}>
+      {/* ── Fondo oscuro para cerrar el menú en celular ── */}
+      {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+
       {/* ── Sidebar ─────────────────────────────────── */}
-      <aside className="sidebar">
+      <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <div className="sidebar-brand">
           <div style={{ background: 'rgba(255,255,255,0.96)', borderRadius: 8, padding: '5px 10px', display: 'inline-flex', alignItems: 'center' }}>
             <img src={logo} alt="E-INTRA" style={{ height: 34 }} />
@@ -152,10 +136,11 @@ export default function Layout() {
         </div>
 
         <nav>
-          {topLevel.filter(i => !i.grupo && i.modulo !== '__admin__').map(item => renderItem(item))}
+          {NAV_ITEMS.filter(i => !i.modulo).map(item => renderItem(item))}
 
-          {GRUPOS_ORDEN.map(grupo => {
-            const items = topLevel.filter(i => i.grupo === grupo)
+          {gruposPresentes.map(grupo => {
+            const items = itemsAgrupables.filter(i => grupoDe(i) === grupo)
+              .sort((a, b) => a.label.localeCompare(b.label, 'es'))
             if (items.length === 0) return null
             return (
               <div key={grupo}>
@@ -168,8 +153,10 @@ export default function Layout() {
           {rol === 'admin' && (
             <>
               <div className="nav-section" style={{ marginTop: '0.5rem' }}>Sistema</div>
-              {topLevel.filter(i => i.modulo === '__admin__').map(item => (
-                <NavLink key={item.to} to={item.to} className="nav-link">
+              {NAV_ITEMS.filter(i => i.modulo === '__admin__')
+                .sort((a, b) => a.label.localeCompare(b.label, 'es'))
+                .map(item => (
+                <NavLink key={item.to} to={item.to} className="nav-link" onClick={() => setSidebarOpen(false)}>
                   <i className={`bi bi-${item.icon}`} />
                   {item.label}
                 </NavLink>
@@ -190,11 +177,17 @@ export default function Layout() {
       <div className="main-content">
         {/* Topbar */}
         <header className="topbar">
-          <div className="d-flex align-items-center gap-2">
-            <img src={logo} alt="E-INTRA" style={{ height: 28 }} />
-            <span style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1a3a5c' }}>Sistema de Gestión E-INTRA</span>
+          <div className="d-flex align-items-center gap-2" style={{ minWidth: 0 }}>
+            <button className="hamburger-btn d-lg-none btn btn-sm btn-outline-secondary flex-shrink-0"
+              onClick={() => setSidebarOpen(o => !o)} title="Menú">
+              <i className="bi bi-list" />
+            </button>
+            <img src={logo} alt="E-INTRA" style={{ height: 28 }} className="flex-shrink-0" />
+            <span className="d-none d-md-inline text-truncate" style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1a3a5c' }}>
+              Sistema de Gestión E-INTRA
+            </span>
           </div>
-          <div className="d-flex align-items-center gap-3">
+          <div className="d-flex align-items-center gap-2 gap-sm-3 flex-shrink-0">
             <button className="btn btn-sm btn-outline-secondary position-relative" title="Mensajes"
               onClick={() => navigate('/mensajes')}>
               <i className="bi bi-envelope" />
@@ -206,15 +199,18 @@ export default function Layout() {
               )}
             </button>
             <button className="btn btn-sm btn-primary" onClick={() => setShowMiParte(true)}>
-              <i className="bi bi-file-earmark-text me-1" />Mi Parte
+              <i className="bi bi-file-earmark-text d-none d-sm-inline me-sm-1" />
+              <span className="d-none d-sm-inline">Mi Parte</span>
+              <i className="bi bi-file-earmark-text d-inline d-sm-none" />
             </button>
-            <span className="text-muted" style={{ fontSize: '0.82rem' }}>
+            <span className="text-muted d-none d-md-inline" style={{ fontSize: '0.82rem' }}>
               <i className="bi bi-person-circle me-1" />
               {user?.username}
             </span>
-            <button className="btn btn-sm btn-outline-secondary" onClick={handleLogout}>
-              <i className="bi bi-box-arrow-right me-1" />
-              Salir
+            <button className="btn btn-sm btn-outline-secondary" onClick={handleLogout} title="Salir">
+              <i className="bi bi-box-arrow-right d-none d-sm-inline me-sm-1" />
+              <span className="d-none d-sm-inline">Salir</span>
+              <i className="bi bi-box-arrow-right d-inline d-sm-none" />
             </button>
           </div>
         </header>

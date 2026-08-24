@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import api from '../../api/client'
+import { useGerencias } from '../../hooks/useGerencias'
+import { hoyLocal } from '../../utils/fecha'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const ESTADOS = ['Pendiente', 'En proceso', 'Completado', 'Cancelado', 'Bloqueado']
 const COLORES  = ['', '#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc948', '#b07aa1', '#ff9da7', '#9c755f']
@@ -65,7 +68,7 @@ function GanttSVG({ tareas, dayW = 22 }) {
   }
 
   // Hoy
-  const hoy = new Date().toISOString().slice(0, 10)
+  const hoy = hoyLocal()
   const xHoy = xOf(hoy)
 
   // Mapa id → orden para flechas
@@ -180,6 +183,7 @@ function GanttSVG({ tareas, dayW = 22 }) {
 
 // ── Componente principal ──────────────────────────────────────────────────────
 export default function PlanGantt({ proyecto, canWrite }) {
+  const { gerencias } = useGerencias()
   const [tareas,     setTareas]     = useState([])
   const [loading,    setLoading]    = useState(true)
   const [zoom,       setZoom]       = useState(10)
@@ -248,9 +252,9 @@ export default function PlanGantt({ proyecto, canWrite }) {
   }
 
   useEffect(() => {
-    api.get('/rrhh/empleados').then(({ data }) => {
+    api.get('/rrhh/empleados-basico').then(({ data }) => {
       setEmpleados(data.filter(e => e.activo !== 0).map(e => e.nombre).sort((a, b) => a.localeCompare(b, 'es')))
-    }).catch(() => {})
+    }).catch(e => console.error(e))
   }, [])
 
   // Abrir edición después de que tareas se recarga con la nueva tarea
@@ -324,6 +328,7 @@ export default function PlanGantt({ proyecto, canWrite }) {
       nombre:       t.nombre,
       duracion_dias: t.duracion_dias,
       responsable:  t.responsable,
+      area_responsable: t.area_responsable,
       estado:       t.estado,
       avance:       t.avance,
       color:        t.color,
@@ -523,7 +528,7 @@ export default function PlanGantt({ proyecto, canWrite }) {
                       <div className="d-flex gap-2">
                         <div className="flex-grow-1">
                           <label className="form-label mb-0" style={{ fontSize: '0.7rem' }}>Días duración</label>
-                          <input type="number" className="form-control form-control-sm" min={1}
+                          <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" min={1}
                             value={editData.duracion_dias}
                             onChange={e => setEditData(d => ({ ...d, duracion_dias: parseInt(e.target.value) || 1 }))} />
                         </div>
@@ -540,6 +545,15 @@ export default function PlanGantt({ proyecto, canWrite }) {
                             )}
                           </select>
                         </div>
+                        <div className="flex-grow-1">
+                          <label className="form-label mb-0" style={{ fontSize: '0.7rem' }}>Área responsable</label>
+                          <select className="form-select form-select-sm"
+                            value={editData.area_responsable || ''}
+                            onChange={e => setEditData(d => ({ ...d, area_responsable: e.target.value }))}>
+                            <option value="">— Sin asignar —</option>
+                            {gerencias.map(g => <option key={g} value={g}>{g}</option>)}
+                          </select>
+                        </div>
                       </div>
 
                       {/* Estado + avance + color */}
@@ -553,7 +567,7 @@ export default function PlanGantt({ proyecto, canWrite }) {
                         </div>
                         <div style={{ width: 64 }}>
                           <label className="form-label mb-0" style={{ fontSize: '0.7rem' }}>Avance %</label>
-                          <input type="number" className="form-control form-control-sm" min={0} max={100}
+                          <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" min={0} max={100}
                             value={editData.avance}
                             onChange={e => setEditData(d => ({ ...d, avance: parseInt(e.target.value) || 0 }))} />
                         </div>
@@ -680,9 +694,10 @@ export default function PlanGantt({ proyecto, canWrite }) {
                   </div>
                   <div style={{ flex: 1, overflow: 'hidden', minWidth: 0, paddingLeft: 4 }}>
                     <div style={{ overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}
-                      title={[t.nombre, t.responsable, (t.predecesoras||[]).length ? `pred: ${t.predecesoras.join(', ')}` : ''].filter(Boolean).join(' · ')}>
+                      title={[t.nombre, t.responsable, t.area_responsable, (t.predecesoras||[]).length ? `pred: ${t.predecesoras.join(', ')}` : ''].filter(Boolean).join(' · ')}>
                       <span style={{ fontSize: '0.78rem', fontWeight: t.color === '#495057' ? '600' : 'normal' }}>{t.nombre}</span>
                       {t.responsable && <span className="text-muted ms-1" style={{ fontSize: '0.68rem' }}>· {t.responsable}</span>}
+                      {t.area_responsable && <span className="text-muted ms-1" style={{ fontSize: '0.68rem' }}>· {t.area_responsable}</span>}
                     </div>
                   </div>
                   <div style={{ width: 50, textAlign: 'center', flexShrink: 0, fontSize: '0.75rem' }}>{t.duracion_dias}d</div>
@@ -932,7 +947,7 @@ export default function PlanGantt({ proyecto, canWrite }) {
                     <div className="d-flex gap-2 align-items-end">
                       <div style={{ width: 90 }}>
                         <label className="form-label mb-0" style={{ fontSize: '0.7rem' }}>Días</label>
-                        <input type="number" min={1} className="form-control form-control-sm"
+                        <input type="number" onPaste={manejarPegadoNumero} min={1} className="form-control form-control-sm"
                           value={nuevaDuracion} onChange={e => setNuevaDuracion(parseInt(e.target.value) || 1)} />
                       </div>
                       <button type="button" className="btn btn-sm btn-success" onClick={crearNueva} disabled={agregando}>

@@ -1,8 +1,12 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import 'bootstrap/dist/css/bootstrap.min.css'
-import 'bootstrap/dist/js/bootstrap.bundle.min.js'
 import 'bootstrap-icons/font/bootstrap-icons.css'
+
+// El JS de Bootstrap (dropdowns, modales, tooltips vía Popper) no lo usa
+// /login — se carga en paralelo sin bloquear el primer render, en vez de ir
+// atado al bundle inicial que baja cualquiera que solo entra a loguearse.
+import('bootstrap/dist/js/bootstrap.bundle.min.js')
 import App from './App'
 import './index.css'
 import { setAuthImpersonated } from './store/authStore'

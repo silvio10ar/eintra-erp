@@ -3,6 +3,7 @@ const express = require('express')
 const { db }  = require('../db/database')
 const { verificarToken, puede } = require('../middleware/auth')
 const { buscarCondicion } = require('../helpers/buscar')
+const { hoyArgentina } = require('../helpers/fecha')
 
 const router = express.Router()
 router.use(verificarToken)
@@ -10,7 +11,18 @@ router.use(puede.leer('calidad'))
 
 const puedeE = req => !!req.permisos?.calidad?.escribir
 
-const hoy = () => new Date().toISOString().slice(0,10)
+const hoy = hoyArgentina
+
+// Antes de un UPDATE + reemplazo de ítems: sin este chequeo, editar un id que
+// no existe no afecta ninguna fila pero igual respondía { ok: true }, como si
+// se hubiera guardado.
+function existeOr404(tabla, id, res) {
+  if (!db.prepare(`SELECT id FROM ${tabla} WHERE id=?`).get(id)) {
+    res.status(404).json({ error: 'No encontrado' })
+    return false
+  }
+  return true
+}
 
 function nextId(tabla, prefijo, ancho = 4) {
   const anio = new Date().getFullYear()
@@ -53,17 +65,23 @@ router.get('/form21/:id', (req, res) => {
 router.post('/form21', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { hoja_ruta_id, fecha, pintor, operador_granalla, observaciones, items = [] } = req.body
-  const numero = nextId('form21', 'F21')
-  const r = db.prepare(`INSERT INTO form21 (numero,hoja_ruta_id,fecha,pintor,operador_granalla,observaciones) VALUES (?,?,?,?,?,?)`)
-    .run(numero, hoja_ruta_id||null, fecha||hoy(), pintor||'', operador_granalla||'', observaciones||'')
-  const id = r.lastInsertRowid
-  const ins = db.prepare(`INSERT INTO form21_item (form21_id,item,partida,nro_chapa,espesor,conf_a,noconf_a,conf_b,noconf_b,observacion,verificacion) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-  items.forEach((it, i) => ins.run(id, i+1, it.partida||'', it.nro_chapa||'', it.espesor||'', it.conf_a||0, it.noconf_a||0, it.conf_b||0, it.noconf_b||0, it.observacion||'', it.verificacion||'Pendiente'))
+  // Número + INSERT en una sola transacción: sin esto, dos altas casi
+  // simultáneas podrían leer el mismo máximo y terminar con el mismo número.
+  const { id, numero } = db.transaction(() => {
+    const numero = nextId('form21', 'F21')
+    const r = db.prepare(`INSERT INTO form21 (numero,hoja_ruta_id,fecha,pintor,operador_granalla,observaciones) VALUES (?,?,?,?,?,?)`)
+      .run(numero, hoja_ruta_id||null, fecha||hoy(), pintor||'', operador_granalla||'', observaciones||'')
+    const id = r.lastInsertRowid
+    const ins = db.prepare(`INSERT INTO form21_item (form21_id,item,partida,nro_chapa,espesor,conf_a,noconf_a,conf_b,noconf_b,observacion,verificacion) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    items.forEach((it, i) => ins.run(id, i+1, it.partida||'', it.nro_chapa||'', it.espesor||'', it.conf_a||0, it.noconf_a||0, it.conf_b||0, it.noconf_b||0, it.observacion||'', it.verificacion||'Pendiente'))
+    return { id, numero }
+  })()
   res.status(201).json({ id, numero })
 })
 
 router.put('/form21/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  if (!existeOr404('form21', req.params.id, res)) return
   const { hoja_ruta_id, fecha, pintor, operador_granalla, observaciones, items = [] } = req.body
   db.prepare(`UPDATE form21 SET hoja_ruta_id=?,fecha=?,pintor=?,operador_granalla=?,observaciones=? WHERE id=?`)
     .run(hoja_ruta_id||null, fecha||hoy(), pintor||'', operador_granalla||'', observaciones||'', req.params.id)
@@ -108,15 +126,19 @@ router.get('/form22/:id', (req, res) => {
 router.post('/form22', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { hoja_ruta_id, form21_numero, controlo, fecha, pintura_tipo, partida_nro, chapa_nro, cano_nro, perfil_nro, med_a, med_b, med_cano, observaciones } = req.body
-  const numero = nextId('form22', 'F22')
-  const r = db.prepare(`INSERT INTO form22 (numero,hoja_ruta_id,form21_numero,controlo,fecha,pintura_tipo,partida_nro,chapa_nro,cano_nro,perfil_nro,med_a,med_b,med_cano,observaciones) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(numero, hoja_ruta_id||null, form21_numero||'', controlo||'', fecha||hoy(), pintura_tipo||'', partida_nro||'', chapa_nro||'', cano_nro||'', perfil_nro||'',
-      JSON.stringify(med_a||[]), JSON.stringify(med_b||[]), JSON.stringify(med_cano||[]), observaciones||'')
-  res.status(201).json({ id: r.lastInsertRowid, numero })
+  const { id, numero } = db.transaction(() => {
+    const numero = nextId('form22', 'F22')
+    const r = db.prepare(`INSERT INTO form22 (numero,hoja_ruta_id,form21_numero,controlo,fecha,pintura_tipo,partida_nro,chapa_nro,cano_nro,perfil_nro,med_a,med_b,med_cano,observaciones) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(numero, hoja_ruta_id||null, form21_numero||'', controlo||'', fecha||hoy(), pintura_tipo||'', partida_nro||'', chapa_nro||'', cano_nro||'', perfil_nro||'',
+        JSON.stringify(med_a||[]), JSON.stringify(med_b||[]), JSON.stringify(med_cano||[]), observaciones||'')
+    return { id: r.lastInsertRowid, numero }
+  })()
+  res.status(201).json({ id, numero })
 })
 
 router.put('/form22/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  if (!existeOr404('form22', req.params.id, res)) return
   const { hoja_ruta_id, form21_numero, controlo, fecha, pintura_tipo, partida_nro, chapa_nro, cano_nro, perfil_nro, med_a, med_b, med_cano, observaciones } = req.body
   db.prepare(`UPDATE form22 SET hoja_ruta_id=?,form21_numero=?,controlo=?,fecha=?,pintura_tipo=?,partida_nro=?,chapa_nro=?,cano_nro=?,perfil_nro=?,med_a=?,med_b=?,med_cano=?,observaciones=? WHERE id=?`)
     .run(hoja_ruta_id||null, form21_numero||'', controlo||'', fecha||hoy(), pintura_tipo||'', partida_nro||'', chapa_nro||'', cano_nro||'', perfil_nro||'',
@@ -159,14 +181,18 @@ router.get('/form26/:id', (req, res) => {
 router.post('/form26', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { hoja_ruta_id, fecha, id_proyecto, pintor, controlo, aparato, mediciones, observaciones } = req.body
-  const numero = nextId('form26', 'F26')
-  const r = db.prepare(`INSERT INTO form26 (numero,hoja_ruta_id,fecha,id_proyecto,pintor,controlo,aparato,mediciones,observaciones) VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(numero, hoja_ruta_id||null, fecha||hoy(), id_proyecto||'', pintor||'', controlo||'', aparato||'', JSON.stringify(mediciones||{}), observaciones||'')
-  res.status(201).json({ id: r.lastInsertRowid, numero })
+  const { id, numero } = db.transaction(() => {
+    const numero = nextId('form26', 'F26')
+    const r = db.prepare(`INSERT INTO form26 (numero,hoja_ruta_id,fecha,id_proyecto,pintor,controlo,aparato,mediciones,observaciones) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(numero, hoja_ruta_id||null, fecha||hoy(), id_proyecto||'', pintor||'', controlo||'', aparato||'', JSON.stringify(mediciones||{}), observaciones||'')
+    return { id: r.lastInsertRowid, numero }
+  })()
+  res.status(201).json({ id, numero })
 })
 
 router.put('/form26/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  if (!existeOr404('form26', req.params.id, res)) return
   const { hoja_ruta_id, fecha, id_proyecto, pintor, controlo, aparato, mediciones, observaciones } = req.body
   db.prepare(`UPDATE form26 SET hoja_ruta_id=?,fecha=?,id_proyecto=?,pintor=?,controlo=?,aparato=?,mediciones=?,observaciones=? WHERE id=?`)
     .run(hoja_ruta_id||null, fecha||hoy(), id_proyecto||'', pintor||'', controlo||'', aparato||'', JSON.stringify(mediciones||{}), observaciones||'', req.params.id)
@@ -211,17 +237,21 @@ router.get('/form34/:id', (req, res) => {
 router.post('/form34', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { hoja_ruta_id, proyecto, oc, fecha, soldador, observaciones, items = [] } = req.body
-  const numero = nextId('form34', 'F34')
-  const r = db.prepare(`INSERT INTO form34 (numero,hoja_ruta_id,proyecto,oc,fecha,soldador,observaciones) VALUES (?,?,?,?,?,?,?)`)
-    .run(numero, hoja_ruta_id||null, proyecto||'', oc||'', fecha||hoy(), soldador||'', observaciones||'')
-  const id = r.lastInsertRowid
-  const ins = db.prepare(`INSERT INTO form34_item (form34_id,item,nro_chapa,codigo,lado,u_long_der,u_long_izq,u_trans_der,u_trans_izq,observacion) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-  items.forEach((it, i) => ins.run(id, i+1, it.nro_chapa||'', it.codigo||'', it.lado||'Externo', it.u_long_der||'', it.u_long_izq||'', it.u_trans_der||'', it.u_trans_izq||'', it.observacion||''))
+  const { id, numero } = db.transaction(() => {
+    const numero = nextId('form34', 'F34')
+    const r = db.prepare(`INSERT INTO form34 (numero,hoja_ruta_id,proyecto,oc,fecha,soldador,observaciones) VALUES (?,?,?,?,?,?,?)`)
+      .run(numero, hoja_ruta_id||null, proyecto||'', oc||'', fecha||hoy(), soldador||'', observaciones||'')
+    const id = r.lastInsertRowid
+    const ins = db.prepare(`INSERT INTO form34_item (form34_id,item,nro_chapa,codigo,lado,u_long_der,u_long_izq,u_trans_der,u_trans_izq,observacion) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    items.forEach((it, i) => ins.run(id, i+1, it.nro_chapa||'', it.codigo||'', it.lado||'Externo', it.u_long_der||'', it.u_long_izq||'', it.u_trans_der||'', it.u_trans_izq||'', it.observacion||''))
+    return { id, numero }
+  })()
   res.status(201).json({ id, numero })
 })
 
 router.put('/form34/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  if (!existeOr404('form34', req.params.id, res)) return
   const { hoja_ruta_id, proyecto, oc, fecha, soldador, observaciones, items = [] } = req.body
   db.prepare(`UPDATE form34 SET hoja_ruta_id=?,proyecto=?,oc=?,fecha=?,soldador=?,observaciones=? WHERE id=?`)
     .run(hoja_ruta_id||null, proyecto||'', oc||'', fecha||hoy(), soldador||'', observaciones||'', req.params.id)
@@ -267,17 +297,21 @@ router.post('/form10', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { tema, fecha, expositor, duracion, observaciones, asistentes = [] } = req.body
   if (!tema?.trim()) return res.status(400).json({ error: 'Tema requerido' })
-  const numero = nextId('form10', 'F10')
-  const r = db.prepare(`INSERT INTO form10 (numero,tema,fecha,expositor,duracion,observaciones) VALUES (?,?,?,?,?,?)`)
-    .run(numero, tema.trim(), fecha||hoy(), expositor||'', duracion||'', observaciones||'')
-  const id = r.lastInsertRowid
-  const ins = db.prepare(`INSERT INTO form10_asistente (form10_id,nro_leg,apellido_nombre,area) VALUES (?,?,?,?)`)
-  asistentes.forEach(a => ins.run(id, a.nro_leg||'', a.apellido_nombre||'', a.area||''))
+  const { id, numero } = db.transaction(() => {
+    const numero = nextId('form10', 'F10')
+    const r = db.prepare(`INSERT INTO form10 (numero,tema,fecha,expositor,duracion,observaciones) VALUES (?,?,?,?,?,?)`)
+      .run(numero, tema.trim(), fecha||hoy(), expositor||'', duracion||'', observaciones||'')
+    const id = r.lastInsertRowid
+    const ins = db.prepare(`INSERT INTO form10_asistente (form10_id,nro_leg,apellido_nombre,area) VALUES (?,?,?,?)`)
+    asistentes.forEach(a => ins.run(id, a.nro_leg||'', a.apellido_nombre||'', a.area||''))
+    return { id, numero }
+  })()
   res.status(201).json({ id, numero })
 })
 
 router.put('/form10/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  if (!existeOr404('form10', req.params.id, res)) return
   const { tema, fecha, expositor, duracion, observaciones, asistentes = [] } = req.body
   db.prepare(`UPDATE form10 SET tema=?,fecha=?,expositor=?,duracion=?,observaciones=? WHERE id=?`)
     .run(tema||'', fecha||hoy(), expositor||'', duracion||'', observaciones||'', req.params.id)
@@ -316,14 +350,18 @@ router.get('/form37', (req, res) => {
 router.post('/form37', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { hoja_ruta_id, anio, equipo_tipo, codigo, cliente, proyecto, descripcion, fecha_fabricacion, observaciones } = req.body
-  const numero = nextId('form37', 'F37')
-  const r = db.prepare(`INSERT INTO form37 (numero,hoja_ruta_id,anio,equipo_tipo,codigo,cliente,proyecto,descripcion,fecha_fabricacion,observaciones) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-    .run(numero, hoja_ruta_id||null, anio||new Date().getFullYear(), equipo_tipo||'', codigo||'', cliente||'', proyecto||'', descripcion||'', fecha_fabricacion||'', observaciones||'')
-  res.status(201).json({ id: r.lastInsertRowid, numero })
+  const { id, numero } = db.transaction(() => {
+    const numero = nextId('form37', 'F37')
+    const r = db.prepare(`INSERT INTO form37 (numero,hoja_ruta_id,anio,equipo_tipo,codigo,cliente,proyecto,descripcion,fecha_fabricacion,observaciones) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(numero, hoja_ruta_id||null, anio||new Date().getFullYear(), equipo_tipo||'', codigo||'', cliente||'', proyecto||'', descripcion||'', fecha_fabricacion||'', observaciones||'')
+    return { id: r.lastInsertRowid, numero }
+  })()
+  res.status(201).json({ id, numero })
 })
 
 router.put('/form37/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  if (!existeOr404('form37', req.params.id, res)) return
   const { hoja_ruta_id, anio, equipo_tipo, codigo, cliente, proyecto, descripcion, fecha_fabricacion, observaciones } = req.body
   db.prepare(`UPDATE form37 SET hoja_ruta_id=?,anio=?,equipo_tipo=?,codigo=?,cliente=?,proyecto=?,descripcion=?,fecha_fabricacion=?,observaciones=? WHERE id=?`)
     .run(hoja_ruta_id||null, anio||new Date().getFullYear(), equipo_tipo||'', codigo||'', cliente||'', proyecto||'', descripcion||'', fecha_fabricacion||'', observaciones||'', req.params.id)
@@ -366,17 +404,21 @@ router.post('/epp', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { empleado, dni, puesto, fecha, observaciones, items = [] } = req.body
   if (!empleado?.trim()) return res.status(400).json({ error: 'Empleado requerido' })
-  const numero = nextId('form_epp', 'EPP')
-  const r = db.prepare(`INSERT INTO form_epp (numero,empleado,dni,puesto,fecha,observaciones) VALUES (?,?,?,?,?,?)`)
-    .run(numero, empleado.trim(), dni||'', puesto||'', fecha||hoy(), observaciones||'')
-  const id = r.lastInsertRowid
-  const ins = db.prepare(`INSERT INTO form_epp_item (epp_id,producto,tipo_modelo,marca,certificacion,cantidad,fecha_entrega) VALUES (?,?,?,?,?,?,?)`)
-  items.forEach(it => ins.run(id, it.producto||'', it.tipo_modelo||'', it.marca||'', it.certificacion?1:0, it.cantidad||1, it.fecha_entrega||''))
+  const { id, numero } = db.transaction(() => {
+    const numero = nextId('form_epp', 'EPP')
+    const r = db.prepare(`INSERT INTO form_epp (numero,empleado,dni,puesto,fecha,observaciones) VALUES (?,?,?,?,?,?)`)
+      .run(numero, empleado.trim(), dni||'', puesto||'', fecha||hoy(), observaciones||'')
+    const id = r.lastInsertRowid
+    const ins = db.prepare(`INSERT INTO form_epp_item (epp_id,producto,tipo_modelo,marca,certificacion,cantidad,fecha_entrega) VALUES (?,?,?,?,?,?,?)`)
+    items.forEach(it => ins.run(id, it.producto||'', it.tipo_modelo||'', it.marca||'', it.certificacion?1:0, it.cantidad||1, it.fecha_entrega||''))
+    return { id, numero }
+  })()
   res.status(201).json({ id, numero })
 })
 
 router.put('/epp/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  if (!existeOr404('form_epp', req.params.id, res)) return
   const { empleado, dni, puesto, fecha, observaciones, items = [] } = req.body
   db.prepare(`UPDATE form_epp SET empleado=?,dni=?,puesto=?,fecha=?,observaciones=? WHERE id=?`)
     .run(empleado||'', dni||'', puesto||'', fecha||hoy(), observaciones||'', req.params.id)
@@ -424,17 +466,21 @@ router.get('/packing/:id', (req, res) => {
 router.post('/packing', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { hoja_ruta_id, cliente, obra_oc, ubicacion, preparo, revisado, pallet, bulto, lista_nro, fecha, observaciones, items = [] } = req.body
-  const numero = nextId('form_packing', 'PL')
-  const r = db.prepare(`INSERT INTO form_packing (numero,hoja_ruta_id,cliente,obra_oc,ubicacion,preparo,revisado,pallet,bulto,lista_nro,fecha,observaciones) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(numero, hoja_ruta_id||null, cliente||'', obra_oc||'', ubicacion||'', preparo||'', revisado||'', pallet||'', bulto||'', lista_nro||'', fecha||hoy(), observaciones||'')
-  const id = r.lastInsertRowid
-  const ins = db.prepare(`INSERT INTO form_packing_item (packing_id,item,descripcion,codigo,cantidad) VALUES (?,?,?,?,?)`)
-  items.forEach((it, i) => ins.run(id, i+1, it.descripcion||'', it.codigo||'', it.cantidad||''))
+  const { id, numero } = db.transaction(() => {
+    const numero = nextId('form_packing', 'PL')
+    const r = db.prepare(`INSERT INTO form_packing (numero,hoja_ruta_id,cliente,obra_oc,ubicacion,preparo,revisado,pallet,bulto,lista_nro,fecha,observaciones) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(numero, hoja_ruta_id||null, cliente||'', obra_oc||'', ubicacion||'', preparo||'', revisado||'', pallet||'', bulto||'', lista_nro||'', fecha||hoy(), observaciones||'')
+    const id = r.lastInsertRowid
+    const ins = db.prepare(`INSERT INTO form_packing_item (packing_id,item,descripcion,codigo,cantidad) VALUES (?,?,?,?,?)`)
+    items.forEach((it, i) => ins.run(id, i+1, it.descripcion||'', it.codigo||'', it.cantidad||''))
+    return { id, numero }
+  })()
   res.status(201).json({ id, numero })
 })
 
 router.put('/packing/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  if (!existeOr404('form_packing', req.params.id, res)) return
   const { hoja_ruta_id, cliente, obra_oc, ubicacion, preparo, revisado, pallet, bulto, lista_nro, fecha, observaciones, items = [] } = req.body
   db.prepare(`UPDATE form_packing SET hoja_ruta_id=?,cliente=?,obra_oc=?,ubicacion=?,preparo=?,revisado=?,pallet=?,bulto=?,lista_nro=?,fecha=?,observaciones=? WHERE id=?`)
     .run(hoja_ruta_id||null, cliente||'', obra_oc||'', ubicacion||'', preparo||'', revisado||'', pallet||'', bulto||'', lista_nro||'', fecha||hoy(), observaciones||'', req.params.id)

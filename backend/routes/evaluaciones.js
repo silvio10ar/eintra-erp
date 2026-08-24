@@ -3,8 +3,8 @@ const { db } = require('../db/database');
 const { verificarToken, puede } = require('../middleware/auth');
 
 router.use(verificarToken);
-router.use(puede.leer('compras'));
-const puedeE = req => req.usuario?.rol === 'admin' || !!req.permisos?.compras?.escribir;
+router.use(puede.leer('calidad'));
+const puedeE = req => req.usuario?.rol === 'admin' || !!req.permisos?.calidad?.escribir;
 
 // Criterios por tipo
 const CRITERIOS = {

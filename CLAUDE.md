@@ -25,3 +25,16 @@ quedara claro cuál era el estado real. Cero ambigüedad: el servidor manda siem
 - **Datos**: se aplican con un script `.sql` vía `scp` + `ssh` contra la base del servidor,
   preferentemente idempotente (usar `WHERE NOT EXISTS`, `AND campo=''`, etc.) para poder
   reintentar sin duplicar ni pisar datos si algo falla a mitad de camino.
+
+## Datos confiables: solo a partir del 01/07/2026
+
+Los datos anteriores al **01/07/2026** (OC, facturas, y en general el resto de los registros)
+fueron importados desde distintas planillas viejas al migrar al sistema — son **solo informativos**,
+no confiables para comparar, cruzar o validar contra otras fuentes.
+
+**Regla:** cualquier comparación, reconciliación o reporte de consistencia (ej.: facturas vs. planilla
+del estudio contable, Control OC, seguimientos, cruces de totales) debe filtrar por
+`fecha >= '2026-07-01'`. Los registros anteriores a esa fecha se pueden seguir mostrando en listados
+normales (no hay que ocultarlos), pero no hay que usarlos como base para detectar diferencias ni
+para armar alertas de inconsistencia — señalar como "faltante" o "distinto" algo de antes de esa
+fecha va a dar falsos positivos, porque el dato de origen (la planilla vieja) no es confiable.

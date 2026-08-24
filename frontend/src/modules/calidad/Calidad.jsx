@@ -10,6 +10,8 @@ import FormEPP          from './FormEPP'
 import FormPackingList  from './FormPackingList'
 import FormChapaID      from './FormChapaID'
 import FormDocumentos   from './FormDocumentos'
+import FormObjetivos    from './FormObjetivos'
+import Form11           from './Form11'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -47,6 +49,14 @@ export default function Calidad() {
   const [subForm, setSubForm] = useState('form21')
   const [resumen, setRes] = useState({ hrEnProceso: 0, hrTerminado: 0, hrDespachado: 0, ncAbiertas: 0, ncEnProceso: 0, inspecciones: 0 })
   const [proyectos, setProy] = useState([])
+  const [provsList, setProvsList] = useState([])
+
+  // Proveedores para la pestaña de Evaluación (Form 11) — se cargan al entrar
+  useEffect(() => {
+    if (tab === 'form11') {
+      api.get('/compras/proveedores').then(r => setProvsList(r.data)).catch(e => console.error(e))
+    }
+  }, [tab])
   const [hojasList, setHojasList] = useState([])   // para combos en modales
 
   // ── Hojas de Ruta ──────────────────────────────────────────────────────────
@@ -78,13 +88,13 @@ export default function Calidad() {
   const [errI, setErrI]     = useState('')
 
   const cargarResumen = useCallback(() => {
-    api.get('/calidad/resumen').then(r => setRes(r.data)).catch(() => {})
+    api.get('/calidad/resumen').then(r => setRes(r.data)).catch(e => console.error(e))
   }, [])
 
   useEffect(() => {
     cargarResumen()
-    api.get('/calidad/proyectos-activos').then(r => setProy(r.data)).catch(() => {})
-    api.get('/calidad/hojas-ruta').then(r => setHojasList(r.data)).catch(() => {})
+    api.get('/calidad/proyectos-activos').then(r => setProy(r.data)).catch(e => console.error(e))
+    api.get('/calidad/hojas-ruta').then(r => setHojasList(r.data)).catch(e => console.error(e))
   }, [cargarResumen])
 
   // ── Carga Hojas ────────────────────────────────────────────────────────────
@@ -279,6 +289,8 @@ export default function Calidad() {
               { key: 'inspecciones',      icon: 'clipboard2-check',   label: 'Inspecciones'      },
               { key: 'formularios',       icon: 'journal-text',        label: 'Formularios'       },
               { key: 'documentos',        icon: 'file-earmark-lock2',  label: 'Documentos'        },
+              { key: 'objetivos',         icon: 'bullseye',            label: 'Objetivos'         },
+              { key: 'form11',            icon: 'building-check',      label: 'Evaluación Proveedores' },
             ].map(t => (
               <li key={t.key} className="nav-item">
                 <button className={`nav-link${tab === t.key ? ' active' : ''}`} onClick={() => setTab(t.key)}>
@@ -571,6 +583,20 @@ export default function Calidad() {
           {tab === 'documentos' && (
             <div className="p-3">
               <FormDocumentos canWrite={canWrite} />
+            </div>
+          )}
+
+          {/* ════ OBJETIVOS DE CALIDAD ════════════════════════════════════════ */}
+          {tab === 'objetivos' && (
+            <div className="p-3">
+              <FormObjetivos canWrite={canWrite} />
+            </div>
+          )}
+
+          {/* ════ EVALUACIÓN DE PROVEEDORES (Form 11) ═════════════════════════ */}
+          {tab === 'form11' && (
+            <div className="p-3">
+              <Form11 canWrite={canWrite} proveedores={provsList} />
             </div>
           )}
 

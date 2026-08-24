@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import api from '../../api/client'
+import { formatCuit } from '../../utils/cuit'
 
 const fmt2 = n => n != null
   ? new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -122,7 +123,7 @@ export default function ImprimirPresupuesto() {
         <div className="cli-block">
           <div className="cli-left">
             <div><strong>Cliente:</strong> {ppto.cli_nombre}</div>
-            {ppto.cli_cuit      && <div><strong>CUIT:</strong> {ppto.cli_cuit}</div>}
+            {ppto.cli_cuit      && <div><strong>CUIT:</strong> {formatCuit(ppto.cli_cuit)}</div>}
             {ppto.cli_contacto  && <div><strong>Atención:</strong> {ppto.cli_contacto}{ppto.cli_telefono ? ` — Tel: ${ppto.cli_telefono}` : ''}</div>}
             {ppto.cli_email     && <div><strong>Email:</strong> {ppto.cli_email}</div>}
             {(ppto.cli_direccion || ppto.cli_localidad) && (

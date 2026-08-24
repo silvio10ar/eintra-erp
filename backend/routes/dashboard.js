@@ -1,14 +1,14 @@
 const express = require('express');
 const { db }  = require('../db/database');
 const { verificarToken } = require('../middleware/auth');
+const { hoyArgentina, fechaArgentinaHace, primerDiaMesArgentina } = require('../helpers/fecha');
 
 const router = express.Router();
 
 router.get('/resumen', verificarToken, (req, res) => {
-  const hoy    = new Date().toISOString().slice(0,10);
-  const en30d  = new Date(Date.now()+30*864e5).toISOString().slice(0,10);
-  const mesD   = new Date(); mesD.setDate(1);
-  const desde  = mesD.toISOString().slice(0,10);
+  const hoy    = hoyArgentina();
+  const en30d  = fechaArgentinaHace(-30);
+  const desde  = primerDiaMesArgentina();
 
   // ── Stock ──────────────────────────────────────────────────────────────────
   const alertasStock = db.prepare(
@@ -35,19 +35,31 @@ router.get('/resumen', verificarToken, (req, res) => {
   const otUrgentes  = db.prepare("SELECT COUNT(*) as c FROM ordenes_trabajo WHERE prioridad='Urgente' AND estado NOT IN ('Completada','Cancelada')").get().c;
   const otVencidas  = db.prepare("SELECT COUNT(*) as c FROM ordenes_trabajo WHERE fecha_fin_est!='' AND fecha_fin_est<? AND estado NOT IN ('Completada','Cancelada')").get(hoy).c;
 
-  // ── Finanzas ───────────────────────────────────────────────────────────────
-  const finRow = db.prepare(`
-    SELECT
-      COALESCE(SUM(CASE WHEN tipo='Ingreso' AND estado='Confirmado' THEN monto ELSE 0 END),0) as ingresos_mes,
-      COALESCE(SUM(CASE WHEN tipo='Egreso'  AND estado='Confirmado' THEN monto ELSE 0 END),0) as egresos_mes
-    FROM movimientos_caja WHERE fecha>=? AND moneda='ARS'
-  `).get(desde);
+  // ── Finanzas (solo si tiene permiso de lectura del módulo) ──────────────────
+  let finanzasResumen = null;
+  if (req.usuario.rol === 'admin' || req.permisos?.finanzas?.leer) {
+    const finRow = db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN tipo='Ingreso' AND estado='Confirmado' THEN monto ELSE 0 END),0) as ingresos_mes,
+        COALESCE(SUM(CASE WHEN tipo='Egreso'  AND estado='Confirmado' THEN monto ELSE 0 END),0) as egresos_mes
+      FROM movimientos_caja WHERE fecha>=? AND moneda='ARS'
+    `).get(desde);
 
-  const cuentas = db.prepare("SELECT * FROM cuentas_financieras WHERE activa=1 AND moneda='ARS'").all();
-  const saldoTotal = cuentas.reduce((s,c) => {
-    const m = db.prepare("SELECT COALESCE(SUM(CASE WHEN tipo='Ingreso' AND estado='Confirmado' THEN monto ELSE 0 END),0)-COALESCE(SUM(CASE WHEN tipo='Egreso' AND estado='Confirmado' THEN monto ELSE 0 END),0) as delta FROM movimientos_caja WHERE cuenta_id=?").get(c.id);
-    return s + c.saldo_inicial + m.delta;
-  }, 0);
+    const cuentas = db.prepare("SELECT * FROM cuentas_financieras WHERE activa=1 AND moneda='ARS'").all();
+    // Una sola consulta agregada para todas las cuentas, en vez de una por
+    // cuenta (N+1) — esta pantalla se abre en cada login.
+    const deltasPorCuenta = Object.fromEntries(
+      db.prepare(`
+        SELECT cuenta_id,
+          COALESCE(SUM(CASE WHEN tipo='Ingreso' AND estado='Confirmado' THEN monto ELSE 0 END),0)
+          - COALESCE(SUM(CASE WHEN tipo='Egreso' AND estado='Confirmado' THEN monto ELSE 0 END),0) as delta
+        FROM movimientos_caja GROUP BY cuenta_id
+      `).all().map(m => [m.cuenta_id, m.delta])
+    );
+    const saldoTotal = cuentas.reduce((s,c) => s + c.saldo_inicial + (deltasPorCuenta[c.id] || 0), 0);
+
+    finanzasResumen = { ingresos_mes: finRow.ingresos_mes, egresos_mes: finRow.egresos_mes, saldo_total: saldoTotal };
+  }
 
   // ── Actividad reciente ─────────────────────────────────────────────────────
   const ots_urgentes = db.prepare(
@@ -65,10 +77,10 @@ router.get('/resumen', verificarToken, (req, res) => {
      ORDER BY CASE WHEN fecha_entrega_est!='' THEN 0 ELSE 1 END, fecha_entrega_est ASC, fecha ASC LIMIT 6`
   ).all(hoy);
 
-  // ── Fichadas del día ───────────────────────────────────────────────────────
+  // ── Fichadas del día (solo si tiene permiso de lectura de RRHH) ─────────────
   let fichadas_hoy = [];
   let sin_fichar_hoy = [];
-  try {
+  if (req.usuario.rol === 'admin' || req.permisos?.rrhh?.leer) try {
     fichadas_hoy = db.prepare(`
       SELECT
         COALESCE(e.nombre, a.empleado_nombre, a.empleado_ext) AS nombre,
@@ -101,7 +113,7 @@ router.get('/resumen', verificarToken, (req, res) => {
     ventas:    { borrador: pptoBorrador, aprobado: pptoAprobado, mes: pptoMes },
     proyectos: { activos: proyActivos, en_espera: proyEnEspera },
     produccion:{ abiertas: otAbiertas, urgentes: otUrgentes, vencidas: otVencidas },
-    finanzas:  { ingresos_mes: finRow.ingresos_mes, egresos_mes: finRow.egresos_mes, saldo_total: saldoTotal },
+    finanzas:  finanzasResumen,
     alertas:   { ots_urgentes, stock_bajo, oc_pendientes },
     fichadas_hoy,
     sin_fichar_hoy,

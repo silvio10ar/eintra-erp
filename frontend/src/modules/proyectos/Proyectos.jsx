@@ -6,6 +6,8 @@ import EmpleadoSelect from '../../components/EmpleadoSelect'
 import DateInput from '../../components/DateInput'
 import PlanGantt from './PlanGantt'
 import PlantillaGantt from './PlantillaGantt'
+import PlanGeneral from './PlanGeneral'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const ESTADOS_P = [
   { v: 'Activo',     c: 'success' },
@@ -133,6 +135,7 @@ export default function Proyectos() {
 
   /* Editor plantilla global */
   const [showPlantilla, setShowPlantilla] = useState(false)
+  const [showPlanGeneral, setShowPlanGeneral] = useState(false)
 
   /* Modal normalizar responsables */
   const [modalNorm, setModalNorm] = useState(false)
@@ -367,6 +370,9 @@ export default function Proyectos() {
             <i className="bi bi-table"/>
           </button>
         </div>
+        <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => setShowPlanGeneral(true)}>
+          <i className="bi bi-bar-chart-steps me-1"/>Plan General
+        </button>
         <div className="ms-auto d-flex gap-2">
           {canWrite && (
             <button className="btn btn-sm btn-primary"
@@ -389,8 +395,20 @@ export default function Proyectos() {
         </div>
       )}
 
+      {/* ── Modo plan general (pantalla completa) ───────────────────────── */}
+      {showPlanGeneral && (
+        <div style={{ flex:1, minHeight:0, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+          <div className="d-flex align-items-center mb-3 border-bottom pb-2">
+            <button className="btn btn-sm btn-outline-secondary" onClick={() => setShowPlanGeneral(false)}>
+              <i className="bi bi-arrow-left me-1"/>Volver a proyectos
+            </button>
+          </div>
+          <PlanGeneral />
+        </div>
+      )}
+
       {/* ── Modo proyectos: lista + detalle ─────────────────────────────── */}
-      {!showPlantilla && (
+      {!showPlantilla && !showPlanGeneral && (
       <div style={{ display:'flex', gap:'1rem', flex:1, minHeight:0 }}>
 
       {/* Lista */}
@@ -544,11 +562,6 @@ export default function Proyectos() {
               <button className={`nav-link py-1 ${tab==='materiales'?'active':''}`} onClick={()=>setTab('materiales')}>
                 <i className="bi bi-boxes me-1"/>Materiales
                 {materiales.length > 0 && <span className="badge bg-secondary ms-1" style={{fontSize:'0.65rem'}}>{materiales.length}</span>}
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link py-1 ${tab==='costos'?'active':''}`} onClick={()=>setTab('costos')}>
-                <i className="bi bi-cash me-1"/>Costos
               </button>
             </li>
             <li className="nav-item">
@@ -774,38 +787,6 @@ export default function Proyectos() {
                       </div>
                   }
                 </>
-              )}
-
-              {/* ── Costos ── */}
-              {tab === 'costos' && (
-                !detalle ? (
-                  <div className="text-center py-3"><span className="spinner-border spinner-border-sm"/></div>
-                ) : detalle.costos?.length === 0 ? (
-                  <div className="text-muted text-center py-4">Sin costos registrados</div>
-                ) : (
-                  <>
-                    <table className="table table-sm table-hover" style={{fontSize:'0.8rem'}}>
-                      <thead className="table-light">
-                        <tr><th>Tipo</th><th>Descripción</th><th>Cant.</th><th>P.Unit</th><th>Total</th><th>Fecha</th></tr>
-                      </thead>
-                      <tbody>
-                        {detalle.costos.map(c=>(
-                          <tr key={c.id}>
-                            <td><span className="badge bg-secondary">{c.tipo}</span></td>
-                            <td>{c.descripcion}</td>
-                            <td>{c.cantidad}</td>
-                            <td>{fmtN(c.precio_unit)}</td>
-                            <td className="fw-semibold">{fmtN(c.total)}</td>
-                            <td>{fmtF(c.fecha)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <div className="text-end small fw-semibold">
-                      Total: {fmtN(detalle.costo_total)}
-                    </div>
-                  </>
-                )
               )}
 
               {/* ── Entrega de documentación (Form 56) ── */}
@@ -1272,7 +1253,7 @@ export default function Proyectos() {
                   </div>
                   <div className="col-md-4">
                     <label className="form-label small fw-medium">Cantidad prevista *</label>
-                    <input type="number" className="form-control form-control-sm" required min="0" step="any"
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" required min="0" step="any"
                       value={formMat.cantidad}
                       onChange={e => setFormMat(p => ({...p, cantidad: e.target.value}))}/>
                   </div>

@@ -1,7 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
+import { getUser, setAuth } from '../../store/authStore'
+import { MODULOS_MENU } from '../../components/Layout'
 
 const FORM_NUEVO = { username:'', nombre:'', email:'', password:'', rol:'solo_lectura', rrhh_empleado_id:'' }
+
+// Módulos con información sensible de la empresa (financiera, de personal, o de gestión
+// reservada a gerencia) — se marcan aparte para no otorgarlos por error a un empleado.
+const MODULOS_SENSIBLES = new Set(['finanzas', 'rrhh', 'administracion', 'compras_informes'])
+const esSensible = m => MODULOS_SENSIBLES.has(m)
 
 export default function Usuarios() {
   const [usuarios, setUsuarios]   = useState([])
@@ -41,6 +48,35 @@ export default function Usuarios() {
   const [puestoForm, setPuestoForm]       = useState(null) // null=cerrado, { id, nombre, modulos }
   const [savingPuesto, setSavingPuesto]   = useState(false)
   const [errPuesto, setErrPuesto]         = useState('')
+
+  // Modal "Módulos por gerencia" (a qué gerencia pertenece cada módulo, para
+  // agrupar el menú lateral — ver GET /auth/gerencias-modulos)
+  const [showModuloGerencia, setShowModuloGerencia] = useState(false)
+  const [gerencias, setGerencias]               = useState([])
+  const [overridesGerencia, setOverridesGerencia] = useState({})
+  const [guardandoGerenciaMod, setGuardandoGerenciaMod] = useState('') // modulo en curso de guardado
+
+  const cargarGerencias = () => api.get('/auth/gerencias').then(r => {
+    setGerencias(r.data.gerencias)
+    setOverridesGerencia(r.data.overrides)
+  })
+
+  const cambiarGerenciaModulo = async (modulo, puestoId) => {
+    setGuardandoGerenciaMod(modulo)
+    try {
+      await api.put(`/auth/modulo-gerencia/${modulo}`, { puesto_id: puestoId || null })
+      setOverridesGerencia(prev => {
+        const next = { ...prev }
+        if (puestoId) next[modulo] = Number(puestoId)
+        else delete next[modulo]
+        return next
+      })
+    } catch {
+      alert('No se pudo guardar')
+    } finally {
+      setGuardandoGerenciaMod('')
+    }
+  }
 
   // Modal historial de conexiones
   const [userHistorial, setUserHistorial]     = useState(null)
@@ -86,7 +122,11 @@ export default function Usuarios() {
     e.preventDefault()
     setSavingPass(true); setErrPass('')
     try {
-      await api.put(`/auth/usuarios/${userPass.id}/password`, { password: nuevaPass })
+      const { data } = await api.put(`/auth/usuarios/${userPass.id}/password`, { password: nuevaPass })
+      // Si el admin se cambió la contraseña a sí mismo, el backend devuelve un
+      // token nuevo (el viejo puede haber quedado marcado como "vencida") —
+      // hay que reemplazar la sesión guardada, si no se cae en el próximo request.
+      if (data.token && getUser()?.id === userPass.id) setAuth(data.token, data.usuario)
       setUserPass(null); setNuevaPass('')
     } catch (err) {
       setErrPass(err.response?.data?.error ?? 'Error al cambiar contraseña')
@@ -141,6 +181,19 @@ export default function Usuarios() {
       await api.put(`/auth/usuarios/${u.id}`, { activo: !u.activo })
       setUsuarios(prev => prev.map(x => x.id === u.id ? { ...x, activo: x.activo ? 0 : 1 } : x))
     } catch { alert('Error al cambiar estado') }
+  }
+
+  // No le fija ninguna contraseña — solo lo marca para que la elija de nuevo
+  // (obligatorio) apenas vuelva a loguearse. Si ya tiene una sesión abierta,
+  // sigue funcionando hasta que la cierre; recién se corta en el próximo login.
+  const handleForzarCambio = async u => {
+    if (!window.confirm(`¿Pedirle a "${u.username}" que cambie su contraseña en su próximo inicio de sesión?`)) return
+    try {
+      await api.patch(`/auth/usuarios/${u.id}/forzar-cambio-password`)
+      alert(`Listo — a "${u.username}" le va a pedir una contraseña nueva la próxima vez que inicie sesión.`)
+    } catch (err) {
+      alert(err.response?.data?.error ?? 'Error al pedir el cambio de contraseña')
+    }
   }
 
   /* ── Abrir modal de permisos ───────────────────────────────────── */
@@ -368,6 +421,11 @@ export default function Usuarios() {
                             </button>
                           </li>
                           <li>
+                            <button className="dropdown-item" onClick={() => handleForzarCambio(u)}>
+                              <i className="bi bi-shield-exclamation me-2" />Pedir cambio en el próximo login
+                            </button>
+                          </li>
+                          <li>
                             <button className="dropdown-item" onClick={() => handleActivo(u)}>
                               <i className={`bi bi-${u.activo ? 'person-dash' : 'person-check'} me-2`} />
                               {u.activo ? 'Desactivar' : 'Activar'}
@@ -558,7 +616,11 @@ export default function Usuarios() {
               <div className="modal-body">
                 {!puestoForm ? (
                   <>
-                    <div className="d-flex justify-content-end mb-2">
+                    <div className="d-flex justify-content-end gap-2 mb-2">
+                      <button className="btn btn-outline-secondary btn-sm"
+                        onClick={() => { cargarGerencias(); setShowModuloGerencia(true) }}>
+                        <i className="bi bi-diagram-3 me-1" />Módulos por gerencia
+                      </button>
                       <button className="btn btn-primary btn-sm" onClick={nuevoPuestoForm}>
                         <i className="bi bi-plus-lg me-1" />Nuevo puesto
                       </button>
@@ -695,6 +757,62 @@ export default function Usuarios() {
         </div>
       )}
 
+      {/* ── Modal: Módulos por gerencia ────────────────────────────── */}
+      {showModuloGerencia && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,.4)' }}>
+          <div className="modal-dialog modal-lg modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <i className="bi bi-diagram-3 me-2 text-primary" />
+                  Módulos por gerencia
+                </h5>
+                <button type="button" className="btn-close" onClick={() => setShowModuloGerencia(false)} />
+              </div>
+              <div className="modal-body p-0">
+                <p className="text-muted small px-3 pt-3 mb-2">
+                  A qué gerencia pertenece cada módulo, para agrupar el menú lateral de todos los usuarios.
+                  "Automático" lo deduce de qué puesto tiene el módulo asignado en el organigrama.
+                </p>
+                {gerencias.length === 0 ? (
+                  <p className="text-muted small px-3 pb-3 fst-italic">
+                    Todavía no hay un organigrama armado (puestos con "Reporta a") — armalo primero en "Nuevo puesto".
+                  </p>
+                ) : (
+                  <table className="table table-sm align-middle mb-0">
+                    <thead className="table-light">
+                      <tr>
+                        <th className="ps-3">Módulo</th>
+                        <th style={{ width: 260 }}>Gerencia</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {modulos.filter(({ id: m }) => MODULOS_MENU.has(m)).map(({ id: m, label }) => (
+                        <tr key={m}>
+                          <td className="ps-3">{label}</td>
+                          <td>
+                            <select className="form-select form-select-sm"
+                              value={overridesGerencia[m] || ''}
+                              disabled={guardandoGerenciaMod === m}
+                              onChange={e => cambiarGerenciaModulo(m, e.target.value)}>
+                              <option value="">— Automático —</option>
+                              {gerencias.map(g => <option key={g.id} value={g.id}>{g.area}</option>)}
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary btn-sm" onClick={() => setShowModuloGerencia(false)}>Cerrar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Modal: Historial de conexiones ─────────────────────────── */}
       {userHistorial && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,.4)' }}>
@@ -720,6 +838,7 @@ export default function Usuarios() {
                       <tr>
                         <th className="ps-3">Fecha y hora</th>
                         <th>IP</th>
+                        <th>Origen</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -727,6 +846,11 @@ export default function Usuarios() {
                         <tr key={h.id}>
                           <td className="ps-3">{formatFecha(h.fecha)}</td>
                           <td className="text-muted small">{h.ip || '—'}</td>
+                          <td className="small">
+                            {h.admin_nombre
+                              ? <span className="badge bg-warning-subtle text-warning-emphasis">Impersonado por {h.admin_nombre}</span>
+                              : <span className="text-muted">Login normal</span>}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -872,7 +996,7 @@ export default function Usuarios() {
                 {errPass && <div className="alert alert-danger py-2 small">{errPass}</div>}
                 <label className="form-label small fw-medium">Nueva contraseña *</label>
                 <input type="password" className="form-control" value={nuevaPass} required minLength={6}
-                  autoFocus onChange={e => setNuevaPass(e.target.value)} />
+                  autoFocus autoComplete="new-password" onChange={e => setNuevaPass(e.target.value)} />
                 <div className="form-text">Mínimo 6 caracteres</div>
               </div>
               <div className="modal-footer">

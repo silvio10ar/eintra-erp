@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
 const HDR0 = { hoja_ruta_id: '', anio: new Date().getFullYear(), equipo_tipo: '', codigo: '', cliente: '', proyecto: '', descripcion: '', fecha_fabricacion: '', observaciones: '' }
@@ -104,7 +105,7 @@ export default function FormChapaID({ hojasList = [], canWrite }) {
                   </div>
                   <div className="col-md-2">
                     <label className="form-label fw-semibold" style={{ fontSize: '0.8rem' }}>Año</label>
-                    <input type="number" className="form-control form-control-sm" value={form.anio} onChange={e => setForm(p => ({ ...p, anio: +e.target.value }))} />
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={form.anio} onChange={e => setForm(p => ({ ...p, anio: +e.target.value }))} />
                   </div>
                   <div className="col-md-6">
                     <label className="form-label fw-semibold" style={{ fontSize: '0.8rem' }}>Tipo de equipo</label>

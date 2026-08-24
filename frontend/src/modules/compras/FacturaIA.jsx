@@ -1,6 +1,8 @@
 import { useState, useRef } from 'react'
 import api from '../../api/client'
 import DateInput from '../../components/DateInput'
+import { formatCuit } from '../../utils/cuit'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const hoy   = () => new Date().toISOString().slice(0, 10)
 const fmtN  = n => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n ?? 0)
@@ -61,10 +63,11 @@ export default function FacturaIA({ tipo = 'compra', onClose, onGuardado }) {
         tipo_factura:   data.tipo_factura || 'A',
         fecha:          data.fecha || hoy(),
         emisor_nombre:  data.emisor_nombre || '',
-        emisor_cuit:    data.emisor_cuit || '',
+        emisor_cuit:    formatCuit(data.emisor_cuit || ''),
         receptor_nombre: data.receptor_nombre || '',
-        receptor_cuit:  data.receptor_cuit || '',
+        receptor_cuit:  formatCuit(data.receptor_cuit || ''),
         moneda:         data.moneda || 'PESOS',
+        tasa_cambio:    parseFloat(data.tasa_cambio) || 1,
         condicion_pago: data.condicion_pago || '',
         items,
         neto_gravado:   parseFloat(data.neto_gravado) || 0,
@@ -109,6 +112,7 @@ export default function FacturaIA({ tipo = 'compra', onClose, onGuardado }) {
           neto_gravado:    datos.neto_gravado,
           iva_21:          datos.iva_21,
           moneda:          datos.moneda,
+          tasa_cambio:     datos.tasa_cambio,
           condicion_pago:  datos.condicion_pago,
           observaciones:   datos.observaciones,
           crear_f49:       !tieneOC,
@@ -125,6 +129,7 @@ export default function FacturaIA({ tipo = 'compra', onClose, onGuardado }) {
           oc:             ocBusq.trim(),
           importe:        datos.total,
           moneda:         datos.moneda,
+          tasa_cambio:    datos.tasa_cambio,
           observaciones:  datos.observaciones,
         }
         const { data } = await api.post('/facturas/guardar-venta', payload)
@@ -224,6 +229,14 @@ export default function FacturaIA({ tipo = 'compra', onClose, onGuardado }) {
                         {MONEDAS.map(m => <option key={m}>{m}</option>)}
                       </select>
                     </div>
+                    {datos.moneda !== 'PESOS' && (
+                      <div className="col-md-2">
+                        <label className="form-label small fw-medium mb-1">Tasa de cambio</label>
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={datos.tasa_cambio}
+                          min="0" step="any"
+                          onChange={e => setDatos(d => ({ ...d, tasa_cambio: parseFloat(e.target.value) || 0 }))} />
+                      </div>
+                    )}
                     <div className="col-md-4">
                       <label className="form-label small fw-medium mb-1">Cond. Pago</label>
                       <input className="form-control form-control-sm" value={datos.condicion_pago}
@@ -240,7 +253,8 @@ export default function FacturaIA({ tipo = 'compra', onClose, onGuardado }) {
                     <div className="col-md-3">
                       <label className="form-label small fw-medium mb-1">CUIT emisor</label>
                       <input className="form-control form-control-sm" value={datos.emisor_cuit}
-                        onChange={e => setDatos(d => ({ ...d, emisor_cuit: e.target.value }))} />
+                        onChange={e => setDatos(d => ({ ...d, emisor_cuit: e.target.value }))}
+                        onBlur={e => setDatos(d => ({ ...d, emisor_cuit: formatCuit(e.target.value) }))} />
                     </div>
                     <div className="col-md-4">
                       <label className="form-label small fw-medium mb-1">
@@ -340,12 +354,12 @@ export default function FacturaIA({ tipo = 'compra', onClose, onGuardado }) {
                               onChange={e => setItem(idx, 'unidad', e.target.value)} />
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 text-end"
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 text-end"
                               value={it.cantidad} min="0" step="any"
                               onChange={e => setItem(idx, 'cantidad', e.target.value)} />
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 text-end"
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 text-end"
                               value={it.precio_unitario} min="0" step="any"
                               onChange={e => {
                                 const v = parseFloat(e.target.value) || 0
@@ -354,7 +368,7 @@ export default function FacturaIA({ tipo = 'compra', onClose, onGuardado }) {
                               }} />
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 text-end fw-semibold"
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 text-end fw-semibold"
                               value={it.precio_final} min="0" step="any"
                               onChange={e => setItem(idx, 'precio_final', parseFloat(e.target.value) || 0)} />
                           </td>
@@ -387,19 +401,19 @@ export default function FacturaIA({ tipo = 'compra', onClose, onGuardado }) {
                   <div className="row g-2 justify-content-end">
                     <div className="col-md-3">
                       <label className="form-label small fw-medium mb-1">Neto gravado</label>
-                      <input type="number" className="form-control form-control-sm text-end"
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm text-end"
                         value={datos.neto_gravado} min="0" step="any"
                         onChange={e => setDatos(d => ({ ...d, neto_gravado: parseFloat(e.target.value) || 0 }))} />
                     </div>
                     <div className="col-md-3">
                       <label className="form-label small fw-medium mb-1">IVA 21%</label>
-                      <input type="number" className="form-control form-control-sm text-end"
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm text-end"
                         value={datos.iva_21} min="0" step="any"
                         onChange={e => setDatos(d => ({ ...d, iva_21: parseFloat(e.target.value) || 0 }))} />
                     </div>
                     <div className="col-md-3">
                       <label className="form-label small fw-medium mb-1 fw-bold">TOTAL {datos.moneda}</label>
-                      <input type="number" className="form-control form-control-sm text-end fw-bold"
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm text-end fw-bold"
                         value={datos.total} min="0" step="any"
                         onChange={e => setDatos(d => ({ ...d, total: parseFloat(e.target.value) || 0 }))} />
                     </div>

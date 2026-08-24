@@ -13,7 +13,7 @@ const fmtImporte = (importe, moneda, tasa_cambio) => {
   const tc = parseFloat(tasa_cambio) || 1
   const sym = moneda === 'DÓLAR' ? 'USD ' : moneda === 'EURO' ? '€ ' : '$ '
   const str = sym + v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  if (moneda === 'PESO' || tc <= 1) return str
+  if (moneda === 'PESO' || moneda === 'PESOS' || !moneda || tc <= 1) return str
   const pesos = v * tc
   return (
     <span>
@@ -27,10 +27,11 @@ const fmtImporte = (importe, moneda, tasa_cambio) => {
 
 const fmtK = n => {
   const v = Math.abs(parseFloat(n) || 0)
-  if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B'
-  if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M'
-  if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K'
-  return v.toFixed(0)
+  const conDecimales = (num, dec) => num.toLocaleString('es-AR', { minimumFractionDigits: dec, maximumFractionDigits: dec })
+  if (v >= 1e9) return conDecimales(v / 1e9, 1) + 'B'
+  if (v >= 1e6) return conDecimales(v / 1e6, 1) + 'M'
+  if (v >= 1e3) return conDecimales(v / 1e3, 0) + 'K'
+  return conDecimales(v, 0)
 }
 
 const fmtF = s => {
@@ -191,7 +192,7 @@ function FacturasListCard({ titulo, icono, color, facturas, hoy }) {
     { key: 'hoy',      label: 'Vencen hoy',   color: 'danger' },
     { key: 'semana',   label: 'Esta semana',  color: 'warning' },
     { key: 'mes',      label: 'Próximas',     color: 'secondary' },
-    { key: 'sinFecha', label: 'Sin fecha',    color: 'secondary' },
+    { key: 'sinFecha', label: 'Sin vencimiento cargado', color: 'secondary' },
   ]
   const porGrupo = {}
   facturas.forEach(f => {
@@ -234,7 +235,7 @@ function FacturasListCard({ titulo, icono, color, facturas, hoy }) {
                       <div className="text-end flex-shrink-0">
                         <div className="fw-semibold">{fmtM(f.saldo_pesos)}</div>
                         <div className={`text-${col}`} style={{ fontSize: '0.7rem' }}>
-                          {dias === null ? 'Sin fecha'
+                          {dias === null ? (f.fecha ? `Emitida ${fmtF(f.fecha)}` : 'Sin fecha')
                             : dias < 0  ? `Hace ${-dias}d`
                             : dias === 0 ? 'Hoy'
                             : `${dias}d · ${fmtF(f.fecha_vencimiento)}`}
@@ -297,9 +298,73 @@ function BankCard({ sb }) {
   )
 }
 
+function PorCobrarCard({ ventasPendientes }) {
+  const echeq = ventasPendientes.echeq_pendiente || 0
+  const total = (ventasPendientes.total_pesos || 0) + echeq
+  return (
+    <div className="card border-0 shadow-sm h-100" style={{ borderLeft: '4px solid #198754' }}>
+      <div className="card-body py-3 px-3">
+        <div className="d-flex justify-content-between align-items-start">
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <p className="small text-muted mb-1 fw-semibold" style={{ letterSpacing: '0.04em', fontSize: '0.72rem' }}>
+              POR COBRAR (VENTAS)
+            </p>
+            {echeq > 0 ? (
+              <>
+                <div style={{ fontSize: '0.78rem', lineHeight: 1.7 }}>
+                  <div className="text-muted">Facturas:&nbsp;<span className="fw-semibold text-dark">{fmtM(ventasPendientes.total_pesos, 'PESO')}</span></div>
+                  <div style={{ color: '#fd7e14' }}>E-CHEQs s/acreditar:&nbsp;<span className="fw-semibold">+{fmtM(echeq, 'PESO')}</span></div>
+                </div>
+                <p className="fw-bold mb-0 mt-1" style={{ fontSize: '1.25rem', color: '#198754', lineHeight: 1.1 }}>
+                  $ {fmtK(total)}
+                </p>
+              </>
+            ) : (
+              <p className="fw-bold mb-0" style={{ fontSize: '1.35rem', color: '#198754', lineHeight: 1.1 }}>
+                $ {fmtK(total)}
+              </p>
+            )}
+            <p className="small text-muted mb-0 mt-1" style={{ fontSize: '0.73rem' }}>
+              {ventasPendientes.count} factura{ventasPendientes.count !== 1 ? 's' : ''} pendiente{ventasPendientes.count !== 1 ? 's' : ''}
+            </p>
+          </div>
+          <div className="rounded-circle d-flex align-items-center justify-content-center"
+            style={{ width: 38, height: 38, background: '#19875418', flexShrink: 0 }}>
+            <i className="bi bi-shop" style={{ color: '#198754', fontSize: '1rem' }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ServiciosMesCard({ pagado, pendiente }) {
+  return (
+    <div className="card border-0 shadow-sm h-100" style={{ borderLeft: '4px solid #6f42c1' }}>
+      <div className="card-body py-3 px-3">
+        <div className="d-flex justify-content-between align-items-start">
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <p className="small text-muted mb-1 fw-semibold" style={{ letterSpacing: '0.04em', fontSize: '0.72rem' }}>
+              SERVICIOS DEL MES
+            </p>
+            <div style={{ fontSize: '0.78rem', lineHeight: 1.7 }}>
+              <div className="text-success">Pagado:&nbsp;<span className="fw-semibold">{fmtM(pagado, 'PESO')}</span></div>
+              <div className={pendiente > 0 ? 'text-danger' : 'text-muted'}>Debe:&nbsp;<span className="fw-semibold">{fmtM(pendiente, 'PESO')}</span></div>
+            </div>
+          </div>
+          <div className="rounded-circle d-flex align-items-center justify-content-center"
+            style={{ width: 38, height: 38, background: '#6f42c118', flexShrink: 0 }}>
+            <i className="bi bi-lightning-charge" style={{ color: '#6f42c1', fontSize: '1rem' }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DailyView({ data, onConfirmar }) {
   if (!data) return null
-  const { saldosBancarios, serviciosPendientes, comprasPendientes, ventasPendientes, facturasPorPagar = [], facturasPorCobrar = [], vencimientosProximos, echeqsEmitidos, ivaData, tipoCambioBNA } = data
+  const { saldosBancarios, serviciosPendientes, serviciosMes, comprasPendientes, ventasPendientes, facturasPorPagar = [], facturasPorCobrar = [], vencimientosProximos, echeqsEmitidos, echeqsRecibidos, ivaData, tipoCambioBNA } = data
   const hoy = new Date().toISOString().slice(0, 10)
 
   const vencidas = serviciosPendientes.filter(s => s.alerta === 'vencida')
@@ -344,13 +409,13 @@ function DailyView({ data, onConfirmar }) {
           />
         </div>
         <div className="col-6 col-lg-3">
-          <KpiCard
-            label="Por cobrar (Ventas)"
-            value={`$ ${fmtK(ventasPendientes.total_pesos)}`}
-            sub={`${ventasPendientes.count} factura${ventasPendientes.count !== 1 ? 's' : ''} pendiente${ventasPendientes.count !== 1 ? 's' : ''}`}
-            color="#198754" icon="shop"
-          />
+          <PorCobrarCard ventasPendientes={ventasPendientes} />
         </div>
+        {serviciosMes && (
+          <div className="col-6 col-lg-3">
+            <ServiciosMesCard pagado={serviciosMes.pagado} pendiente={serviciosMes.pendiente} />
+          </div>
+        )}
       </div>
 
       {/* ── E-CHEQs emitidos ── */}
@@ -392,6 +457,58 @@ function DailyView({ data, onConfirmar }) {
                         onClick={async () => {
                           if (!confirm(`¿Confirmar que el E-CHEQ de ${e.proveedor_nombre} fue debitado del banco?`)) return
                           await api.patch(`/finanzas/facturas-compra/${e.factura_id}/pagos/${e.id}/confirmar`)
+                          onConfirmar?.()
+                        }}>
+                        <i className="bi bi-check-lg me-1" />Confirmar
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── E-CHEQs recibidos ── */}
+      {echeqsRecibidos && echeqsRecibidos.length > 0 && (
+        <div className="card border-0 shadow-sm mb-4" style={{ borderLeft: '4px solid #198754' }}>
+          <div className="card-body">
+            <p className="fw-semibold mb-3" style={{ fontSize: '0.85rem' }}>
+              <i className="bi bi-file-earmark-check me-2" style={{ color: '#198754' }} />E-CHEQs recibidos pendientes de acreditación
+              <span className="badge ms-2 text-dark" style={{ fontSize: '0.65rem', background: '#198754' }}>{echeqsRecibidos.length}</span>
+            </p>
+            <div style={{ fontSize: '0.78rem' }}>
+              {echeqsRecibidos.map(e => {
+                const diasRest = e.fecha_acreditacion
+                  ? Math.ceil((new Date(e.fecha_acreditacion + 'T00:00:00') - new Date()) / 86400000)
+                  : null
+                const colorD = diasRest === null ? 'secondary' : diasRest <= 0 ? 'danger' : diasRest <= 3 ? 'warning' : 'secondary'
+                return (
+                  <div key={e.id} className="d-flex justify-content-between align-items-center py-2 border-bottom gap-2">
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <span className="fw-semibold text-truncate d-inline-block" style={{ maxWidth: 180 }}>{e.cliente_nombre}</span>
+                      <div className="text-muted">{e.factura_numero}</div>
+                    </div>
+                    <div className="text-center flex-shrink-0" style={{ fontSize: '0.72rem' }}>
+                      <span className="badge bg-light text-dark border">{e.entidad || '—'}</span>
+                    </div>
+                    <div className="text-end flex-shrink-0">
+                      <div className="fw-semibold text-success">+{fmtM(e.importe, e.moneda)}</div>
+                      <span className={`text-${colorD}`} style={{ fontSize: '0.7rem' }}>
+                        {diasRest === null
+                          ? 'Sin fecha acreditación'
+                          : diasRest <= 0
+                            ? 'Acredita hoy / vencido'
+                            : `${diasRest}d · ${fmtF(e.fecha_acreditacion)}`}
+                      </span>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <button className="btn btn-sm btn-success py-0 px-2" style={{ fontSize: '0.72rem' }}
+                        title="Confirmar acreditación bancaria"
+                        onClick={async () => {
+                          if (!confirm(`¿Confirmar que el E-CHEQ de ${e.cliente_nombre} fue acreditado en el banco?`)) return
+                          await api.patch(`/finanzas/facturas-venta/${e.factura_id}/pagos/${e.id}/confirmar`)
                           onConfirmar?.()
                         }}>
                         <i className="bi bi-check-lg me-1" />Confirmar

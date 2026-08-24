@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 import DateInput from '../../components/DateInput'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const CRITERIOS_SEL  = ['Calidad final', 'Precio', 'Experiencia laboral', 'Experiencia en mercado']
 const CRITERIOS_EVAL = ['Cumplimiento de plazos', 'Capacidad de respuesta', 'Flexibilidad ante cambios', 'Calidad final']
@@ -92,7 +93,7 @@ function FormEvaluacion({ proveedor, onClose, onGuardado, evalEdit }) {
               )}
               <div className="col-md-2">
                 <label className="form-label small fw-medium">Año *</label>
-                <input type="number" className="form-control form-control-sm" value={form.anio} min={2020} max={2099} required
+                <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={form.anio} min={2020} max={2099} required
                   onChange={e => setForm(p => ({ ...p, anio: parseInt(e.target.value) || anioActual }))}/>
               </div>
               <div className="col-md-3">

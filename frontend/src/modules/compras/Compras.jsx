@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import api from '../../api/client'
-import { puedeEscribir, puedeLeer } from '../../store/authStore'
+import { puedeEscribir, puedeLeer, getUser, getToken } from '../../store/authStore'
 import Form49 from './Form49'
 import DateInput from '../../components/DateInput'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
 import { PREFIJOS, FAM_NOMBRES } from './prefijos'
+import { formatCuit } from '../../utils/cuit'
+import { nextItemKey } from '../../utils/itemKey'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const ESTADOS = [
   { v:'Emitida',   c:'warning' },
@@ -32,7 +35,24 @@ const CAMPOS_PROV = [
   { k:'condicion_pago', l:'Cond. de Pago'  },
 ]
 const ITEM_VACIO = { producto_id:'', producto_codigo:'', descripcion:'', unidad:'UND.', cantidad:1, precio_unitario:0, bonif1:0, bonif2:0, bonif3:0, bonif4:0, precio_final:0, plazo:'INMEDIATO', dias_plazo:'', cant_recibida:0, sin_codificar:false }
-const FORM_OC = { proveedor_id:'', proveedor_nombre:'', proveedor_cuit:'', fecha:hoy(), moneda:'DÓLAR', tasa_cambio:0, autorizado_por:'', elaborado_por:'', condicion_pago:'TRANSF. BANCARIA', lugar_entrega:'e-intra', presupuesto_n:'', observaciones:'', fecha_entrega_est:'', estado_doc:'', modo_plazo:'OC', dias_plazo:'', items:[{ ...ITEM_VACIO }] }
+const FORM_OC = { proveedor_id:'', proveedor_nombre:'', proveedor_cuit:'', fecha:hoy(), moneda:'DÓLAR', tasa_cambio:0, autorizado_por:'', elaborado_por:'', condicion_pago:'TRANSF. BANCARIA', lugar_entrega:'e-intra', presupuesto_n:'', observaciones:'', fecha_entrega_est:'', estado_doc:'', modo_plazo:'OC', dias_plazo:'', items:[{ ...ITEM_VACIO, _key: nextItemKey() }], cuotas:[] }
+
+// Cuotas de facturación de una OC (opcional) — cuando una OC se factura en
+// partes (anticipo + saldo, avances...), esto le permite a Control OC comparar
+// solo contra lo ya facturado en vez de exigir el total completo de entrada.
+const CUOTA_OC_VACIA = { tipo: 'avance', pct: '', monto_planeado: '', fecha_estimada: '', factura_id: null }
+const TIPO_CUOTA_OC_LABEL = { anticipo: 'Anticipo', avance: 'Avance', saldo_final: 'Saldo final', unico: 'Pago único' }
+const PRESETS_CUOTAS_OC = {
+  anticipo_resto: () => [
+    { ...CUOTA_OC_VACIA, tipo: 'anticipo',    pct: 50 },
+    { ...CUOTA_OC_VACIA, tipo: 'saldo_final', pct: 50 },
+  ],
+  porcentajes: () => [
+    { ...CUOTA_OC_VACIA, tipo: 'avance', pct: 50 },
+    { ...CUOTA_OC_VACIA, tipo: 'avance', pct: 50 },
+  ],
+  unico: () => [{ ...CUOTA_OC_VACIA, tipo: 'unico', pct: 100 }],
+}
 
 function sumarDias(fechaISO, dias) {
   if (!fechaISO || dias === '' || dias == null) return ''
@@ -61,9 +81,76 @@ function calcFinal(p, b1, b2, b3, b4) {
   return Math.round(v * 10000) / 10000
 }
 
+function fmtMonedaOC(n, mon) {
+  const v = parseFloat(n)
+  if (!v || isNaN(v)) return '—'
+  const sym = mon === 'DÓLAR' ? 'USD ' : mon === 'EURO' ? '€ ' : '$ '
+  return sym + v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+// Buscador de la factura a vincular a una cuota de la OC — combina las
+// facturas YA vinculadas a esta OC (para elegir sin escribir nada) con una
+// búsqueda en vivo entre las facturas de compra que todavía no tienen OC
+// (se vinculan solas a esta OC al elegirlas, no hace falta hacerlo aparte).
+function FacturaOCSelector({ facturasVinculadas, onChange }) {
+  const [query,     setQuery]     = useState('')
+  const [candidatas, setCandidatas] = useState([])
+  const [buscando,  setBuscando]  = useState(false)
+  const [abierto,   setAbierto]   = useState(false)
+  const debRef = useRef(null)
+
+  const buscar = q => {
+    setQuery(q)
+    if (debRef.current) clearTimeout(debRef.current)
+    debRef.current = setTimeout(async () => {
+      setBuscando(true)
+      try {
+        const r = await api.get('/compras/facturas-sin-oc', { params: q ? { buscar: q } : {} })
+        setCandidatas(r.data)
+      } catch { setCandidatas([]) }
+      setBuscando(false)
+    }, 300)
+  }
+
+  const q = query.trim().toLowerCase()
+  const vinculadasFiltradas = q
+    ? (facturasVinculadas||[]).filter(f => (f.numero + ' ' + (f.proveedor_nombre||'')).toLowerCase().includes(q))
+    : (facturasVinculadas||[])
+  const opciones = [...vinculadasFiltradas, ...candidatas]
+
+  const seleccionar = f => { setAbierto(false); setQuery(''); onChange(f) }
+
+  return (
+    <div className="position-relative">
+      <input className="form-control form-control-sm" value={query}
+        placeholder="Buscar factura por número o proveedor..."
+        onChange={e => buscar(e.target.value)}
+        onFocus={() => { setAbierto(true); if (!candidatas.length) buscar('') }}
+        onBlur={() => setTimeout(() => setAbierto(false), 180)}
+        autoComplete="off" />
+      {abierto && (
+        <div className="border rounded bg-white shadow-sm position-absolute w-100" style={{ zIndex: 1080, top: '100%', maxHeight: 200, overflowY: 'auto' }}>
+          {buscando ? (
+            <div className="text-muted text-center py-2" style={{ fontSize: '0.75rem' }}>Buscando...</div>
+          ) : opciones.length === 0 ? (
+            <div className="text-muted text-center py-2" style={{ fontSize: '0.75rem' }}>Sin facturas que coincidan</div>
+          ) : opciones.map(f => (
+            <div key={f.id} className="px-2 py-1 border-bottom" style={{ cursor: 'pointer', fontSize: '0.8rem' }}
+              onMouseDown={() => seleccionar(f)}>
+              <span className="fw-semibold text-primary">{f.numero}</span>
+              <span className="text-muted ms-2" style={{ fontSize: '0.72rem' }}>{f.proveedor_nombre}</span>
+              <span className="ms-2 fw-semibold">{fmtMonedaOC(f.importe, f.moneda)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Compras() {
   const canWrite = puedeEscribir('compras')
-  const canFusion = puedeEscribir('compras_fusion')
+  const canFusion = getUser()?.rol === 'admin'
   const canInformes = puedeLeer('compras_informes')
   const location  = useLocation()
   const [tab, setTab] = useState('oc')
@@ -87,6 +174,11 @@ export default function Compras() {
   /* ── Modal detalle OC ───────────────────────────────────────────── */
   const [modalOC, setModalOC] = useState(null)
   const [loadDet, setLoadDet] = useState(false)
+  const [mostrarVincularFactura, setMostrarVincularFactura] = useState(false)
+  const [buscarFacturaOC, setBuscarFacturaOC] = useState('')
+  const [facturasCandidatas, setFacturasCandidatas] = useState([])
+  const [loadFacturasCandidatas, setLoadFacturasCandidatas] = useState(false)
+  const [vinculandoFactura, setVinculandoFactura] = useState(false)
 
   /* ── Modal crear / editar OC ────────────────────────────────────── */
   const [modalForm, setModalForm]   = useState(null)
@@ -97,6 +189,7 @@ export default function Compras() {
   const [provInfoOC, setProvInfoOC] = useState(null)  // datos completos del proveedor seleccionado
   const [sugsItem, setSugsItem]     = useState({ idx: null, list: [], pos: null })
   const [refPrecios, setRefPrecios] = useState({})
+  const [facturasOC, setFacturasOC] = useState([]) // facturas ya vinculadas a la OC en edición (para elegir en "Vincular factura" de una cuota)
   const itemDescRefs = useRef({})
   const [productos, setProductos]   = useState([])
 
@@ -152,21 +245,70 @@ export default function Compras() {
   const [proyectos, setProyectos] = useState([])
 
   useEffect(() => {
-    api.get('/compras/proveedores').then(r => setProvs(r.data)).catch(() => {})
-    api.get('/stock/productos').then(r => setProductos(r.data)).catch(() => {})
-    api.get('/proyectos', { params: { estado: 'Activo' } }).then(r => setProyectos(r.data)).catch(() => {})
+    api.get('/compras/proveedores').then(r => setProvs(r.data)).catch(e => console.error(e))
+    api.get('/stock/productos').then(r => setProductos(r.data)).catch(e => console.error(e))
+    // /rrhh/proyectos: listado liviano sin costos, abierto a cualquier usuario
+    // autenticado — evita que este selector quede vacío para quien no tiene
+    // el permiso completo del módulo Proyectos.
+    api.get('/rrhh/proyectos').then(r => setProyectos(r.data.filter(p => p.estado === 'Activo'))).catch(e => console.error(e))
   }, [])
 
   /* ── Detalle OC ─────────────────────────────────────────────────── */
   const verOC = id => {
-    setLoadDet(true); setModalOC(null)
+    setLoadDet(true); setModalOC(null); setMostrarVincularFactura(false)
     api.get(`/compras/oc/${id}`).then(r => setModalOC(r.data)).finally(() => setLoadDet(false))
   }
 
+  const abrirVincularFactura = () => {
+    setBuscarFacturaOC(modalOC.proveedor_nombre || '')
+    setMostrarVincularFactura(true)
+  }
+
+  useEffect(() => {
+    if (!mostrarVincularFactura) return
+    setLoadFacturasCandidatas(true)
+    const t = setTimeout(() => {
+      api.get('/compras/facturas-sin-oc', { params: buscarFacturaOC ? { buscar: buscarFacturaOC } : {} })
+        .then(r => setFacturasCandidatas(r.data))
+        .finally(() => setLoadFacturasCandidatas(false))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [mostrarVincularFactura, buscarFacturaOC])
+
+  const vincularFacturaAOC = async facturaId => {
+    setVinculandoFactura(true)
+    try {
+      await api.patch(`/compras/oc/${modalOC.id}/vincular-factura`, { factura_id: facturaId })
+      setMostrarVincularFactura(false)
+      verOC(modalOC.id)
+      cargarOC()
+    } catch (e) {
+      alert(e.response?.data?.error || 'Error al vincular')
+    } finally { setVinculandoFactura(false) }
+  }
+
+  const desvincularFacturaDeOC = async facturaId => {
+    if (!confirm('¿Desvincular esta factura de la OC?')) return
+    try {
+      await api.patch(`/compras/oc/${modalOC.id}/desvincular-factura`, { factura_id: facturaId })
+      verOC(modalOC.id)
+      cargarOC()
+    } catch (e) {
+      alert(e.response?.data?.error || 'Error al desvincular')
+    }
+  }
+
+  // Deep-link desde "Seguimiento OC Compras" (Finanzas): abre directamente
+  // el detalle de la OC indicada al llegar por navigate(..., { state }).
+  useEffect(() => {
+    if (location.state?.abrirOcId) verOC(location.state.abrirOcId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   /* ── Form OC ────────────────────────────────────────────────────── */
   const abrirNuevaOC = () => {
-    setFormOC({ ...FORM_OC, fecha: hoy(), items: [{ ...ITEM_VACIO }] })
-    setErrOC(''); setSugsP([]); setSugsItem({ idx: null, list: [] }); setProvInfoOC(null); setRefPrecios({}); setModalForm('nuevo')
+    setFormOC({ ...FORM_OC, fecha: hoy(), items: [{ ...ITEM_VACIO, _key: nextItemKey() }], cuotas: [] })
+    setErrOC(''); setSugsP([]); setSugsItem({ idx: null, list: [] }); setProvInfoOC(null); setRefPrecios({}); setFacturasOC([]); setModalForm('nuevo')
   }
 
   const abrirEditarOC = oc => {
@@ -187,26 +329,68 @@ export default function Compras() {
       modo_plazo: oc.modo_plazo === 'ITEM' ? 'ITEM' : 'OC',
       dias_plazo: oc.dias_plazo ?? '',
       items: oc.items?.length
-        ? oc.items.map(it => ({ id: it.id, producto_id: it.producto_id||'', producto_codigo: it.producto_codigo||'', descripcion: it.descripcion||'', unidad: it.unidad||'UND.', cantidad: it.cantidad, precio_unitario: it.precio_unitario, bonif1: it.bonif1||0, bonif2: it.bonif2||0, bonif3: it.bonif3||0, bonif4: it.bonif4||0, precio_final: it.precio_final, plazo: it.plazo||'INMEDIATO', dias_plazo: it.dias_plazo ?? '', cant_recibida: it.cant_recibida||0, sin_codificar: !!it.sin_codificar }))
-        : [{ ...ITEM_VACIO }],
+        ? oc.items.map(it => ({ id: it.id, _key: nextItemKey(), producto_id: it.producto_id||'', producto_codigo: it.producto_codigo||'', descripcion: it.descripcion||'', unidad: it.unidad||'UND.', cantidad: it.cantidad, precio_unitario: it.precio_unitario, bonif1: it.bonif1||0, bonif2: it.bonif2||0, bonif3: it.bonif3||0, bonif4: it.bonif4||0, precio_final: it.precio_final, plazo: it.plazo||'INMEDIATO', dias_plazo: it.dias_plazo ?? '', cant_recibida: it.cant_recibida||0, sin_codificar: !!it.sin_codificar }))
+        : [{ ...ITEM_VACIO, _key: nextItemKey() }],
+      cuotas: oc.cuotas?.length
+        ? oc.cuotas.map(c => ({ id: c.id, tipo: c.tipo||'avance', pct: c.pct ?? '', monto_planeado: c.monto_planeado ?? '', fecha_estimada: c.fecha_estimada||'', factura_id: c.factura_id||null, factura_numero: c.factura_numero||'', factura_fecha: c.factura_fecha||'', factura_importe: c.factura_importe, factura_moneda: c.factura_moneda, factura_pago_confirmado: c.factura_pago_confirmado }))
+        : [],
     })
+    setFacturasOC(oc.facturas || [])
     setErrOC(''); setSugsP([]); setSugsItem({ idx: null, list: [] }); setRefPrecios({}); setModalForm(oc)
     // Cargar datos de contacto del proveedor
     if (oc.proveedor_id) {
       api.get('/compras/proveedores/buscar', { params: { id: oc.proveedor_id } })
-        .then(r => setProvInfoOC(r.data)).catch(() => {})
+        .then(r => setProvInfoOC(r.data)).catch(e => console.error(e))
     } else if (oc.proveedor_nombre) {
       api.get('/compras/proveedores/buscar', { params: { nombre: oc.proveedor_nombre } })
-        .then(r => setProvInfoOC(r.data)).catch(() => {})
+        .then(r => setProvInfoOC(r.data)).catch(e => console.error(e))
     } else {
       setProvInfoOC(null)
     }
   }
 
+  /* ── Cuotas de facturación de la OC ─────────────────────────────── */
+  const setCuotaOC = (idx, campo, val) => setFormOC(p => ({
+    ...p, cuotas: p.cuotas.map((c, i) => i === idx ? { ...c, [campo]: val } : c),
+  }))
+  const agregarCuotaOC = () => setFormOC(p => ({ ...p, cuotas: [...p.cuotas, { ...CUOTA_OC_VACIA }] }))
+  const quitarCuotaOC = idx => setFormOC(p => ({ ...p, cuotas: p.cuotas.filter((_, i) => i !== idx) }))
+  const aplicarPresetCuotasOC = key => setFormOC(p => {
+    const hayVinculadas = p.cuotas.some(c => c.factura_id)
+    if (hayVinculadas && !confirm('Esto reemplaza las cuotas actuales, incluyendo las que ya tienen una factura vinculada. ¿Continuar?')) return p
+    return { ...p, cuotas: PRESETS_CUOTAS_OC[key]() }
+  })
+  const vincularFacturaCuotaOC = (idx, f) => {
+    setFormOC(p => ({
+      ...p, cuotas: p.cuotas.map((c, i) => i !== idx ? c : {
+        ...c, factura_id: f.id,
+        factura_numero: f.numero || '', factura_fecha: f.fecha || '',
+        factura_importe: f.importe, factura_moneda: f.moneda, factura_pago_confirmado: f.pago_confirmado,
+      })
+    }))
+    // Si la factura elegida no estaba entre las ya vinculadas a la OC (se
+    // buscó entre las "sin OC"), va a quedar vinculada recién al Guardar —
+    // se agrega ya mismo a la lista local para que otra cuota pueda reusarla.
+    if (!facturasOC.some(x => x.id === f.id)) setFacturasOC(prev => [...prev, f])
+  }
+  const desvincularFacturaCuotaOC = idx => setFormOC(p => ({
+    ...p, cuotas: p.cuotas.map((c, i) => i === idx ? { ...c, factura_id: null, factura_numero: '', factura_fecha: '', factura_importe: null, factura_moneda: null, factura_pago_confirmado: null } : c),
+  }))
+  const totalPctCuotasOC = formOC.cuotas.reduce((s, c) => s + (parseFloat(c.pct) || 0), 0)
+
   const guardarOC = async e => {
-    e.preventDefault(); setSavOC(true); setErrOC('')
+    e.preventDefault()
+    if (!formOC.proveedor_nombre?.trim()) { setErrOC('Elegí un proveedor'); return }
+    const itemsCargados = formOC.items.filter(it => it.descripcion.trim())
+    if (!itemsCargados.length) { setErrOC('Cargá al menos un ítem con descripción'); return }
+    const itemInvalido = itemsCargados.find(it =>
+      isNaN(parseFloat(it.cantidad)) || parseFloat(it.cantidad) < 0 ||
+      isNaN(parseFloat(it.precio_unitario)) || parseFloat(it.precio_unitario) < 0
+    )
+    if (itemInvalido) { setErrOC(`Revisá cantidad/precio de "${itemInvalido.descripcion}" — tienen que ser números válidos, no negativos`); return }
+    setSavOC(true); setErrOC('')
     try {
-      const body = { ...formOC, proveedor_id: formOC.proveedor_id || null, tasa_cambio: parseFloat(formOC.tasa_cambio)||0, items: formOC.items.filter(it => it.descripcion.trim()) }
+      const body = { ...formOC, proveedor_id: formOC.proveedor_id || null, tasa_cambio: parseFloat(formOC.tasa_cambio)||0, items: itemsCargados }
       if (modalForm === 'nuevo') await api.post('/compras/oc', body)
       else await api.put(`/compras/oc/${modalForm.id}`, body)
       setModalForm(null); cargarOC()
@@ -302,7 +486,7 @@ export default function Compras() {
     })
   }))
 
-  const agregarItem = () => setFormOC(p => ({ ...p, items: [...p.items, { ...ITEM_VACIO }] }))
+  const agregarItem = () => setFormOC(p => ({ ...p, items: [...p.items, { ...ITEM_VACIO, _key: nextItemKey() }] }))
   const quitarItem  = idx => {
     setFormOC(p => ({ ...p, items: p.items.filter((_,i)=>i!==idx) }))
     setRefPrecios(prev => { const n={}; Object.keys(prev).forEach(k => { const ki=parseInt(k); if(ki<idx) n[ki]=prev[k]; else if(ki>idx) n[ki-1]=prev[k] }); return n })
@@ -322,27 +506,38 @@ export default function Compras() {
   }
 
   const selProductoItem = (idx, prod) => {
+    // Si el item ya tiene un precio propio cargado a mano en la OC, codificarlo
+    // (vincularlo a un producto del catálogo) no debe pisárselo — el precio del
+    // catálogo solo se usa para completar items que todavía no tienen ninguno.
+    const yaTeniaPrecioPropio = parseFloat(formOC.items[idx]?.precio_unitario) > 0
     setFormOC(prev => ({
       ...prev, items: prev.items.map((it, i) => i !== idx ? it : {
         ...it, producto_id: prod.id, producto_codigo: prod.codigo, descripcion: prod.descripcion, unidad: prod.unidad||'UND.',
-        precio_unitario: prod.precio_costo||0, sin_codificar: false,
-        precio_final: calcFinal(prod.precio_costo||0, it.bonif1, it.bonif2, it.bonif3, it.bonif4),
+        sin_codificar: false,
+        ...(yaTeniaPrecioPropio ? {} : {
+          precio_unitario: prod.precio_costo||0,
+          precio_final: calcFinal(prod.precio_costo||0, it.bonif1, it.bonif2, it.bonif3, it.bonif4),
+        }),
       })
     }))
     setSugsItem({ idx: null, list: [] })
     setRefPrecios(prev => { const n = { ...prev }; delete n[idx]; return n })
-    // Buscar precio fresco del producto (el array puede estar desactualizado)
+    // Buscar precio fresco del producto (el array puede estar desactualizado) —
+    // solo para completar el precio de items que no tenían uno propio.
     api.get(`/stock/productos/${prod.id}`)
       .then(r => {
         const p = r.data
         if (p.precio_costo > 0) {
-          // Actualizar también el precio en el formulario con el valor fresco
-          setFormOC(prev => ({
-            ...prev, items: prev.items.map((it, i) => i !== idx ? it : {
-              ...it, precio_unitario: p.precio_costo,
-              precio_final: calcFinal(p.precio_costo, it.bonif1, it.bonif2, it.bonif3, it.bonif4),
-            })
-          }))
+          // Actualizar el precio en el formulario con el valor fresco, salvo que
+          // el item ya tenga su propio precio cargado a mano — no se lo pisa.
+          if (!yaTeniaPrecioPropio) {
+            setFormOC(prev => ({
+              ...prev, items: prev.items.map((it, i) => i !== idx ? it : {
+                ...it, precio_unitario: p.precio_costo,
+                precio_final: calcFinal(p.precio_costo, it.bonif1, it.bonif2, it.bonif3, it.bonif4),
+              })
+            }))
+          }
           setRefPrecios(prev => ({ ...prev, [idx]: {
             precio_unitario: p.precio_costo,
             precio_moneda:   p.precio_moneda || '',
@@ -357,10 +552,10 @@ export default function Compras() {
           const shortDesc = prod.descripcion.trim().split(/\s+/).slice(0, 5).join(' ')
           api.get('/compras/ultimo-precio', { params: { producto_id: prod.id, descripcion: shortDesc, ...(provId ? { proveedor_id: provId } : {}) } })
             .then(r2 => { if (r2.data) setRefPrecios(prev => ({ ...prev, [idx]: { ...r2.data, _fuente: 'oc' } })) })
-            .catch(() => {})
+            .catch(e => console.error(e))
         }
       })
-      .catch(() => {})
+      .catch(e => console.error(e))
   }
 
   const abrirNuevoMat = idx => {
@@ -706,12 +901,17 @@ export default function Compras() {
                             {modalOC.nro_factura && <div className="col-auto"><strong>N° Factura:</strong> {modalOC.nro_factura}</div>}
                             {modalOC.importe_facturado > 0 && <div className="col-auto"><strong>Importe Facturado:</strong> {fmtN(modalOC.importe_facturado)}</div>}
                             {modalOC.fecha_vencimiento && <div className="col-auto"><strong>Vencimiento:</strong> {fmtF(modalOC.fecha_vencimiento)}</div>}
-                            {modalOC.pago_confirmado != null && (
+                            {modalOC.facturas?.length > 0 && (
                               <div className="col-auto">
                                 <strong>Pago:</strong>{' '}
-                                <span className={`badge ${modalOC.pago_confirmado ? 'bg-success' : 'bg-secondary'}`}>
-                                  {modalOC.pago_confirmado ? 'CONFIRMADO' : 'PENDIENTE'}
-                                </span>
+                                {(() => {
+                                  const pagado = modalOC.facturas.every(f => f.pago_confirmado)
+                                  return (
+                                    <span className={`badge ${pagado ? 'bg-success' : 'bg-secondary'}`}>
+                                      {pagado ? 'CONFIRMADO' : 'PENDIENTE'}
+                                    </span>
+                                  )
+                                })()}
                               </div>
                             )}
                           </div>
@@ -769,6 +969,83 @@ export default function Compras() {
                         </tr>
                       </tfoot>
                     </table>
+
+                    {/* ── Facturas vinculadas ── */}
+                    <div className="mt-3">
+                      <p className="fw-semibold small mb-2">
+                        <i className="bi bi-receipt me-1"/>Facturas vinculadas
+                        {modalOC.facturas?.length > 0 && <span className="text-muted fw-normal"> ({modalOC.facturas.length})</span>}
+                      </p>
+                      {modalOC.facturas?.length > 0 ? (
+                        <table className="table table-sm table-bordered mb-2" style={{fontSize:'0.8rem'}}>
+                          <thead className="table-light">
+                            <tr><th>Tipo</th><th>Número</th><th>Fecha</th><th className="text-end">Neto</th><th className="text-end">Importe</th>{canWrite && <th style={{width:36}}/>}</tr>
+                          </thead>
+                          <tbody>
+                            {modalOC.facturas.map(f => (
+                              <tr key={f.id}>
+                                <td>{f.tipo_factura}</td>
+                                <td className="fw-semibold">{f.numero}</td>
+                                <td>{fmtF(f.fecha)}</td>
+                                <td className="text-end">{fmtN(f.neto_gravado)}</td>
+                                <td className="text-end">{fmtN(f.importe)} {f.moneda}</td>
+                                {canWrite && (
+                                  <td>
+                                    <button className="btn btn-sm btn-outline-danger py-0 px-1" title="Desvincular de esta OC"
+                                      onClick={() => desvincularFacturaDeOC(f.id)}>
+                                      <i className="bi bi-x-lg"/>
+                                    </button>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <p className="text-muted small mb-2">Todavía no tiene ninguna factura vinculada.</p>
+                      )}
+                      {canWrite && !mostrarVincularFactura && (
+                        <button className="btn btn-sm btn-outline-primary" onClick={abrirVincularFactura}>
+                          <i className="bi bi-link-45deg me-1"/>Vincular factura
+                        </button>
+                      )}
+                      {canWrite && mostrarVincularFactura && (
+                        <div className="border rounded p-2" style={{background:'#f8f9ff'}}>
+                          <div className="d-flex gap-2 align-items-center mb-2">
+                            <input className="form-control form-control-sm" style={{maxWidth: 320}}
+                              placeholder="Buscar por número o proveedor..."
+                              value={buscarFacturaOC} onChange={e => setBuscarFacturaOC(e.target.value)} autoFocus />
+                            <button className="btn btn-sm btn-outline-secondary" onClick={() => setMostrarVincularFactura(false)}>Cancelar</button>
+                          </div>
+                          {loadFacturasCandidatas ? (
+                            <div className="text-muted small"><span className="spinner-border spinner-border-sm me-1"/>Buscando...</div>
+                          ) : facturasCandidatas.length === 0 ? (
+                            <div className="text-muted small">Sin facturas sin OC que coincidan.</div>
+                          ) : (
+                            <table className="table table-sm mb-0" style={{fontSize:'0.78rem'}}>
+                              <thead><tr><th>Tipo</th><th>Número</th><th>Fecha</th><th>Proveedor</th><th className="text-end">Importe</th><th/></tr></thead>
+                              <tbody>
+                                {facturasCandidatas.map(f => (
+                                  <tr key={f.id}>
+                                    <td>{f.tipo_factura}</td>
+                                    <td className="fw-semibold">{f.numero}</td>
+                                    <td>{fmtF(f.fecha)}</td>
+                                    <td>{f.proveedor_nombre}</td>
+                                    <td className="text-end">{fmtN(f.importe)} {f.moneda}</td>
+                                    <td>
+                                      <button className="btn btn-sm btn-primary py-0 px-2" disabled={vinculandoFactura}
+                                        onClick={() => vincularFacturaAOC(f.id)}>
+                                        Vincular
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="modal-footer py-2 justify-content-between">
                     <div className="d-flex gap-2">
@@ -801,7 +1078,7 @@ export default function Compras() {
                     <div className="d-flex gap-2">
                       <button className="btn btn-sm btn-outline-success"
                         onClick={async () => {
-                          const resp = await fetch(`/api/v1/compras/oc/${modalOC.id}/exportar`, { headers: { Authorization: `Bearer ${localStorage.getItem('erp_token')}` } })
+                          const resp = await fetch(`/api/v1/compras/oc/${modalOC.id}/exportar`, { headers: { Authorization: `Bearer ${getToken()}` } })
                           const blob = await resp.blob()
                           const url  = URL.createObjectURL(blob)
                           const a    = document.createElement('a')
@@ -828,7 +1105,7 @@ export default function Compras() {
       {modalForm !== null && (
         <div className="modal show d-block" style={{background:'rgba(0,0,0,.5)', zIndex:1060}}>
           <div className="modal-dialog modal-xl modal-dialog-scrollable">
-            <form className="modal-content" onSubmit={guardarOC}>
+            <form className="modal-content" onSubmit={guardarOC} autoComplete="off">
               <div className="modal-header py-2">
                 <h5 className="modal-title">{modalForm==='nuevo' ? 'Nueva Orden de Compra' : `Editar OC #${modalForm.numero}`}</h5>
                 <button type="button" className="btn-close" onClick={()=>setModalForm(null)}/>
@@ -862,7 +1139,8 @@ export default function Compras() {
                     <div className="col-md-2">
                       <label className="form-label small fw-medium mb-1">CUIT</label>
                       <input className="form-control form-control-sm" value={formOC.proveedor_cuit}
-                        onChange={e=>setFormOC(p=>({...p,proveedor_cuit:e.target.value}))}/>
+                        onChange={e=>setFormOC(p=>({...p,proveedor_cuit:e.target.value}))}
+                        onBlur={e=>setFormOC(p=>({...p,proveedor_cuit:formatCuit(e.target.value)}))}/>
                     </div>
                     <div className="col-md-2">
                       <label className="form-label small fw-medium mb-1">Fecha *</label>
@@ -878,7 +1156,7 @@ export default function Compras() {
                     </div>
                     <div className="col-md-1">
                       <label className="form-label small fw-medium mb-1">TC</label>
-                      <input type="number" className="form-control form-control-sm" value={formOC.tasa_cambio}
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={formOC.tasa_cambio}
                         min="0" step="any" onChange={e=>setFormOC(p=>({...p,tasa_cambio:e.target.value}))}/>
                     </div>
                     <div className="col-md-1">
@@ -909,7 +1187,7 @@ export default function Compras() {
                           <option value="ITEM">Por ítem</option>
                         </select>
                         {formOC.modo_plazo === 'OC' && (
-                          <input type="number" min="0" className="form-control form-control-sm text-end" style={{maxWidth:70}}
+                          <input type="number" onPaste={manejarPegadoNumero} min="0" className="form-control form-control-sm text-end" style={{maxWidth:70}}
                             placeholder="días" value={formOC.dias_plazo}
                             onChange={e=>setFormOC(p=>({...p,dias_plazo:e.target.value}))}/>
                         )}
@@ -1018,7 +1296,7 @@ export default function Compras() {
                     </thead>
                     <tbody>
                       {formOC.items.map((it, idx) => (
-                        <tr key={idx}>
+                        <tr key={it.id ?? it._key ?? idx}>
                           <td className="text-muted text-center align-middle">{idx+1}</td>
                           <td className="text-center align-middle" style={{verticalAlign:'middle'}}>
                             {it.producto_id
@@ -1088,25 +1366,25 @@ export default function Compras() {
                             )}
                           </td>
                           <td><input className="form-control form-control-sm border-0 p-0 px-1" value={it.unidad} onChange={e=>setItem(idx,'unidad',e.target.value)}/></td>
-                          <td><input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.cantidad} min="0" step="any" onChange={e=>setItem(idx,'cantidad',e.target.value)}/></td>
+                          <td><input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.cantidad} min="0" step="any" onChange={e=>setItem(idx,'cantidad',e.target.value)}/></td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.precio_unitario} min="0" step="any" onChange={e=>setItem(idx,'precio_unitario',e.target.value)}/>
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.precio_unitario} min="0" step="any" onChange={e=>setItem(idx,'precio_unitario',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{fmtN(refPrecios[idx].precio_unitario)}</div>}
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif1} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif1',e.target.value)}/>
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif1} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif1',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif1 > 0 ? refPrecios[idx].bonif1 : '—'}</div>}
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif2} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif2',e.target.value)}/>
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif2} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif2',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif2 > 0 ? refPrecios[idx].bonif2 : '—'}</div>}
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif3} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif3',e.target.value)}/>
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif3} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif3',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif3 > 0 ? refPrecios[idx].bonif3 : '—'}</div>}
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif4} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif4',e.target.value)}/>
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.bonif4} min="0" max="100" step="any" onChange={e=>setItem(idx,'bonif4',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{refPrecios[idx].bonif4 > 0 ? refPrecios[idx].bonif4 : '—'}</div>}
                           </td>
                           <td style={{background:'#f8f9fa'}}>
@@ -1117,7 +1395,7 @@ export default function Compras() {
                           <td>
                             {formOC.modo_plazo === 'ITEM' ? (
                               <>
-                                <input type="number" min="0" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas"
+                                <input type="number" onPaste={manejarPegadoNumero} min="0" className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas"
                                   placeholder="días" value={it.dias_plazo}
                                   onChange={e=>setItem(idx,'dias_plazo',e.target.value)}/>
                                 {it.dias_plazo !== '' && it.dias_plazo != null &&
@@ -1144,6 +1422,101 @@ export default function Compras() {
                     </tfoot>
                   </table>
                 </div>
+
+                {/* Cuotas de facturación (opcional) */}
+                <div className="d-flex align-items-center justify-content-between mt-3 mb-2 flex-wrap gap-2">
+                  <strong className="small">
+                    Cuotas de facturación <span className="text-muted fw-normal">(opcional — para anticipo + saldo, avances, etc.)</span>
+                  </strong>
+                  <div className="d-flex gap-1 flex-wrap">
+                    <button type="button" className="btn btn-outline-secondary btn-sm py-0 px-2" style={{fontSize:'0.7rem'}}
+                      onClick={() => aplicarPresetCuotasOC('anticipo_resto')}>Anticipo + Saldo</button>
+                    <button type="button" className="btn btn-outline-secondary btn-sm py-0 px-2" style={{fontSize:'0.7rem'}}
+                      onClick={() => aplicarPresetCuotasOC('porcentajes')}>Todo en %</button>
+                    <button type="button" className="btn btn-outline-secondary btn-sm py-0 px-2" style={{fontSize:'0.7rem'}}
+                      onClick={() => aplicarPresetCuotasOC('unico')}>Pago único</button>
+                  </div>
+                </div>
+
+                {formOC.cuotas.length === 0 ? (
+                  <div className="text-muted small fst-italic mb-2">
+                    Sin cuotas definidas — Control OC compara contra el total de la OC apenas se cargue una factura.
+                  </div>
+                ) : (
+                  <>
+                    <table className="table table-sm table-bordered align-middle mb-1" style={{fontSize:'0.78rem'}}>
+                      <thead className="table-light">
+                        <tr>
+                          <th style={{width:120}}>Tipo</th>
+                          <th style={{width:70}} className="text-center">%</th>
+                          <th style={{width:120}} className="text-end">Monto planeado</th>
+                          <th style={{width:110}}>Fecha estimada</th>
+                          <th>Factura vinculada</th>
+                          <th style={{width:36}}/>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {formOC.cuotas.map((c, idx) => (
+                          <tr key={idx}>
+                            <td>
+                              <select className="form-select form-select-sm" value={c.tipo} onChange={e => setCuotaOC(idx, 'tipo', e.target.value)}>
+                                {Object.entries(TIPO_CUOTA_OC_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                              </select>
+                            </td>
+                            <td>
+                              <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm text-center" value={c.pct}
+                                onChange={e => setCuotaOC(idx, 'pct', e.target.value)} min="0" max="100" step="1"/>
+                            </td>
+                            <td>
+                              <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm text-end" value={c.monto_planeado}
+                                onChange={e => setCuotaOC(idx, 'monto_planeado', e.target.value)} min="0" step="0.01" placeholder="0.00"/>
+                            </td>
+                            <td>
+                              <DateInput className="form-control form-control-sm" value={c.fecha_estimada}
+                                onChange={v => setCuotaOC(idx, 'fecha_estimada', v)}/>
+                            </td>
+                            <td>
+                              {c.factura_id ? (
+                                <div className="d-flex align-items-center gap-2 flex-wrap" style={{fontSize:'0.75rem'}}>
+                                  <span className="fw-semibold text-primary">{c.factura_numero}</span>
+                                  <span className="text-muted">{fmtF(c.factura_fecha)}</span>
+                                  <span className="fw-semibold">{fmtMonedaOC(c.factura_importe, c.factura_moneda)}</span>
+                                  {c.factura_pago_confirmado
+                                    ? <span className="badge bg-success" style={{fontSize:'0.62rem'}}>Pagada</span>
+                                    : <span className="badge bg-secondary" style={{fontSize:'0.62rem'}}>Pendiente</span>}
+                                  <button type="button" className="btn btn-sm btn-outline-danger py-0 px-1" title="Desvincular"
+                                    onClick={() => desvincularFacturaCuotaOC(idx)}>
+                                    <i className="bi bi-x"/>
+                                  </button>
+                                </div>
+                              ) : (
+                                <FacturaOCSelector facturasVinculadas={facturasOC} onChange={f => vincularFacturaCuotaOC(idx, f)}/>
+                              )}
+                            </td>
+                            <td>
+                              <button type="button" className="btn btn-sm btn-outline-danger py-0 px-1" onClick={() => quitarCuotaOC(idx)}>
+                                <i className="bi bi-trash"/>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <button type="button" className="btn btn-sm btn-outline-primary py-0 px-2" onClick={agregarCuotaOC}>
+                        <i className="bi bi-plus-lg me-1"/>Agregar cuota
+                      </button>
+                      <span className={totalPctCuotasOC === 100 ? 'text-muted small' : 'text-danger small fw-semibold'}>
+                        Total: {totalPctCuotasOC}% {totalPctCuotasOC !== 100 && <i className="bi bi-exclamation-triangle-fill ms-1" title="No suma 100%"/>}
+                      </span>
+                    </div>
+                  </>
+                )}
+                {formOC.cuotas.length === 0 && (
+                  <button type="button" className="btn btn-sm btn-outline-primary py-0 px-2 mb-2" onClick={agregarCuotaOC}>
+                    <i className="bi bi-plus-lg me-1"/>Agregar cuota
+                  </button>
+                )}
               </div>
               <div className="modal-footer py-2">
                 <button type="button" className="btn btn-secondary btn-sm" onClick={()=>setModalForm(null)}>Cancelar</button>
@@ -1287,7 +1660,7 @@ export default function Compras() {
                               <td className="text-end align-middle text-success">{fmtN(it.cant_recibida||0)}</td>
                               <td className={`text-end align-middle ${pend>0&&!sinCod?'text-warning':''}`}>{fmtN(pend)}</td>
                               <td>
-                                <input type="number" className="form-control form-control-sm text-end"
+                                <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm text-end"
                                   value={recCants[it.id]??0} min="0" max={pend} step="any"
                                   disabled={pend<=0 || sinCod}
                                   style={{marginLeft:'auto'}}
@@ -1330,7 +1703,8 @@ export default function Compras() {
                   </div>
                   <div className="col-md-3">
                     <label className="form-label small fw-medium">CUIT</label>
-                    <input className="form-control" value={formProv.cuit} onChange={e=>setFormProv(p=>({...p,cuit:e.target.value}))}/>
+                    <input className="form-control" value={formProv.cuit} onChange={e=>setFormProv(p=>({...p,cuit:e.target.value}))}
+                      onBlur={e=>setFormProv(p=>({...p,cuit:formatCuit(e.target.value)}))}/>
                   </div>
                   <div className="col-md-3">
                     <label className="form-label small fw-medium">Teléfono</label>
@@ -1470,12 +1844,12 @@ export default function Compras() {
                       </div>
                       <div className="col-md-2">
                         <label className="form-label small fw-medium">Precio costo</label>
-                        <input type="number" className="form-control" min="0" step="any" value={formNuevoMat.precio_costo}
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control" min="0" step="any" value={formNuevoMat.precio_costo}
                           onChange={e => setFormNuevoMat(p => ({...p, precio_costo: parseFloat(e.target.value)||0}))}/>
                       </div>
                       <div className="col-md-2">
                         <label className="form-label small fw-medium">Stock mínimo</label>
-                        <input type="number" className="form-control" min="0" step="any" value={formNuevoMat.stock_minimo}
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control" min="0" step="any" value={formNuevoMat.stock_minimo}
                           onChange={e => setFormNuevoMat(p => ({...p, stock_minimo: parseFloat(e.target.value)||0}))}/>
                       </div>
                       <div className="col-md-2">

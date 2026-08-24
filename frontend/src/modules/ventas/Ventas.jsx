@@ -4,6 +4,9 @@ import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
 import DateInput from '../../components/DateInput'
 import CRM from '../crm/CRM'
+import { formatCuit } from '../../utils/cuit'
+import { nextItemKey } from '../../utils/itemKey'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const fmtN = n => n != null ? new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n) : '—'
 const fmtF = s => s ? s.slice(0,10).split('-').reverse().join('/') : '—'
@@ -30,7 +33,7 @@ const FORM0  = () => ({
   fecha: hoy(), validez: '30 días', estado: 'Borrador', moneda: 'DÓLAR', tasa_cambio: '',
   condicion_pago: 'TRANSFERENCIA BANCARIA', lugar_entrega: 'E-INTRA',
   elaborado_por: '', observaciones: '',
-  items: [{ ...ITEM0 }],
+  items: [{ ...ITEM0, _key: nextItemKey() }],
 })
 const CLI0 = { nombre: '', cuit: '', contacto: '', telefono: '', email: '', direccion: '', localidad: '', cp: '', condicion_pago: '' }
 
@@ -132,7 +135,7 @@ export default function Ventas() {
 
   // ── Loaders ─────────────────────────────────────────────────────────────
   const cargarStats = useCallback(() => {
-    api.get('/ventas/stats').then(r => setStats(r.data)).catch(() => {})
+    api.get('/ventas/stats').then(r => setStats(r.data)).catch(e => console.error(e))
   }, [])
 
   const cargarPptos = useCallback(() => {
@@ -195,7 +198,7 @@ export default function Ventas() {
     })
   }
 
-  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { ...ITEM0 }] }))
+  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { ...ITEM0, _key: nextItemKey() }] }))
   const delItem = i => setForm(f => ({ ...f, items: f.items.filter((_, j) => j !== i) }))
 
   const totalPpto = form.items.reduce((s, it) =>
@@ -219,7 +222,7 @@ export default function Ventas() {
       moneda: p.moneda||'DÓLAR', tasa_cambio: p.tasa_cambio||'',
       condicion_pago: p.condicion_pago||'', lugar_entrega: p.lugar_entrega||'',
       elaborado_por: p.elaborado_por||'', observaciones: p.observaciones||'',
-      items: p.items?.length ? p.items : [{ ...ITEM0 }],
+      items: p.items?.length ? p.items.map(it => ({ ...it, _key: nextItemKey() })) : [{ ...ITEM0, _key: nextItemKey() }],
     })
     setCliQ(p.cli_nombre||'')
     setEditId(id); setEditNumero(p.numero||'')
@@ -257,8 +260,12 @@ export default function Ventas() {
   }
 
   const toggleActivo = async cli => {
-    await api.delete(`/ventas/clientes/${cli.id}`)
-    cargarClientes()
+    try {
+      await api.patch(`/ventas/clientes/${cli.id}/activo`)
+      cargarClientes()
+    } catch (e) {
+      alert(e.response?.data?.error || 'Error al cambiar el estado del cliente')
+    }
   }
 
   const totalPages = Math.ceil(totalPptos / LIMIT)
@@ -315,7 +322,8 @@ export default function Ventas() {
                 <div className="col-md-3">
                   <label className="form-label mb-1">CUIT</label>
                   <input className="form-control form-control-sm" value={form.cli_cuit}
-                    onChange={e => setForm(f => ({ ...f, cli_cuit: e.target.value }))} />
+                    onChange={e => setForm(f => ({ ...f, cli_cuit: e.target.value }))}
+                    onBlur={e => setForm(f => ({ ...f, cli_cuit: formatCuit(e.target.value) }))} />
                 </div>
                 <div className="col-md-4">
                   <label className="form-label mb-1">Contacto</label>
@@ -379,7 +387,7 @@ export default function Ventas() {
                 </div>
                 <div className="col-6 col-md-2">
                   <label className="form-label mb-1">T.C. ($/USD)</label>
-                  <input type="number" className="form-control form-control-sm" value={form.tasa_cambio}
+                  <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={form.tasa_cambio}
                     placeholder="0"
                     onChange={e => setForm(f => ({ ...f, tasa_cambio: e.target.value }))} />
                 </div>
@@ -437,10 +445,10 @@ export default function Ventas() {
                 </thead>
                 <tbody>
                   {form.items.map((it, i) => (
-                    <tr key={i}>
+                    <tr key={it.id ?? it._key ?? i}>
                       <td className="text-center text-muted align-middle">{i + 1}</td>
                       <td>
-                        <input type="number" className="form-control form-control-sm p-0 px-1 text-center border-0"
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm p-0 px-1 text-center border-0"
                           value={it.cantidad} min={0} step="any"
                           onChange={e => setItem(i, 'cantidad', e.target.value)} />
                       </td>
@@ -455,13 +463,13 @@ export default function Ventas() {
                           onChange={e => setItem(i, 'descripcion', e.target.value)} />
                       </td>
                       <td>
-                        <input type="number" className="form-control form-control-sm p-0 px-1 text-end border-0"
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm p-0 px-1 text-end border-0"
                           value={it.precio_unitario} min={0} step="any"
                           onChange={e => setItem(i, 'precio_unitario', e.target.value)} />
                       </td>
                       {['bonif1','bonif2','bonif3','bonif4'].map(b => (
                         <td key={b}>
-                          <input type="number" className="form-control form-control-sm p-0 px-1 text-center border-0"
+                          <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm p-0 px-1 text-center border-0"
                             value={it[b]} min={0} max={100} step="any"
                             onChange={e => setItem(i, b, e.target.value)} />
                         </td>
@@ -738,6 +746,7 @@ export default function Ventas() {
                         <input className="form-control form-control-sm"
                           value={formCli[k] || ''}
                           onChange={e => setFormCli(f => ({ ...f, [k]: e.target.value }))}
+                          onBlur={k === 'cuit' ? e => setFormCli(f => ({ ...f, cuit: formatCuit(e.target.value) })) : undefined}
                           required={!!req} />
                       </div>
                     ))}

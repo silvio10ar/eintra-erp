@@ -4,11 +4,23 @@ const { body, validationResult } = require('express-validator');
 const { db }  = require('../db/database');
 const { verificarToken, puede } = require('../middleware/auth');
 const { buscarCondicion } = require('../helpers/buscar');
+const { formatCuit } = require('../helpers/cuit');
+const { hoyArgentina } = require('../helpers/fecha');
 
 const router = express.Router();
 
 const puedeEscribirAdmin = (req) => req.usuario?.rol === 'admin' || req.permisos?.ventas?.escribir || req.permisos?.administracion?.escribir;
 const leerVentas = puede.leer('ventas');
+// Clientes: la secretaría los gestiona desde Administración (mismo caso que
+// facturas/saldos en finanzas.js) — el alta/edición ya aceptaba administracion
+// vía puedeEscribirAdmin, pero la lectura exigía únicamente "ventas".
+const leerVentasOAdministracion = (req, res, next) => {
+  const p = req.permisos || {};
+  if (req.usuario?.rol === 'admin' || p.ventas?.leer || p.ventas?.escribir || p.administracion?.leer || p.administracion?.escribir) {
+    return next();
+  }
+  return res.status(403).json({ error: 'Sin permisos de lectura' });
+};
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 router.get('/stats', verificarToken, leerVentas, (req, res) => {
@@ -29,7 +41,7 @@ router.get('/stats', verificarToken, leerVentas, (req, res) => {
 
 // ── Clientes ──────────────────────────────────────────────────────────────────
 
-router.get('/clientes', verificarToken, leerVentas, (req, res) => {
+router.get('/clientes', verificarToken, leerVentasOAdministracion, (req, res) => {
   const { buscar } = req.query;
   let where = '';
   const params = [];
@@ -52,7 +64,7 @@ router.post('/clientes', verificarToken, body('nombre').trim().notEmpty(), (req,
   }
   try {
     const r = db.prepare('INSERT INTO clientes (nombre,codigo,cuit,contacto,telefono,email,direccion,localidad,cp,condicion_pago) VALUES (?,?,?,?,?,?,?,?,?,?)')
-      .run(nombre, codigoNorm, cuit||'', contacto||'', telefono||'', email||'', direccion||'', localidad||'', cp||'', condicion_pago||'');
+      .run(nombre, codigoNorm, formatCuit(cuit), contacto||'', telefono||'', email||'', direccion||'', localidad||'', cp||'', condicion_pago||'');
     res.status(201).json(db.prepare('SELECT * FROM clientes WHERE id=?').get(r.lastInsertRowid));
   } catch(e) {
     if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'El cliente ya existe' });
@@ -71,10 +83,19 @@ router.put('/clientes/:id', verificarToken, (req, res) => {
     if (otro) return res.status(409).json({ error: `El código "${codigoNorm}" ya está en uso por otro cliente` });
   }
   db.prepare('UPDATE clientes SET nombre=?,codigo=?,cuit=?,contacto=?,telefono=?,email=?,direccion=?,localidad=?,cp=?,condicion_pago=? WHERE id=?')
-    .run(nombre??c.nombre, codigoNorm, cuit??c.cuit, contacto??c.contacto, telefono??c.telefono,
+    .run(nombre??c.nombre, codigoNorm, cuit!=null ? formatCuit(cuit) : c.cuit, contacto??c.contacto, telefono??c.telefono,
          email??c.email, direccion??c.direccion, localidad??c.localidad, cp??c.cp,
          condicion_pago??c.condicion_pago, req.params.id);
   res.json(db.prepare('SELECT * FROM clientes WHERE id=?').get(req.params.id));
+});
+
+router.patch('/clientes/:id/activo', verificarToken, (req, res) => {
+  if (!puedeEscribirAdmin(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const c = db.prepare('SELECT * FROM clientes WHERE id=?').get(req.params.id);
+  if (!c) return res.status(404).json({ error: 'No encontrado' });
+
+  db.prepare('UPDATE clientes SET activo = NOT activo WHERE id=?').run(c.id);
+  res.json(db.prepare('SELECT * FROM clientes WHERE id=?').get(c.id));
 });
 
 router.delete('/clientes/:id', verificarToken, (req, res) => {
@@ -137,11 +158,14 @@ router.post('/presupuestos', verificarToken, body('cli_nombre').trim().notEmpty(
           cli_direccion, cli_localidad, fecha, validez, estado, moneda, tasa_cambio,
           condicion_pago, lugar_entrega, elaborado_por, observaciones, items } = req.body;
 
-  const numero = nextNumeroPpto();
+  // El número se calcula DENTRO de la transacción, junto con el INSERT, para
+  // que dos altas casi simultáneas no puedan leer el mismo máximo y terminar
+  // con el mismo número.
   const trx = db.transaction(() => {
+    const numero = nextNumeroPpto();
     const r = db.prepare(`INSERT INTO presupuestos (numero,fecha,validez,cliente_id,cli_nombre,cli_cuit,cli_contacto,cli_telefono,cli_email,cli_direccion,cli_localidad,estado,moneda,tasa_cambio,condicion_pago,lugar_entrega,elaborado_por,observaciones,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(numero, fecha||new Date().toISOString().slice(0,10), validez||'30 días',
-           cliente_id||null, cli_nombre, cli_cuit||'', cli_contacto||'', cli_telefono||'',
+      .run(numero, fecha||hoyArgentina(), validez||'30 días',
+           cliente_id||null, cli_nombre, formatCuit(cli_cuit), cli_contacto||'', cli_telefono||'',
            cli_email||'', cli_direccion||'', cli_localidad||'', estado||'Borrador',
            moneda||'DÓLAR', tasa_cambio||0, condicion_pago||'TRANSFERENCIA BANCARIA',
            lugar_entrega||'E-INTRA', elaborado_por||'', observaciones||'', req.usuario.id);
@@ -171,7 +195,7 @@ router.put('/presupuestos/:id', verificarToken, (req, res) => {
 
   const trx = db.transaction(() => {
     db.prepare(`UPDATE presupuestos SET cliente_id=?,cli_nombre=?,cli_cuit=?,cli_contacto=?,cli_telefono=?,cli_email=?,cli_direccion=?,cli_localidad=?,fecha=?,validez=?,estado=?,moneda=?,tasa_cambio=?,condicion_pago=?,lugar_entrega=?,elaborado_por=?,observaciones=?,updated_at=datetime('now','localtime') WHERE id=?`)
-      .run(cliente_id??p.cliente_id, cli_nombre??p.cli_nombre, cli_cuit??p.cli_cuit,
+      .run(cliente_id??p.cliente_id, cli_nombre??p.cli_nombre, cli_cuit!=null ? formatCuit(cli_cuit) : p.cli_cuit,
            cli_contacto??p.cli_contacto, cli_telefono??p.cli_telefono, cli_email??p.cli_email,
            cli_direccion??p.cli_direccion, cli_localidad??p.cli_localidad,
            fecha??p.fecha, validez??p.validez, estado??p.estado,

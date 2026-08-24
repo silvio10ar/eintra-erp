@@ -3,6 +3,9 @@ import api from '../../api/client'
 import DateInput from '../../components/DateInput'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
 import { PREFIJOS, FAM_NOMBRES } from './prefijos'
+import { formatCuit } from '../../utils/cuit'
+import { nextItemKey } from '../../utils/itemKey'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const hoy  = () => new Date().toISOString().slice(0,10)
 const fmtF = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
@@ -16,7 +19,7 @@ const FORM_VACIO = {
   proveedor_id:'', proveedor_nombre:'', proveedor_cuit:'',
   fecha:hoy(), moneda:'PESOS', tasa_cambio:0, condicion_pago:'', lugar_entrega:'',
   proyecto:'', presupuesto_n:'', autorizado_por:'', elaborado_por:'', recibido_por:'', observaciones:'',
-  items:[{ ...FORM_ITEM }]
+  items:[{ ...FORM_ITEM, _key: nextItemKey() }]
 }
 
 export default function Form49({ canWrite, proveedores = [], productos = [], proyectos = [] }) {
@@ -80,12 +83,13 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
         recibido_por:    data.recibido_por || '',
         observaciones:   data.observaciones || '',
         items: data.items?.length ? data.items.map(i => ({
+          _key: nextItemKey(),
           descripcion: i.descripcion, cantidad: i.cantidad, unidad: i.unidad,
           n_parte: i.n_parte, n_serie: i.n_serie, n_lote: i.n_lote,
           precio_unitario: i.precio_unitario||0, precio_final: i.precio_final||0,
           plazo: i.plazo||'INMEDIATO',
           producto_id: i.producto_id||'', producto_codigo: i.producto_codigo||'',
-        })) : [{ ...FORM_ITEM }],
+        })) : [{ ...FORM_ITEM, _key: nextItemKey() }],
       })
       setError(''); setSugsP([]); setModal(data)
     } catch (e) { console.error(e) }
@@ -345,7 +349,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
   const setItem = (idx, campo, valor) =>
     setForm(f => ({ ...f, items: f.items.map((it, i) => i === idx ? { ...it, [campo]: valor } : it) }))
 
-  const addItem  = () => setForm(f => ({ ...f, items: [...f.items, { ...FORM_ITEM }] }))
+  const addItem  = () => setForm(f => ({ ...f, items: [...f.items, { ...FORM_ITEM, _key: nextItemKey() }] }))
   const delItem  = (idx) => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }))
 
   const buscarProductoItem = (idx, val) => {
@@ -646,6 +650,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                       <label className="form-label small fw-medium mb-1">CUIT</label>
                       <input className="form-control form-control-sm" value={form.proveedor_cuit}
                         onChange={e => setForm(f => ({ ...f, proveedor_cuit: e.target.value }))}
+                        onBlur={e => setForm(f => ({ ...f, proveedor_cuit: formatCuit(e.target.value) }))}
                         placeholder="xx-xxxxxxxx-x" />
                     </div>
                     <div className="col-md-2">
@@ -662,7 +667,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                     </div>
                     <div className="col-md-1">
                       <label className="form-label small fw-medium mb-1">TC</label>
-                      <input type="number" className="form-control form-control-sm" value={form.tasa_cambio}
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={form.tasa_cambio}
                         min="0" step="any" onChange={e => setForm(f => ({ ...f, tasa_cambio: e.target.value }))} />
                     </div>
                     <div className="col-md-2">
@@ -740,7 +745,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                     </thead>
                     <tbody>
                       {form.items.map((it, idx) => (
-                        <tr key={idx} style={!it.producto_id ? { background: '#fff8e1' } : {}}>
+                        <tr key={it._key ?? idx} style={!it.producto_id ? { background: '#fff8e1' } : {}}>
                           <td className="text-muted text-center align-middle">{idx+1}</td>
                           <td className="align-middle" style={{verticalAlign:'middle'}}>
                             {it.producto_id
@@ -860,11 +865,11 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                               onChange={e => setItem(idx, 'unidad', e.target.value)} />
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 text-end" value={it.cantidad}
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 text-end" value={it.cantidad}
                               onChange={e => setItem(idx, 'cantidad', e.target.value)} min="0" step="any" />
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 text-end" value={it.precio_unitario}
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 text-end" value={it.precio_unitario}
                               onChange={e => {
                                 const v = parseFloat(e.target.value)||0
                                 setForm(f => ({ ...f, items: f.items.map((x, i) =>
@@ -873,7 +878,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                               }} min="0" step="any" />
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 text-end fw-semibold" value={it.precio_final}
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 text-end fw-semibold" value={it.precio_final}
                               onChange={e => setItem(idx, 'precio_final', parseFloat(e.target.value)||0)} min="0" step="any" />
                           </td>
                           <td className="text-end align-middle pe-2 text-muted">
@@ -1010,7 +1015,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                         </div>
                         <div className="col-md-1">
                           <label className="form-label small fw-medium mb-1">TC</label>
-                          <input type="number" className="form-control form-control-sm" value={modalOCProv.tc}
+                          <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={modalOCProv.tc}
                             min="0" step="any" onChange={e => setModalOCProv(p => ({ ...p, tc: e.target.value }))} />
                         </div>
                         <div className="col-md-3">
@@ -1194,7 +1199,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                                       <td className="text-center align-middle">{it.unidad}</td>
                                       <td className="text-end align-middle fw-semibold">{fmtN(it.cantidad)}</td>
                                       <td>
-                                        <input type="number" className="form-control form-control-sm border-0 text-end"
+                                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 text-end"
                                           value={pu} min="0" step="any" disabled={!sel}
                                           onChange={e => {
                                             const v = parseFloat(e.target.value)||0
@@ -1203,7 +1208,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                                           }} />
                                       </td>
                                       <td>
-                                        <input type="number" className="form-control form-control-sm border-0 text-end fw-semibold"
+                                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 text-end fw-semibold"
                                           value={pf} min="0" step="any" disabled={!sel}
                                           onChange={e => setItemEditOCProv(it.id, 'precio_final', parseFloat(e.target.value)||0)} />
                                       </td>
@@ -1295,7 +1300,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                     </div>
                     <div className="col-md-1">
                       <label className="form-label small fw-medium mb-1">TC</label>
-                      <input type="number" className="form-control form-control-sm" value={modalGenOC.tc}
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={modalGenOC.tc}
                         min="0" step="any" onChange={e => setModalGenOC(p => ({ ...p, tc: e.target.value }))} />
                     </div>
                     <div className="col-md-2">
@@ -1336,7 +1341,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                           <td className="align-middle text-center">{it.unidad}</td>
                           <td className="align-middle text-end fw-semibold">{fmtN(it.cantidad)}</td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 text-end"
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 text-end"
                               value={it.precio_unitario} min="0" step="any"
                               onChange={e => {
                                 const v = parseFloat(e.target.value)||0
@@ -1345,7 +1350,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                               }} />
                           </td>
                           <td>
-                            <input type="number" className="form-control form-control-sm border-0 text-end fw-semibold"
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 text-end fw-semibold"
                               value={it.precio_final} min="0" step="any"
                               onChange={e => setGenOCItem(idx, 'precio_final', parseFloat(e.target.value)||0)} />
                           </td>

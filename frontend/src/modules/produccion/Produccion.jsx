@@ -4,6 +4,7 @@ import { puedeEscribir } from '../../store/authStore'
 import DateInput from '../../components/DateInput'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
 import { fmtHorasDecimal } from '../../utils/horas'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 const ESTADOS     = ['Pendiente', 'En proceso', 'Pausada', 'Completada', 'Cancelada']
 const PRIORIDADES = ['Normal', 'Alta', 'Urgente']
@@ -64,7 +65,10 @@ export default function Produccion() {
   }, [page, fEstado, fPrioridad, fProyecto, buscar])
 
   useEffect(() => { cargar() }, [cargar])
-  useEffect(() => { api.get('/proyectos').then(r => setProyectos(r.data)).catch(() => {}) }, [])
+  // /rrhh/proyectos: listado liviano sin costos, abierto a cualquier usuario
+  // autenticado — evita que este selector quede vacío para quien no tiene
+  // el permiso completo del módulo Proyectos.
+  useEffect(() => { api.get('/rrhh/proyectos').then(r => setProyectos(r.data)).catch(e => console.error(e)) }, [])
 
   const totalPags = Math.max(1, Math.ceil(total / limit))
 
@@ -124,6 +128,7 @@ export default function Produccion() {
     } catch { alert('Error al actualizar la tarea') }
   }
   const eliminarTarea = async t => {
+    if (!window.confirm('¿Eliminar esta tarea?')) return
     try {
       await api.delete(`/produccion/${detalle.id}/tareas/${t.id}`)
       setDetalle(d => ({ ...d, tareas: d.tareas.filter(x => x.id !== t.id) }))
@@ -526,7 +531,7 @@ export default function Produccion() {
                   </div>
                   <div className="col-6">
                     <label className="form-label small fw-medium">Horas</label>
-                    <input type="number" step="0.5" min="0" className="form-control form-control-sm" value={formParte.horas}
+                    <input type="number" onPaste={manejarPegadoNumero} step="0.5" min="0" className="form-control form-control-sm" value={formParte.horas}
                       onChange={e => setFormParte(p => ({ ...p, horas: e.target.value }))} />
                   </div>
                   <div className="col-12">

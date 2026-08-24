@@ -3,6 +3,8 @@ const express  = require('express')
 const multer   = require('multer')
 const { db }   = require('../db/database')
 const { verificarToken } = require('../middleware/auth')
+const { formatCuit } = require('../helpers/cuit')
+const { tasaCambioSistema } = require('../helpers/tipoCambio')
 
 const router = express.Router()
 
@@ -99,11 +101,16 @@ router.post('/guardar-compra', verificarToken, (req, res) => {
     tipo_factura = 'A', numero, fecha = '', proveedor_nombre = '',
     proveedor_id, cuit = '', oc_id, oc_numero = '',
     importe = 0, neto_gravado = 0, iva_21 = 0,
-    moneda = 'PESO', tasa_cambio = 1, condicion_pago = '', observaciones = '',
+    moneda = 'PESO', tasa_cambio, condicion_pago = '', observaciones = '',
     crear_f49 = false, f49_items = [],
   } = req.body
 
   if (!numero?.trim()) return res.status(400).json({ error: 'Falta número de factura' })
+  const cuitFmt = formatCuit(cuit)
+  // Si no viene una tasa explícita, se toma la del sistema a la fecha de la
+  // factura (nunca un default fijo de 1 — con moneda extranjera eso guardaría
+  // el importe real como si fuera pesos, ver auditoría de integridad de datos).
+  const tasaCambioEfectiva = tasa_cambio ? parseFloat(tasa_cambio) : (tasaCambioSistema(moneda, fecha) || 1)
 
   const { facturaId, f49_numero } = db.transaction(() => {
     const r = db.prepare(`
@@ -112,9 +119,9 @@ router.post('/guardar-compra', verificarToken, (req, res) => {
          neto_gravado,iva_21,importe,moneda,tasa_cambio,observaciones,created_by)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(tipo_factura, numero.trim(), fecha, proveedor_id || null, proveedor_nombre,
-      cuit, oc_id || null, oc_numero,
+      cuitFmt, oc_id || null, oc_numero,
       parseFloat(neto_gravado) || 0, parseFloat(iva_21) || 0, parseFloat(importe) || 0,
-      moneda, parseFloat(tasa_cambio) || 1, observaciones, req.usuario.id)
+      moneda, tasaCambioEfectiva, observaciones, req.usuario.id)
 
     // Actualizar OC vinculada
     if (oc_id) {
@@ -136,8 +143,8 @@ router.post('/guardar-compra', verificarToken, (req, res) => {
           (numero,fecha,proveedor_id,proveedor_nombre,proveedor_cuit,condicion_pago,
            moneda,tasa_cambio,observaciones,created_by)
         VALUES (?,?,?,?,?,?,?,?,?,?)
-      `).run(f49_numero, fecha, proveedor_id || null, proveedor_nombre, cuit,
-        condicion_pago, moneda, parseFloat(tasa_cambio) || 1,
+      `).run(f49_numero, fecha, proveedor_id || null, proveedor_nombre, cuitFmt,
+        condicion_pago, moneda, tasaCambioEfectiva,
         `Generado desde factura ${numero.trim()}`, req.usuario.id)
 
       const fid = fRow.lastInsertRowid
@@ -164,17 +171,18 @@ router.post('/guardar-venta', verificarToken, (req, res) => {
   if (!puedeVentas(req)) return res.status(403).json({ error: 'Sin permisos' })
   const {
     tipo_factura = 'A', numero, fecha = '', cliente_nombre = '', cliente_id,
-    oc = '', importe = 0, moneda = 'PESO', tasa_cambio = 1, observaciones = '',
+    oc = '', importe = 0, moneda = 'PESO', tasa_cambio, observaciones = '',
   } = req.body
 
   if (!numero?.trim()) return res.status(400).json({ error: 'Falta número de factura' })
+  const tasaCambioEfectiva = tasa_cambio ? parseFloat(tasa_cambio) : (tasaCambioSistema(moneda, fecha) || 1)
 
   const r = db.prepare(`
     INSERT INTO facturas_venta
       (tipo_factura,numero,fecha,cliente_id,cliente_nombre,oc,importe,moneda,tasa_cambio,observaciones,created_by)
     VALUES (?,?,?,?,?,?,?,?,?,?,?)
   `).run(tipo_factura, numero.trim(), fecha, cliente_id || null, cliente_nombre,
-    oc, parseFloat(importe) || 0, moneda, parseFloat(tasa_cambio) || 1,
+    oc, parseFloat(importe) || 0, moneda, tasaCambioEfectiva,
     observaciones, req.usuario.id)
 
   res.status(201).json({ id: r.lastInsertRowid })

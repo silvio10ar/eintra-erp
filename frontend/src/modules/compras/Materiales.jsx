@@ -1,20 +1,48 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
 import { PREFIJOS, FAM_NOMBRES } from './prefijos'
+import { manejarPegadoNumero } from '../../utils/numero'
 
 
 const FORM_VACIO = {
   codigo:'', descripcion:'', categoria:'', unidad:'UND.',
-  stock_minimo:0, ubicacion:'', precio_costo:0, precio_venta:0, proveedor:'',
-  codigo_generado: 0,
+  stock_minimo:0, ubicacion:'', precio_costo:0, precio_moneda:'PESOS', precio_venta:0, proveedor:'',
+  codigo_generado: 0, precio_critico: 0, precio_frecuencia_dias: 0,
+}
+
+const FRECUENCIAS_PRECIO = [
+  { v: 30,  l: 'Mensual' },
+  { v: 90,  l: 'Trimestral' },
+  { v: 180, l: 'Semestral' },
+  { v: 365, l: 'Anual' },
+]
+
+const fmtPesos   = n => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n ?? 0)
+const fmtDolares = n => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(n ?? 0)
+const fmtEuros   = n => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n ?? 0)
+// La moneda en la que se cargó el precio se muestra en negrita — las otras
+// dos son la conversión (vía tipo de cambio del sistema) hecha por el backend.
+const esPesos = m => !m || m === 'PESO' || m === 'PESOS'
+const esMonedaCargada = (item, moneda) => moneda === 'PESOS' ? esPesos(item.precio_moneda) : item.precio_moneda === moneda
+const fmtFechaPrecio = iso => {
+  if (!iso) return null
+  const d = new Date(iso.slice(0, 10) + 'T00:00:00')
+  return isNaN(d) ? null : d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+// Precio vencido: es crítico, tiene frecuencia configurada y ya pasó esa cantidad de días desde precio_fecha.
+const precioVencido = item => {
+  if (!item.precio_critico || !item.precio_frecuencia_dias || !item.precio_fecha) return false
+  const dias = (Date.now() - new Date(item.precio_fecha.slice(0, 10) + 'T00:00:00').getTime()) / 86400000
+  return dias >= item.precio_frecuencia_dias
 }
 
 export default function Materiales() {
   const [items,        setItems]        = useState([])
-  const [loading,      setLoading]      = useState(true)
+  const [loading,      setLoading]      = useState(false)
   const [buscar,       setBuscar]       = useState('')
   const [filFam,       setFilFam]       = useState('')
   const [filAlerta,    setFilAlerta]    = useState('')
+  const [soloVencidos, setSoloVencidos] = useState(false)
   const [modal,        setModal]        = useState(null)
   const [paso,         setPaso]         = useState('codigo')
   const [form,         setForm]         = useState(FORM_VACIO)
@@ -32,24 +60,74 @@ export default function Materiales() {
   const [desgloseItem, setDesgloseItem] = useState(null)
   const [desgloseData, setDesgloseData] = useState(null)
   const [desgloseLoad, setDesgloseLoad] = useState(false)
+  // Materiales con un "pedido de precio" pendiente hacia Administración —
+  // Map producto_id -> id del pedido (hace falta el id para poder cancelarlo).
+  const [pedidosPrecio,  setPedidosPrecio]  = useState(new Map())
+  const [pidiendoPrecio, setPidiendoPrecio] = useState(null)
+  const [cancelandoPrecio, setCancelandoPrecio] = useState(null)
 
-  const cargar = useCallback((q = buscar) => {
+  // Con miles de materiales en el catálogo real, traer todo de entrada es lo
+  // que hacía sentir lenta la pantalla — ahora no se pide nada hasta que haya
+  // al menos un criterio (texto de 2+ caracteres, familia, alerta o vencidos).
+  const hayFiltro = buscar.trim().length >= 2 || !!filFam || !!filAlerta || soloVencidos
+
+  const cargar = useCallback(() => {
+    if (!hayFiltro) { setItems([]); return }
     setLoading(true)
-    api.get('/materiales', { params: q ? { buscar: q } : {} })
+    api.get('/materiales', { params: {
+      buscar: buscar.trim() || undefined,
+      familia: filFam || undefined,
+      alerta: filAlerta || undefined,
+      soloVencidos: soloVencidos ? '1' : undefined,
+    }})
       .then(r => setItems(r.data))
-      .catch(() => {})
+      .catch(e => console.error(e))
       .finally(() => setLoading(false))
-  }, [buscar])
+  }, [buscar, filFam, filAlerta, soloVencidos, hayFiltro])
+
+  const cargarPedidosPrecio = useCallback(() => {
+    api.get('/pedidos-precio/pendientes-ids')
+      .then(r => setPedidosPrecio(new Map(r.data.map(p => [p.producto_id, p.id]))))
+      .catch(e => console.error(e))
+  }, [])
+
+  useEffect(() => { cargarPedidosPrecio() }, [cargarPedidosPrecio])
+
+  const pedirPrecio = async item => {
+    setPidiendoPrecio(item.id)
+    try {
+      const { data } = await api.post('/pedidos-precio', { producto_id: item.id })
+      setPedidosPrecio(prev => new Map(prev).set(item.id, data.id))
+    } catch (e) {
+      alert(e.response?.data?.error || 'No se pudo enviar el pedido de precio')
+    } finally { setPidiendoPrecio(null) }
+  }
+
+  // Cancelar un pedido de precio pendiente desde la propia lista de Materiales
+  // — antes solo se podía ver que estaba pedido, no había forma de cancelarlo
+  // sin ir a Administración (y ahí tampoco se podía, ver fix del backend).
+  const cancelarPedidoPrecio = async item => {
+    const pedidoId = pedidosPrecio.get(item.id)
+    if (!pedidoId) return
+    if (!confirm(`¿Cancelar el pedido de precio de "${item.descripcion}"?`)) return
+    setCancelandoPrecio(item.id)
+    try {
+      await api.delete(`/pedidos-precio/${pedidoId}`)
+      setPedidosPrecio(prev => { const next = new Map(prev); next.delete(item.id); return next })
+    } catch (e) {
+      alert(e.response?.data?.error || 'No se pudo cancelar el pedido de precio')
+    } finally { setCancelandoPrecio(null) }
+  }
 
   useEffect(() => {
-    cargar('')
-    api.get('/compras/proveedores').then(r => setProvsList(r.data)).catch(() => {})
+    api.get('/compras/proveedores').then(r => setProvsList(r.data)).catch(e => console.error(e))
   }, [])
 
   useEffect(() => {
-    const t = setTimeout(() => cargar(buscar), 300)
+    if (!hayFiltro) { setItems([]); setLoading(false); return }
+    const t = setTimeout(cargar, 300)
     return () => clearTimeout(t)
-  }, [buscar])
+  }, [cargar, hayFiltro])
 
   // Fetch siguiente código disponible al seleccionar prefijo
   useEffect(() => {
@@ -67,7 +145,7 @@ export default function Materiales() {
     setForm(FORM_VACIO); setErr(''); setPaso('codigo'); resetSelector(); setModal('nuevo')
   }
   const abrirEditar = item => {
-    setForm({ ...item, codigo_generado: item.codigo_generado || 0 })
+    setForm({ ...item, codigo_generado: item.codigo_generado || 0, precio_moneda: item.precio_moneda || 'PESOS' })
     setErr(''); setPaso('datos'); setModal(item)
   }
   const cerrar = () => { setModal(null); resetSelector() }
@@ -87,11 +165,16 @@ export default function Materiales() {
     setSaving(true); setErr('')
     try {
       if (modal === 'nuevo') {
-        await api.post('/materiales', form)
+        const { data } = await api.post('/materiales', form)
+        cerrar()
+        // Sin esto, si no había ningún filtro activo (caso típico al dar de
+        // alta desde el asistente de código) el material recién creado no
+        // aparecería en ningún lado — buscarlo por su propio código lo muestra.
+        setBuscar(data.codigo)
       } else {
         await api.put(`/materiales/${modal.id}`, form)
+        cerrar(); cargar()
       }
-      cerrar(); cargar(buscar)
     } catch(e) {
       setErr(e.response?.data?.error || 'Error al guardar')
     } finally { setSaving(false) }
@@ -102,7 +185,7 @@ export default function Materiales() {
     if (!confirm(`¿Eliminar "${item.descripcion}"?`)) return
     try {
       await api.delete(`/materiales/${item.id}`)
-      cargar(buscar)
+      cargar()
     } catch(e) {
       alert(e.response?.data?.error || 'No se pudo eliminar')
     }
@@ -121,7 +204,7 @@ export default function Materiales() {
         codigo: codPropuesto,
         codigo_generado: 1,
       })
-      setModalCodigo(null); resetSelector(); cargar(buscar)
+      setModalCodigo(null); resetSelector(); cargar()
     } catch(e) {
       alert(e.response?.data?.error || 'Error al guardar')
     } finally { setSavingCodigo(false) }
@@ -141,14 +224,12 @@ export default function Materiales() {
   const getFamKey   = cod => cod?.[0] || ''
 
   const esNuevo = modal === 'nuevo'
-  const fams = [...new Set(items.map(i => getFamKey(i.codigo)).filter(k => FAM_NOMBRES[k]))].sort()
-  const itemsFiltrados = items.filter(i => {
-    if (filFam && getFamKey(i.codigo) !== filFam) return false
-    if (filAlerta === 'ok')      return i.stock_actual > 0
-    if (filAlerta === 'bajo')    return i.stock_actual > 0 && i.stock_minimo > 0 && i.stock_actual <= i.stock_minimo
-    if (filAlerta === 'agotado') return i.stock_actual <= 0
-    return true
-  })
+  // Antes se derivaba de los materiales ya cargados — ahora que no se carga
+  // nada de entrada, sale directo del listado estático de familias posibles.
+  const fams = Object.keys(FAM_NOMBRES).sort()
+  // El filtrado (familia/alerta/vencidos) ahora lo hace el backend (ver
+  // GET /materiales) — acá solo queda lo que llegó ya filtrado.
+  const itemsFiltrados = items
 
   return (
     <div>
@@ -194,19 +275,28 @@ export default function Materiales() {
               onClick={() => setFilAlerta(v)}>{l}</button>
           ))}
         </div>
+        <button className={`btn btn-sm ${soloVencidos ? 'btn-danger' : 'btn-outline-danger'}`}
+          onClick={() => setSoloVencidos(v => !v)}>
+          <i className="bi bi-exclamation-triangle-fill me-1"/>Precios vencidos
+        </button>
       </div>
 
       {/* Tabla */}
       <div className="card">
         <div className="card-body p-0">
-          {loading ? (
+          {!hayFiltro ? (
+            <div className="text-center py-5 text-muted">
+              <i className="bi bi-search fs-3 d-block mb-2"/>
+              Escribí al menos 2 caracteres para buscar, o elegí una familia / filtro
+            </div>
+          ) : loading ? (
             <div className="text-center py-5 text-muted">
               <span className="spinner-border spinner-border-sm me-2"/>Cargando...
             </div>
           ) : itemsFiltrados.length === 0 ? (
             <div className="text-center py-5 text-muted">
               <i className="bi bi-inbox fs-3 d-block mb-2"/>
-              {buscar || filFam || filAlerta ? 'Sin resultados para los filtros aplicados' : 'No hay materiales en el catálogo'}
+              Sin resultados para los filtros aplicados
             </div>
           ) : (
             <div className="table-responsive">
@@ -220,6 +310,7 @@ export default function Materiales() {
                     <th style={{width:70}}>Unidad</th>
                     <th className="text-end" style={{width:70}}>Stock</th>
                     <th style={{width:60}}>S.Mín</th>
+                    <th className="text-end" style={{width:135}}>Precio costo</th>
                     <th>Proveedor</th>
                     <th style={{width:95}}></th>
                   </tr>
@@ -260,6 +351,51 @@ export default function Materiales() {
                         </span>
                       </td>
                       <td className="text-muted small text-center">{item.stock_minimo || '—'}</td>
+                      <td className="text-end small">
+                        {item.precio_costo > 0 ? (
+                          <div className="d-flex flex-column align-items-end" style={{ fontSize: '0.78rem', lineHeight: 1.3 }}>
+                            <span className={esMonedaCargada(item, 'PESOS') ? 'fw-bold text-dark' : 'text-muted'}>
+                              {item.precio_pesos != null ? fmtPesos(item.precio_pesos) : '—'}
+                            </span>
+                            <span className={esMonedaCargada(item, 'DÓLAR') ? 'fw-bold text-dark' : 'text-muted'}>
+                              {item.precio_dolares != null ? fmtDolares(item.precio_dolares) : '—'}
+                            </span>
+                            <span className={esMonedaCargada(item, 'EURO') ? 'fw-bold text-dark' : 'text-muted'}>
+                              {item.precio_euros != null ? fmtEuros(item.precio_euros) : '—'}
+                            </span>
+                          </div>
+                        ) : <span className="text-muted">—</span>}
+                        {!!item.precio_critico && (
+                          <i className={`bi bi-alarm ms-1 ${precioVencido(item) ? 'text-danger' : 'text-muted'}`}
+                            title={`Precio crítico — revisión ${FRECUENCIAS_PRECIO.find(f => f.v === item.precio_frecuencia_dias)?.l.toLowerCase() || `cada ${item.precio_frecuencia_dias} días`}`}/>
+                        )}
+                        {fmtFechaPrecio(item.precio_fecha) && (
+                          <div className="text-muted" style={{ fontSize: '0.7rem' }}>
+                            Actualizado {fmtFechaPrecio(item.precio_fecha)}
+                          </div>
+                        )}
+                        {precioVencido(item) && (
+                          <div className="text-danger fw-semibold" style={{ fontSize: '0.7rem' }}>
+                            <i className="bi bi-exclamation-triangle-fill me-1" />Precio vencido
+                          </div>
+                        )}
+                        {pedidosPrecio.has(item.id) ? (
+                          <div className="d-flex align-items-center justify-content-end gap-1 text-warning" style={{ fontSize: '0.7rem' }}>
+                            <i className="bi bi-clock-history" />Precio pedido
+                            <button type="button" className="btn btn-link btn-sm p-0 text-decoration-none text-danger"
+                              style={{ fontSize: '0.7rem' }} disabled={cancelandoPrecio === item.id}
+                              onClick={() => cancelarPedidoPrecio(item)}>
+                              (cancelar)
+                            </button>
+                          </div>
+                        ) : (
+                          <button type="button" className="btn btn-link btn-sm p-0 d-block ms-auto text-decoration-none"
+                            style={{ fontSize: '0.7rem' }} disabled={pidiendoPrecio === item.id}
+                            onClick={() => pedirPrecio(item)}>
+                            <i className="bi bi-cash-coin me-1" />Pedir precio
+                          </button>
+                        )}
+                      </td>
                       <td>
                         <span className="text-muted small text-truncate d-block" style={{maxWidth:180}}>
                           {item.proveedor || '—'}
@@ -345,7 +481,10 @@ export default function Materiales() {
                   </>
                 ) : (
                   <form id="form-mat" onSubmit={guardar}>
-                    <div className="row g-2">
+                    <p className="text-uppercase text-muted fw-semibold mb-2" style={{fontSize:'0.72rem', letterSpacing:'0.5px'}}>
+                      Identificación
+                    </p>
+                    <div className="row g-2 mb-3">
                       <div className="col-md-4">
                         <label className="form-label small fw-medium">Código *</label>
                         <div className="input-group">
@@ -366,6 +505,12 @@ export default function Materiales() {
                           value={form.descripcion}
                           onChange={e => setForm(p => ({...p, descripcion: e.target.value}))}/>
                       </div>
+                    </div>
+
+                    <p className="text-uppercase text-muted fw-semibold mb-2" style={{fontSize:'0.72rem', letterSpacing:'0.5px'}}>
+                      Clasificación y stock
+                    </p>
+                    <div className="row g-2 mb-3">
                       <div className="col-md-5">
                         <label className="form-label small fw-medium">Categoría</label>
                         <input className="form-control" value={form.categoria}
@@ -378,7 +523,7 @@ export default function Materiales() {
                       </div>
                       <div className="col-md-2">
                         <label className="form-label small fw-medium">Stock mínimo</label>
-                        <input className="form-control" type="number" min="0"
+                        <input className="form-control" type="number" onPaste={manejarPegadoNumero} min="0"
                           value={form.stock_minimo}
                           onChange={e => setForm(p => ({...p, stock_minimo: +e.target.value}))}/>
                       </div>
@@ -387,20 +532,35 @@ export default function Materiales() {
                         <input className="form-control" value={form.ubicacion}
                           onChange={e => setForm(p => ({...p, ubicacion: e.target.value}))}/>
                       </div>
-                      <div className="col-md-4">
+                    </div>
+
+                    <p className="text-uppercase text-muted fw-semibold mb-2" style={{fontSize:'0.72rem', letterSpacing:'0.5px'}}>
+                      Precio y proveedor
+                    </p>
+                    <div className="row g-2 mb-3">
+                      <div className="col-md-3">
                         <label className="form-label small fw-medium">Precio costo</label>
                         <div className="input-group input-group-sm">
                           <span className="input-group-text">$</span>
-                          <input className="form-control" type="number" min="0" step="0.01"
+                          <input className="form-control" type="number" onPaste={manejarPegadoNumero} min="0" step="0.01"
                             value={form.precio_costo}
                             onChange={e => setForm(p => ({...p, precio_costo: +e.target.value}))}/>
                         </div>
                       </div>
-                      <div className="col-md-4">
+                      <div className="col-md-2">
+                        <label className="form-label small fw-medium">Moneda</label>
+                        <select className="form-select form-select-sm" value={form.precio_moneda || 'PESOS'}
+                          onChange={e => setForm(p => ({...p, precio_moneda: e.target.value}))}>
+                          <option value="PESOS">Pesos</option>
+                          <option value="DÓLAR">Dólares</option>
+                          <option value="EURO">Euros</option>
+                        </select>
+                      </div>
+                      <div className="col-md-3">
                         <label className="form-label small fw-medium">Precio venta</label>
                         <div className="input-group input-group-sm">
                           <span className="input-group-text">$</span>
-                          <input className="form-control" type="number" min="0" step="0.01"
+                          <input className="form-control" type="number" onPaste={manejarPegadoNumero} min="0" step="0.01"
                             value={form.precio_venta}
                             onChange={e => setForm(p => ({...p, precio_venta: +e.target.value}))}/>
                         </div>
@@ -413,6 +573,29 @@ export default function Materiales() {
                           {provsList.map(p => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
                         </select>
                       </div>
+                    </div>
+
+                    <div className="border rounded p-3 bg-light bg-opacity-50">
+                      <div className="form-check">
+                        <input type="checkbox" className="form-check-input" id="chk-precio-critico"
+                          checked={!!form.precio_critico}
+                          onChange={e => setForm(p => ({...p, precio_critico: e.target.checked ? 1 : 0, precio_frecuencia_dias: e.target.checked ? (p.precio_frecuencia_dias || 30) : 0}))}/>
+                        <label className="form-check-label small fw-semibold" htmlFor="chk-precio-critico">
+                          <i className="bi bi-alarm me-1"/>Precio crítico — requiere revisión periódica
+                        </label>
+                      </div>
+                      {!!form.precio_critico && (
+                        <div className="mt-2" style={{ maxWidth: 240 }}>
+                          <label className="form-label small fw-medium">Frecuencia de revisión</label>
+                          <select className="form-select form-select-sm" value={form.precio_frecuencia_dias}
+                            onChange={e => setForm(p => ({...p, precio_frecuencia_dias: +e.target.value}))}>
+                            {FRECUENCIAS_PRECIO.map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
+                          </select>
+                          <p className="text-muted mb-0 mt-2" style={{ fontSize: '0.72rem' }}>
+                            Si pasa ese tiempo sin actualizar el precio, se genera solo un pedido de precio para Administración.
+                          </p>
+                        </div>
+                      )}
                     </div>
                     {err && <div className="alert alert-danger mt-3 py-2 small mb-0">{err}</div>}
                   </form>
