@@ -521,9 +521,14 @@ export default function PlanGantt({ proyecto, canWrite }) {
                         </div>
                         <div style={{ width: 64 }}>
                           <label className="form-label mb-0" style={{ fontSize: '0.7rem' }}>Avance %</label>
-                          <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" min={0} max={100}
-                            value={editData.avance}
-                            onChange={e => setEditData(d => ({ ...d, avance: parseInt(e.target.value) || 0 }))} />
+                          {editData.es_general ? (
+                            <input type="text" disabled className="form-control form-control-sm text-muted"
+                              value={`${t.avance}%`} title="Se calcula solo, como el promedio de avance de las tareas que componen este tramo." />
+                          ) : (
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" min={0} max={100}
+                              value={editData.avance}
+                              onChange={e => setEditData(d => ({ ...d, avance: parseInt(e.target.value) || 0 }))} />
+                          )}
                         </div>
                         <div>
                           <label className="form-label mb-0" style={{ fontSize: '0.7rem' }}>Color</label>

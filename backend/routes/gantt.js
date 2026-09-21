@@ -130,6 +130,29 @@ function recalcularFechas(proyectoId) {
   })()
 }
 
+// Tarea general: no tiene avance propio cargado a mano — se calcula solo,
+// como el promedio del avance de las tareas normales que la componen: las
+// que están, en el orden del plan, entre esta tarea general y la próxima (o
+// el final de la lista si es la última) — el mismo tramo que ya se ve
+// agrupado visualmente en el Gantt (barra angosta con puntas). Se recalcula
+// y persiste cada vez que cambia algo que puede afectarlo (crear/editar/
+// reordenar/eliminar una tarea), igual que recalcularFechas.
+function recalcularAvanceGeneral(proyectoId) {
+  const tareas = db.prepare('SELECT id, es_general, avance FROM proyecto_tarea WHERE proyecto_id=? ORDER BY orden, id').all(proyectoId)
+  const upd = db.prepare('UPDATE proyecto_tarea SET avance=? WHERE id=?')
+  db.transaction(() => {
+    for (let i = 0; i < tareas.length; i++) {
+      if (!tareas[i].es_general) continue
+      const componentes = []
+      for (let j = i + 1; j < tareas.length && !tareas[j].es_general; j++) componentes.push(tareas[j])
+      const nuevoAvance = componentes.length
+        ? Math.round(componentes.reduce((s, t) => s + (t.avance || 0), 0) / componentes.length)
+        : 0
+      if (nuevoAvance !== tareas[i].avance) upd.run(nuevoAvance, tareas[i].id)
+    }
+  })()
+}
+
 // ── GET todas las tareas de un proyecto ───────────────────────────────────────
 router.get('/proyecto/:proyectoId/tareas', (req, res) => {
   const { proyectoId } = req.params
@@ -221,6 +244,7 @@ router.post('/proyecto/:proyectoId/tareas', (req, res) => {
   })()
 
   recalcularFechas(proyectoId)
+  recalcularAvanceGeneral(proyectoId)
   res.status(201).json({ id, orden, predecesorasDescartadas })
 })
 
@@ -282,6 +306,7 @@ router.put('/proyecto/:proyectoId/tareas/:tareaId', (req, res) => {
   })()
 
   recalcularFechas(proyectoId)
+  recalcularAvanceGeneral(proyectoId)
   res.json({ ok: true, ciclosEvitados, terminaConDescartado, predecesorasDescartadas })
 })
 
@@ -295,6 +320,7 @@ router.put('/proyecto/:proyectoId/reordenar', (req, res) => {
   const upd = db.prepare('UPDATE proyecto_tarea SET orden=? WHERE id=? AND proyecto_id=?')
   ids.forEach((id, i) => upd.run(i + 1, id, proyectoId))
   recalcularFechas(proyectoId)
+  recalcularAvanceGeneral(proyectoId)
   res.json({ ok: true })
 })
 
@@ -304,6 +330,7 @@ router.delete('/proyecto/:proyectoId/tareas/:tareaId', (req, res) => {
   const { proyectoId, tareaId } = req.params
   db.prepare('DELETE FROM proyecto_tarea WHERE id=? AND proyecto_id=?').run(tareaId, proyectoId)
   recalcularFechas(proyectoId)
+  recalcularAvanceGeneral(proyectoId)
   res.json({ ok: true })
 })
 
@@ -453,6 +480,7 @@ router.post('/proyecto/:proyectoId/cargar-plantilla', (req, res) => {
   }
 
   recalcularFechas(proyectoId)
+  recalcularAvanceGeneral(proyectoId)
   res.json({ ok: true, insertadas: plantilla.length })
 })
 
@@ -496,3 +524,4 @@ router.post('/proyecto/:proyectoId/guardar-plantilla', (req, res) => {
 })
 
 module.exports = router
+module.exports.recalcularAvanceGeneral = recalcularAvanceGeneral

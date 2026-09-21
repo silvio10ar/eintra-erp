@@ -26,8 +26,11 @@ router.get('/', verificarToken, (req, res) => {
       COALESCE((SELECT COUNT(*) FROM proyecto_documentos WHERE proyecto_id=p.id AND lower(aplica)='aplica'), 0) AS docs_aplican,
       COALESCE((SELECT COUNT(*) FROM proyecto_documentos WHERE proyecto_id=p.id AND lower(aplica)='aplica' AND lower(estado)='realizado'), 0) AS docs_realizados,
       (SELECT COUNT(*) FROM proyecto_tarea WHERE proyecto_id=p.id) AS plan_tareas,
+      -- Las tareas generales (es_general) no son trabajo real, son un resumen
+      -- de las tareas que las componen — sumarlas acá contaría ese tramo dos
+      -- veces (una por sus componentes, otra por su propio avance calculado).
       (SELECT ROUND(SUM(avance*duracion_dias)*1.0 / NULLIF(SUM(duracion_dias),0))
-         FROM proyecto_tarea WHERE proyecto_id=p.id) AS plan_avance
+         FROM proyecto_tarea WHERE proyecto_id=p.id AND es_general=0) AS plan_avance
     FROM proyectos p
     ${where}
     ORDER BY CASE p.estado WHEN 'Cancelado' THEN 2 WHEN 'Completado' THEN 1 ELSE 0 END,

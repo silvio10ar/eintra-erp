@@ -3,6 +3,7 @@ const express = require('express')
 const { db } = require('../db/database')
 const { verificarToken } = require('../middleware/auth')
 const { encontrarRaiz } = require('../helpers/organigrama')
+const { recalcularAvanceGeneral } = require('./gantt')
 
 const router = express.Router()
 router.use(verificarToken)
@@ -138,6 +139,7 @@ router.patch('/tareas/:id', (req, res) => {
 
   db.prepare(`UPDATE proyecto_tarea SET estado=?, avance=?, observaciones=? WHERE id=?`)
     .run(estado, avance, observaciones ?? tarea.observaciones ?? '', tarea.id)
+  recalcularAvanceGeneral(tarea.proyecto_id)
   res.json(db.prepare('SELECT * FROM proyecto_tarea WHERE id=?').get(tarea.id))
 })
 
