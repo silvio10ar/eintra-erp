@@ -4,6 +4,7 @@ const cors    = require('cors');
 const path    = require('path');
 const fs      = require('fs');
 const { inicializar, db } = require('./db/database');
+const { generarCuotasDelMes } = require('./helpers/servicios');
 
 const app  = express();
 const PORT = process.env.PORT || 3002;
@@ -22,11 +23,44 @@ process.on('uncaughtException', (err) => {
 
 inicializar();
 
+// Genera las cuotas "pendiente, monto 0" de los servicios recurrentes del mes
+// en curso — al arrancar, y una vez por día para que el rollover de mes se
+// detecte sin depender de que el proceso se reinicie justo el día 1.
+function correrGeneracionCuotasServicios() {
+  try {
+    const generadas = generarCuotasDelMes();
+    if (generadas > 0) console.log(`[servicios] ${generadas} cuota(s) pendiente(s) generada(s) para el mes en curso.`);
+  } catch (e) {
+    console.error('[servicios] Error generando cuotas del mes:', e);
+  }
+}
+correrGeneracionCuotasServicios();
+setInterval(correrGeneracionCuotasServicios, 24 * 60 * 60 * 1000);
+
 if (!isProd) {
   app.use(cors({ origin: 'http://localhost:5174', credentials: true }));
 }
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Enmascara montos reales en cualquier respuesta JSON para un usuario cuyo
+// puesto está marcado `oculta_montos` (ej. Auditoría de Calidad) — ver
+// helpers/masking.js. Se registra acá, antes de montar las rutas, pero solo
+// ENVUELVE res.json sin invocarlo: para cuando efectivamente se manda la
+// respuesta (adentro del handler de cada ruta) verificarToken ya corrió y
+// req.usuario/req.permisos ya existen, así que el orden de registro no
+// afecta la lectura diferida de req.usuario. Es un override por-request (no
+// un patch al prototipo de Express), así que no hay riesgo de que una
+// request pise el res.json de otra.
+const { enmascarar, usuarioOcultaMontos } = require('./helpers/masking');
+app.use((req, res, next) => {
+  const original = res.json.bind(res);
+  res.json = body => {
+    if (req.usuario?.rol !== 'admin' && usuarioOcultaMontos(req.usuario?.id)) body = enmascarar(body);
+    return original(body);
+  };
+  next();
+});
 
 const uploadsDir = process.env.UPLOADS_PATH || path.resolve(__dirname, '../uploads');
 // Los documentos de Calidad son sensibles (pueden requerir revocarse el acceso
@@ -69,6 +103,8 @@ app.use('/api/v1/formularios',   require('./routes/formularios'));
 app.use('/api/v1/gantt',         require('./routes/gantt'));
 app.use('/api/v1/facturas',      require('./routes/facturas'));
 app.use('/api/v1/tareas-gerencia', require('./routes/tareasGerencia'));
+app.use('/api/v1/venta-repuestos', require('./routes/ventaRepuestos'));
+app.use('/api/v1/substock',        require('./routes/substock'));
 
 const frontendDist = isProd
   ? (process.env.FRONTEND_DIST || path.resolve(__dirname, '../frontend/dist'))

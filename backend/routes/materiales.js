@@ -1,14 +1,25 @@
 'use strict'
 const express = require('express')
+const XLSX = require('xlsx')
 const { body, validationResult } = require('express-validator')
 const { db } = require('../db/database')
 const { verificarToken } = require('../middleware/auth')
 const { buscarCondicion } = require('../helpers/buscar')
 const { tasaCambioSistema } = require('../helpers/tipoCambio')
 const { hoyArgentina } = require('../helpers/fecha')
+const { obtenerAutorizantes } = require('../helpers/organigrama')
 
 const router = express.Router()
 router.use(verificarToken)
+
+// Mismo criterio que ya usa Stock para exportar (admin ∪ gerentes de
+// gerencia, la misma lista que autoriza retiros/pagos) — no alcanza con el
+// permiso general de lectura de Materiales.
+function soloGerentes(req, res, next) {
+  if (!obtenerAutorizantes().some(u => u.id === req.usuario.id))
+    return res.status(403).json({ error: 'Solo gerentes y administradores' })
+  next()
+}
 
 // El precio de cada material se carga en la moneda que vino en la OC/factura
 // (precio_moneda) — para la lista se muestra también convertido a las otras
@@ -51,12 +62,8 @@ router.get('/next-codigo/:prefix', (req, res) => {
   res.json({ codigo: candidate })
 })
 
-// GET / — listado filtrado. El frontend no pide nada sin al menos un filtro
-// activo (buscar/familia/alerta/soloVencidos) — mostrar de entrada el catálogo
-// completo (miles de materiales) es lo que hacía sentir lenta la pantalla.
-router.get('/', (req, res) => {
-  if (!puedeL(req)) return res.status(403).json({ error: 'Sin permisos' })
-  const { buscar, familia, alerta, soloVencidos } = req.query
+// Compartido entre el listado y la exportación — mismos filtros, mismo orden.
+function buscarMateriales({ buscar, familia, alerta, soloVencidos }) {
   const conds = ['activo=1'], params = []
   if (buscar) {
     const b = buscarCondicion(buscar, ['codigo', 'descripcion', 'proveedor'])
@@ -73,7 +80,46 @@ router.get('/', (req, res) => {
   const hoy = hoyArgentina()
   const tcDolar = tasaCambioSistema('DÓLAR', hoy)
   const tcEuro = tasaCambioSistema('EURO', hoy)
-  res.json(rows.map(p => conPreciosConvertidos(p, tcDolar, tcEuro)))
+  return rows.map(p => conPreciosConvertidos(p, tcDolar, tcEuro))
+}
+
+// GET / — listado filtrado. El frontend no pide nada sin al menos un filtro
+// activo (buscar/familia/alerta/soloVencidos) — mostrar de entrada el catálogo
+// completo (miles de materiales) es lo que hacía sentir lenta la pantalla.
+router.get('/', (req, res) => {
+  if (!puedeL(req)) return res.status(403).json({ error: 'Sin permisos' })
+  res.json(buscarMateriales(req.query))
+})
+
+// Exportar a Excel el material filtrado (mismos filtros que el listado) —
+// solo gerentes y admin, igual criterio que ya usa Stock para exportar.
+router.get('/exportar', soloGerentes, (req, res) => {
+  if (!puedeL(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const rows = buscarMateriales(req.query)
+  const datos = rows.map(p => ({
+    'Código': p.codigo,
+    'Descripción': p.descripcion,
+    'Categoría': p.categoria,
+    'Unidad': p.unidad,
+    'Stock actual': p.stock_actual,
+    'Stock mínimo': p.stock_minimo,
+    'Ubicación': p.ubicacion,
+    'Proveedor': p.proveedor,
+    'Precio costo': p.precio_costo,
+    'Moneda': p.precio_moneda,
+    // Precio venta: sacado por ahora — sin definir todavía de dónde debería salir.
+    'Precio $': p.precio_pesos ?? '',
+    'Precio USD': p.precio_dolares ?? '',
+    'Precio EUR': p.precio_euros ?? '',
+    'Fecha precio': p.precio_fecha,
+    'Precio crítico': p.precio_critico ? 'Sí' : 'No',
+  }))
+  const ws = XLSX.utils.json_to_sheet(datos)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Materiales')
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', `attachment; filename=materiales_${hoyArgentina()}.xlsx`)
+  res.send(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }))
 })
 
 // POST / — crear producto (stock_actual siempre 0, no se expone)
@@ -84,13 +130,18 @@ router.post('/',
     if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
     const errs = validationResult(req)
     if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() })
-    const { codigo, descripcion, categoria, unidad, stock_minimo, ubicacion, precio_costo, precio_moneda, precio_venta, proveedor, codigo_generado, precio_critico, precio_frecuencia_dias } = req.body
+    const { codigo, descripcion, categoria, unidad, unidad_compra, stock_minimo, ubicacion, precio_costo, precio_moneda, precio_venta, proveedor, codigo_generado, precio_critico, precio_frecuencia_dias, trazabilidad_stock } = req.body
+    // Un material sin proveedor queda huérfano para trazabilidad de compras
+    // (no se puede saber a quién reclamarle, ni comparar precios) — se detectó
+    // que se estaban creando materiales nuevos sin este dato al vincularlos
+    // "al vuelo" desde la recepción de una OC o un Form49.
+    if (!proveedor?.trim()) return res.status(400).json({ error: 'Elegí el proveedor de este material' })
     const precio_fecha = (precio_costo || precio_venta) ? hoyArgentina() : ''
     try {
       const r = db.prepare(`
-        INSERT INTO productos (codigo, descripcion, categoria, unidad, stock_actual, stock_minimo, ubicacion, precio_costo, precio_moneda, precio_venta, proveedor, codigo_generado, precio_fecha, precio_critico, precio_frecuencia_dias)
-        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(codigo, descripcion, categoria||'', unidad||'UND.', stock_minimo||0, ubicacion||'', precio_costo||0, precio_moneda||'PESOS', precio_venta||0, proveedor||'', codigo_generado||0, precio_fecha, precio_critico ? 1 : 0, precio_frecuencia_dias||0)
+        INSERT INTO productos (codigo, descripcion, categoria, unidad, unidad_compra, stock_actual, stock_minimo, ubicacion, precio_costo, precio_moneda, precio_venta, proveedor, codigo_generado, precio_fecha, precio_critico, precio_frecuencia_dias, trazabilidad_stock)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(codigo, descripcion, categoria||'', unidad||'UND.', (unidad_compra||'').trim(), stock_minimo||0, ubicacion||'', precio_costo||0, precio_moneda||'PESOS', precio_venta||0, proveedor||'', codigo_generado||0, precio_fecha, precio_critico ? 1 : 0, precio_frecuencia_dias||0, trazabilidad_stock || 'ninguna')
       res.status(201).json(db.prepare('SELECT * FROM productos WHERE id=?').get(r.lastInsertRowid))
     } catch(e) {
       if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'El código ya existe' })
@@ -104,7 +155,7 @@ router.put('/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const p = db.prepare('SELECT * FROM productos WHERE id=? AND activo=1').get(req.params.id)
   if (!p) return res.status(404).json({ error: 'Producto no encontrado' })
-  const { codigo, descripcion, categoria, unidad, stock_minimo, ubicacion, precio_costo, precio_moneda, precio_venta, proveedor, codigo_generado, precio_critico, precio_frecuencia_dias } = req.body
+  const { codigo, descripcion, categoria, unidad, unidad_compra, stock_minimo, ubicacion, precio_costo, precio_moneda, precio_venta, proveedor, codigo_generado, precio_critico, precio_frecuencia_dias, trazabilidad_stock } = req.body
   if (!codigo?.trim() || !descripcion?.trim()) return res.status(400).json({ error: 'Código y descripción requeridos' })
   const nuevoCosto = precio_costo ?? p.precio_costo
   const nuevaVenta = precio_venta ?? p.precio_venta
@@ -115,13 +166,13 @@ router.put('/:id', (req, res) => {
   try {
     db.prepare(`
       UPDATE productos
-      SET codigo=?, descripcion=?, categoria=?, unidad=?, stock_minimo=?, ubicacion=?,
+      SET codigo=?, descripcion=?, categoria=?, unidad=?, unidad_compra=?, stock_minimo=?, ubicacion=?,
           precio_costo=?, precio_moneda=?, precio_venta=?, proveedor=?,
           codigo_generado=COALESCE(?, codigo_generado),
-          precio_fecha=?, precio_critico=?, precio_frecuencia_dias=?,
+          precio_fecha=?, precio_critico=?, precio_frecuencia_dias=?, trazabilidad_stock=?,
           updated_at=datetime('now','localtime')
       WHERE id=?
-    `).run(codigo, descripcion, categoria??p.categoria, unidad??p.unidad,
+    `).run(codigo, descripcion, categoria??p.categoria, unidad??p.unidad, (unidad_compra??p.unidad_compra)||'',
            stock_minimo??p.stock_minimo, ubicacion??p.ubicacion,
            nuevoCosto, nuevaMoneda, nuevaVenta,
            proveedor??p.proveedor,
@@ -129,6 +180,7 @@ router.put('/:id', (req, res) => {
            precio_fecha,
            precio_critico != null ? (precio_critico ? 1 : 0) : p.precio_critico,
            precio_frecuencia_dias ?? p.precio_frecuencia_dias,
+           trazabilidad_stock ?? p.trazabilidad_stock,
            req.params.id)
     res.json(db.prepare('SELECT * FROM productos WHERE id=?').get(req.params.id))
   } catch(e) {
@@ -142,7 +194,10 @@ router.delete('/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const p = db.prepare('SELECT stock_actual, descripcion FROM productos WHERE id=? AND activo=1').get(req.params.id)
   if (!p) return res.status(404).json({ error: 'Producto no encontrado' })
-  if (p.stock_actual !== 0)
+  // Mismo margen de tolerancia que ya usa stockLotes.js para comparar contra
+  // 0 — con muchos movimientos parciales, stock_actual puede quedar en algo
+  // como 0.00000000001 por arrastre de coma flotante en vez de exactamente 0.
+  if (Math.abs(p.stock_actual) > 0.0001)
     return res.status(409).json({ error: `No se puede eliminar: tiene ${p.stock_actual} unidades en stock` })
   db.prepare('UPDATE productos SET activo=0 WHERE id=?').run(req.params.id)
   res.json({ ok: true })

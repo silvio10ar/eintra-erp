@@ -30,7 +30,8 @@ router.get('/', verificarToken, (req, res) => {
          FROM proyecto_tarea WHERE proyecto_id=p.id) AS plan_avance
     FROM proyectos p
     ${where}
-    ORDER BY p.created_at DESC
+    ORDER BY CASE p.estado WHEN 'Cancelado' THEN 2 WHEN 'Completado' THEN 1 ELSE 0 END,
+      p.nombre COLLATE NOCASE
   `).all(...params)
   res.json(rows)
 })
@@ -126,9 +127,15 @@ router.get('/:id', verificarToken, (req, res) => {
   if (!puedeL(req)) return res.status(403).json({ error: 'Sin permisos' })
   const p = db.prepare('SELECT * FROM proyectos WHERE id=?').get(req.params.id)
   if (!p) return res.status(404).json({ error: 'No encontrado' })
-  const costos = db.prepare('SELECT * FROM proyecto_costos WHERE proyecto_id=? ORDER BY fecha DESC, id DESC').all(p.id)
+  // La columna se llama "total" en la tabla, pero se expone como
+  // "monto_total" acá — una clave llamada solo "total" no matchea ninguna
+  // raíz del enmascarado de montos (helpers/masking.js) y otras respuestas
+  // del sistema SÍ usan "total" para un conteo (no plata), así que el
+  // enmascarador no puede tratar la palabra sola como monto sin tapar esos
+  // conteos por error — "monto_total" sí matchea siempre, sin ambigüedad.
+  const costos = db.prepare('SELECT id,proyecto_id,tipo,descripcion,cantidad,precio_unit,total AS monto_total,fecha,origen,created_by FROM proyecto_costos WHERE proyecto_id=? ORDER BY fecha DESC, id DESC').all(p.id)
   const ots    = db.prepare('SELECT id,numero,descripcion,estado,responsable FROM ordenes_trabajo WHERE proyecto_id=? ORDER BY id DESC').all(p.id)
-  const total  = costos.reduce((s, c) => s + c.total, 0)
+  const total  = costos.reduce((s, c) => s + c.monto_total, 0)
   res.json({ ...p, costos, ordenes_trabajo: ots, costo_total: total })
 })
 
@@ -198,13 +205,20 @@ router.put('/:id', verificarToken, (req, res) => {
 // ── Costos ────────────────────────────────────────────────────────────────────
 router.post('/:id/costos', verificarToken, (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  // proyecto_id tiene FK NOT NULL contra proyectos(id) — sin este chequeo, un
+  // :id inválido no orfanaba la fila (la FK lo hubiera bloqueado igual), pero
+  // tiraba una excepción de constraint cruda en vez de un 404 claro.
+  if (!db.prepare('SELECT 1 FROM proyectos WHERE id=?').get(req.params.id))
+    return res.status(404).json({ error: 'Proyecto no encontrado' })
   const { tipo, descripcion, cantidad, precio_unit, fecha } = req.body
   const cant  = parseFloat(cantidad)    || 1
   const precio = parseFloat(precio_unit) || 0
   const r = db.prepare('INSERT INTO proyecto_costos (proyecto_id,tipo,descripcion,cantidad,precio_unit,total,fecha,origen,created_by) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(req.params.id, tipo || 'Material', descripcion || '', cant, precio, cant * precio,
          fecha || hoyArgentina(), 'manual', req.usuario.id)
-  res.status(201).json(db.prepare('SELECT * FROM proyecto_costos WHERE id=?').get(r.lastInsertRowid))
+  // "total AS monto_total": ver comentario en GET /:id sobre por qué no se
+  // expone la columna con su nombre real de tabla.
+  res.status(201).json(db.prepare('SELECT id,proyecto_id,tipo,descripcion,cantidad,precio_unit,total AS monto_total,fecha,origen,created_by FROM proyecto_costos WHERE id=?').get(r.lastInsertRowid))
 })
 
 router.delete('/:id/costos/:costo_id', verificarToken, (req, res) => {
@@ -277,13 +291,13 @@ router.get('/:id/entregas-doc', verificarToken, (req, res) => {
 
 router.post('/:id/entregas-doc', verificarToken, (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
-  const { fecha, nro_oc, formato, documento, plano_nivel, codigo_plano, tipo, individuo, comentarios } = req.body
+  const { fecha, nro_oc, formato, documento, plano_nivel, codigo_plano, tipo, individuo, comentarios, modulo } = req.body
   if (!fecha) return res.status(400).json({ error: 'La fecha es requerida' })
   const p = db.prepare('SELECT nombre FROM proyectos WHERE id=?').get(req.params.id)
   const r = db.prepare(`
-    INSERT INTO proyecto_entregas_doc (proyecto_id,proyecto_nombre,fecha,nro_oc,formato,documento,plano_nivel,codigo_plano,tipo,individuo,comentarios,created_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-  `).run(req.params.id, p?.nombre||'', fecha, nro_oc||'', formato||'', documento||'', plano_nivel||'', codigo_plano||'', tipo||'S', individuo||'', comentarios||'', req.usuario.id)
+    INSERT INTO proyecto_entregas_doc (proyecto_id,proyecto_nombre,fecha,nro_oc,formato,documento,plano_nivel,codigo_plano,tipo,individuo,comentarios,modulo,created_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(req.params.id, p?.nombre||'', fecha, nro_oc||'', formato||'', documento||'', plano_nivel||'', codigo_plano||'', tipo||'S', individuo||'', comentarios||'', parseInt(modulo)||0, req.usuario.id)
   res.status(201).json(db.prepare('SELECT * FROM proyecto_entregas_doc WHERE id=?').get(r.lastInsertRowid))
 })
 
@@ -291,10 +305,11 @@ router.put('/:id/entregas-doc/:ent_id', verificarToken, (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const ent = db.prepare('SELECT * FROM proyecto_entregas_doc WHERE id=? AND proyecto_id=?').get(req.params.ent_id, req.params.id)
   if (!ent) return res.status(404).json({ error: 'No encontrado' })
-  const { fecha, nro_oc, formato, documento, plano_nivel, codigo_plano, tipo, individuo, comentarios } = req.body
-  db.prepare(`UPDATE proyecto_entregas_doc SET fecha=?,nro_oc=?,formato=?,documento=?,plano_nivel=?,codigo_plano=?,tipo=?,individuo=?,comentarios=? WHERE id=?`)
+  const { fecha, nro_oc, formato, documento, plano_nivel, codigo_plano, tipo, individuo, comentarios, modulo } = req.body
+  db.prepare(`UPDATE proyecto_entregas_doc SET fecha=?,nro_oc=?,formato=?,documento=?,plano_nivel=?,codigo_plano=?,tipo=?,individuo=?,comentarios=?,modulo=? WHERE id=?`)
     .run(fecha??ent.fecha, nro_oc??ent.nro_oc, formato??ent.formato, documento??ent.documento,
          plano_nivel??ent.plano_nivel, codigo_plano??ent.codigo_plano, tipo??ent.tipo, individuo??ent.individuo, comentarios??ent.comentarios,
+         modulo!=null ? parseInt(modulo)||0 : ent.modulo,
          req.params.ent_id)
   res.json(db.prepare('SELECT * FROM proyecto_entregas_doc WHERE id=?').get(req.params.ent_id))
 })
@@ -326,12 +341,12 @@ router.get('/:id/materiales', verificarToken, (req, res) => {
 
 router.post('/:id/materiales', verificarToken, (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
-  const { producto_id, codigo, descripcion, unidad, cantidad, observaciones } = req.body
+  const { producto_id, codigo, descripcion, unidad, cantidad, observaciones, modulo } = req.body
   if (!descripcion?.trim()) return res.status(400).json({ error: 'La descripción es requerida' })
   const r = db.prepare(`
-    INSERT INTO proyecto_materiales (proyecto_id,producto_id,codigo,descripcion,unidad,cantidad,observaciones,created_by)
-    VALUES (?,?,?,?,?,?,?,?)
-  `).run(req.params.id, producto_id||null, codigo||'', descripcion.trim(), unidad||'UND.', parseFloat(cantidad)||1, observaciones||'', req.usuario.id)
+    INSERT INTO proyecto_materiales (proyecto_id,producto_id,codigo,descripcion,unidad,cantidad,observaciones,modulo,created_by)
+    VALUES (?,?,?,?,?,?,?,?,?)
+  `).run(req.params.id, producto_id||null, codigo||'', descripcion.trim(), unidad||'UND.', parseFloat(cantidad)||1, observaciones||'', parseInt(modulo)||0, req.usuario.id)
   res.status(201).json(db.prepare(SEL_MAT_ONE).get(r.lastInsertRowid))
 })
 
@@ -339,10 +354,11 @@ router.put('/:id/materiales/:mat_id', verificarToken, (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const mat = db.prepare('SELECT * FROM proyecto_materiales WHERE id=? AND proyecto_id=?').get(req.params.mat_id, req.params.id)
   if (!mat) return res.status(404).json({ error: 'No encontrado' })
-  const { producto_id, codigo, descripcion, unidad, cantidad, observaciones } = req.body
-  db.prepare(`UPDATE proyecto_materiales SET producto_id=?,codigo=?,descripcion=?,unidad=?,cantidad=?,observaciones=? WHERE id=?`)
+  const { producto_id, codigo, descripcion, unidad, cantidad, observaciones, modulo } = req.body
+  db.prepare(`UPDATE proyecto_materiales SET producto_id=?,codigo=?,descripcion=?,unidad=?,cantidad=?,observaciones=?,modulo=? WHERE id=?`)
     .run(producto_id??mat.producto_id, codigo??mat.codigo, descripcion??mat.descripcion,
-         unidad??mat.unidad, parseFloat(cantidad)||mat.cantidad, observaciones??mat.observaciones, req.params.mat_id)
+         unidad??mat.unidad, parseFloat(cantidad)||mat.cantidad, observaciones??mat.observaciones,
+         modulo!=null ? parseInt(modulo)||0 : mat.modulo, req.params.mat_id)
   res.json(db.prepare(SEL_MAT_ONE).get(req.params.mat_id))
 })
 

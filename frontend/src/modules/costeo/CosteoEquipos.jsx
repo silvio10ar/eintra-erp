@@ -3,9 +3,10 @@ import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
 import { nextItemKey } from '../../utils/itemKey'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
-const fmtUsd = n => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(n || 0)
-const fmtArs = n => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0)
+const fmtUsd = n => esMontoOculto(n) ? MONTO_OCULTO : new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(n || 0)
+const fmtArs = n => esMontoOculto(n) ? MONTO_OCULTO : new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0)
 const fmtFecha = iso => {
   if (!iso) return '—'
   const d = new Date(iso.slice(0, 10) + 'T00:00:00')
@@ -264,6 +265,13 @@ export default function CosteoEquipos() {
     setExportando(id)
     try {
       const { data } = await api.get(`/costeo-equipos/${id}`)
+      // El Excel arma subtotales con fórmulas numéricas por celda — no hay
+      // forma prolija de mostrar el sentinel ahí adentro. Antes de este
+      // chequeo, un precio oculto se colaba como 0 (parseFloat del
+      // sentinel), mostrando un Excel con costos "gratis" en vez de avisar
+      // que el dato está oculto.
+      const hayMontoOculto = (data.modulos || []).some(m => (m.items || []).some(it => esMontoOculto(it.precio_unitario)))
+      if (hayMontoOculto) { alert('Este costeo tiene montos ocultos para tu usuario — no se puede exportar a Excel.'); return }
       await generarExcelCosteo(data)
     } catch (e) {
       console.error(e)
@@ -308,21 +316,37 @@ export default function CosteoEquipos() {
     }))
 
   /* ── Cálculos en vivo ─────────────────────────────────────────────── */
+  // Si el precio_unitario de algún ítem vino enmascarado (usuario con
+  // "oculta_montos"), sumar el sentinel a un número da basura (concatenación
+  // de string) — en cambio, todo el subtotal que dependa de ese ítem queda
+  // igual de oculto que sus partes.
   const subtotalesModulo = m => {
     // "otro" (material fuera del catálogo, cargado a mano) cuenta como material para costo/margen.
-    const material = m.items.filter(i => i.tipo === 'material' || i.tipo === 'otro').reduce((s, i) => s + (parseFloat(i.cantidad) || 0) * (parseFloat(i.precio_unitario) || 0), 0)
-    const manoObra = m.items.filter(i => i.tipo === 'mano_obra').reduce((s, i) => s + (parseFloat(i.cantidad) || 0) * (parseFloat(i.precio_unitario) || 0), 0)
-    return { material, manoObra, total: material + manoObra }
+    const itemsMaterial = m.items.filter(i => i.tipo === 'material' || i.tipo === 'otro')
+    const itemsManoObra = m.items.filter(i => i.tipo === 'mano_obra')
+    const material = itemsMaterial.some(i => esMontoOculto(i.precio_unitario))
+      ? MONTO_OCULTO
+      : itemsMaterial.reduce((s, i) => s + (parseFloat(i.cantidad) || 0) * (parseFloat(i.precio_unitario) || 0), 0)
+    const manoObra = itemsManoObra.some(i => esMontoOculto(i.precio_unitario))
+      ? MONTO_OCULTO
+      : itemsManoObra.reduce((s, i) => s + (parseFloat(i.cantidad) || 0) * (parseFloat(i.precio_unitario) || 0), 0)
+    const total = (esMontoOculto(material) || esMontoOculto(manoObra)) ? MONTO_OCULTO : material + manoObra
+    return { material, manoObra, total }
   }
   const totales = () => {
     if (!costeo) return null
-    const acumMat = costeo.modulos.reduce((s, m) => s + subtotalesModulo(m).material, 0)
-    const acumMdo = costeo.modulos.reduce((s, m) => s + subtotalesModulo(m).manoObra, 0)
-    const ventaMat = acumMat * (parseFloat(costeo.utilidad_material) || 1)
-    const ventaMdo = acumMdo * (parseFloat(costeo.utilidad_mano_obra) || 1)
-    const ventaTotal = (ventaMat + ventaMdo) * (parseFloat(costeo.utilidad_extra) || 1)
+    const subs = costeo.modulos.map(subtotalesModulo)
+    const acumMat = subs.some(s => esMontoOculto(s.material)) ? MONTO_OCULTO : subs.reduce((s, x) => s + x.material, 0)
+    const acumMdo = subs.some(s => esMontoOculto(s.manoObra)) ? MONTO_OCULTO : subs.reduce((s, x) => s + x.manoObra, 0)
+    const costoTotal = (esMontoOculto(acumMat) || esMontoOculto(acumMdo)) ? MONTO_OCULTO : acumMat + acumMdo
+    const ventaMat = esMontoOculto(acumMat) ? MONTO_OCULTO : acumMat * (parseFloat(costeo.utilidad_material) || 1)
+    const ventaMdo = esMontoOculto(acumMdo) ? MONTO_OCULTO : acumMdo * (parseFloat(costeo.utilidad_mano_obra) || 1)
+    const ventaTotal = (esMontoOculto(ventaMat) || esMontoOculto(ventaMdo)) ? MONTO_OCULTO : (ventaMat + ventaMdo) * (parseFloat(costeo.utilidad_extra) || 1)
     const tc = parseFloat(costeo.tipo_cambio) || 0
-    return { costoMat: acumMat, costoMdo: acumMdo, costoTotal: acumMat + acumMdo, ventaMat, ventaMdo, ventaTotal, ventaTotalPesos: tc > 0 ? ventaTotal * tc : null }
+    return {
+      costoMat: acumMat, costoMdo: acumMdo, costoTotal, ventaMat, ventaMdo, ventaTotal,
+      ventaTotalPesos: esMontoOculto(ventaTotal) ? MONTO_OCULTO : (tc > 0 ? ventaTotal * tc : null),
+    }
   }
 
   /* ══════════════════════════════ VISTA: LISTADO ══════════════════════════════ */
@@ -367,6 +391,7 @@ export default function CosteoEquipos() {
                       <td className="text-end">{fmtUsd(c.costo_total)}</td>
                       <td className="text-end fw-semibold">{fmtUsd(c.venta_total)}</td>
                       <td onClick={e => e.stopPropagation()} className="text-end">
+                        {/* Exportar es una acción de lectura — no depende de canWrite */}
                         <button className="btn btn-sm btn-outline-success me-1" title="Exportar a Excel" disabled={exportando === c.id}
                           onClick={() => exportarExcel(c.id)}>
                           {exportando === c.id ? <span className="spinner-border spinner-border-sm" /> : <i className="bi bi-file-earmark-excel" />}
@@ -401,6 +426,7 @@ export default function CosteoEquipos() {
           <i className="bi bi-arrow-left me-2" />Volver al listado
         </button>
         <div className="d-flex gap-2">
+          {/* Exportar es una acción de lectura — no depende de canWrite */}
           <button className="btn btn-outline-success" disabled={exportando === costeo.id} onClick={() => exportarExcel(costeo.id)}
             title="Exporta lo último guardado — si hiciste cambios, guardalos primero">
             {exportando === costeo.id
@@ -594,7 +620,7 @@ function ModuloCard({ modulo, canWrite, subtotales, onNombre, onEliminar, onAgre
                       <div className="d-flex align-items-center gap-1">
                         <input type="number" onPaste={manejarPegadoNumero} step="0.01" className="form-control form-control-sm input-sin-flechas text-end px-1" value={it.precio_unitario} disabled={!canWrite}
                           onChange={e => onCambiarItem(it._key, 'precio_unitario', e.target.value)} />
-                        {it.producto_id != null && it.precio_actual_usd != null
+                        {it.producto_id != null && it.precio_actual_usd != null && !esMontoOculto(it.precio_actual_usd)
                           && Math.abs(it.precio_actual_usd - (parseFloat(it.precio_unitario) || 0)) > 0.005 && (
                           canWrite ? (
                             <button type="button" className="btn btn-sm btn-outline-warning py-0 px-1 flex-shrink-0" style={{ fontSize: '0.7rem' }}
@@ -624,7 +650,9 @@ function ModuloCard({ modulo, canWrite, subtotales, onNombre, onEliminar, onAgre
                         )}
                       </div>
                     </td>
-                    <td className="text-end fw-semibold">{fmtUsd((parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_unitario) || 0))}</td>
+                    <td className="text-end fw-semibold">
+                      {esMontoOculto(it.precio_unitario) ? MONTO_OCULTO : fmtUsd((parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_unitario) || 0))}
+                    </td>
                     {canWrite && (
                       <td>
                         <button className="btn btn-sm btn-outline-danger py-0 px-2" onClick={() => onQuitarItem(it._key)}>

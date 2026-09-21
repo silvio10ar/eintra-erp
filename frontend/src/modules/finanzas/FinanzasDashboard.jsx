@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import api from '../../api/client'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 const fmtM = (n, mon = 'PESO') => {
+  if (esMontoOculto(n)) return MONTO_OCULTO
   const v = parseFloat(n)
   if (!v || isNaN(v)) return '$ 0'
   const sym = mon === 'DÓLAR' ? 'USD ' : mon === 'EURO' ? '€ ' : '$ '
@@ -9,6 +11,7 @@ const fmtM = (n, mon = 'PESO') => {
 }
 
 const fmtImporte = (importe, moneda, tasa_cambio) => {
+  if (esMontoOculto(importe)) return MONTO_OCULTO
   const v = parseFloat(importe) || 0
   const tc = parseFloat(tasa_cambio) || 1
   const sym = moneda === 'DÓLAR' ? 'USD ' : moneda === 'EURO' ? '€ ' : '$ '
@@ -26,6 +29,7 @@ const fmtImporte = (importe, moneda, tasa_cambio) => {
 }
 
 const fmtK = n => {
+  if (esMontoOculto(n)) return MONTO_OCULTO
   const v = Math.abs(parseFloat(n) || 0)
   const conDecimales = (num, dec) => num.toLocaleString('es-AR', { minimumFractionDigits: dec, maximumFractionDigits: dec })
   if (v >= 1e9) return conDecimales(v / 1e9, 1) + 'B'
@@ -33,6 +37,12 @@ const fmtK = n => {
   if (v >= 1e3) return conDecimales(v / 1e3, 0) + 'K'
   return conDecimales(v, 0)
 }
+
+// Mismo criterio que el resto del módulo: sumar o restar un monto enmascarado
+// con otro número da basura (string concatenado) o NaN — si cualquiera de los
+// operandos está oculto, el resultado combinado también queda oculto.
+const sumaOMasked  = (...vals) => vals.some(esMontoOculto) ? MONTO_OCULTO : vals.reduce((s, v) => s + (v || 0), 0)
+const restaOMasked = (a, b) => [a, b].some(esMontoOculto) ? MONTO_OCULTO : (a || 0) - (b || 0)
 
 const fmtF = s => {
   if (!s) return '—'
@@ -92,6 +102,12 @@ function KpiCard({ label, value, sub, color = '#0d6efd', icon }) {
 }
 
 function BarraEstado({ pagado, con_anticipo, pendiente }) {
+  // Si cualquiera de los tres viene enmascarado, sumarlos daría un string
+  // concatenado con números (o NaN al dividir después) — no hay barra que
+  // mostrar, solo un aviso de que los montos están ocultos.
+  if ([pagado, con_anticipo, pendiente].some(esMontoOculto)) {
+    return <div className="text-muted small">{MONTO_OCULTO}</div>
+  }
   const total = (pagado||0) + (con_anticipo||0) + (pendiente||0)
   if (!total) return <div className="text-muted small">Sin datos</div>
   const pPag  = (pagado / total * 100).toFixed(1)
@@ -120,11 +136,15 @@ function GraficoBarras({ porMesC, porMesV }) {
     const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1)
     const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`
     const lbl = d.toLocaleDateString('es-AR', { month: 'short' }).replace('.','')
-    const c = porMesC.find(r => r.mes === key)?.total || 0
-    const v = porMesV.find(r => r.mes === key)?.total || 0
+    const c = porMesC.find(r => r.mes === key)?.monto_total ?? 0
+    const v = porMesV.find(r => r.mes === key)?.monto_total ?? 0
     meses.push({ key, lbl, c, v })
   }
-  const max = Math.max(...meses.flatMap(m => [m.c, m.v]), 1)
+  // Para la altura de las barras un mes enmascarado cuenta como 0 (no hay
+  // forma de dibujar una barra de un monto oculto) — el tooltip real sigue
+  // mostrando el sentinel via fmtM, así que no se muestra un número inventado.
+  const alto = x => esMontoOculto(x) ? 0 : x
+  const max = Math.max(...meses.flatMap(m => [alto(m.c), alto(m.v)]), 1)
   const CH = 140
   const BW = 10
   const GW = 36
@@ -163,7 +183,7 @@ function GraficoBarras({ porMesC, porMesV }) {
 }
 
 function TopProvBar({ nombre, total, max }) {
-  const pct = Math.max(3, (total / max) * 100)
+  const pct = (esMontoOculto(total) || esMontoOculto(max)) ? 0 : Math.max(3, (total / max) * 100)
   return (
     <div className="mb-2">
       <div className="d-flex justify-content-between mb-1" style={{ fontSize: '0.78rem' }}>
@@ -186,7 +206,7 @@ function alertaVcto(fechaVcto, hoy) {
   return 'mes'
 }
 
-function FacturasListCard({ titulo, icono, color, facturas, hoy }) {
+function FacturasListCard({ titulo, icono, color, facturas, hoy, mostrarDemora }) {
   const grupos = [
     { key: 'vencida',  label: 'Vencidas',     color: 'danger' },
     { key: 'hoy',      label: 'Vencen hoy',   color: 'danger' },
@@ -226,6 +246,13 @@ function FacturasListCard({ titulo, icono, color, facturas, hoy }) {
                   const dias = f.fecha_vencimiento
                     ? Math.ceil((new Date(f.fecha_vencimiento + 'T00:00:00') - new Date(hoy + 'T00:00:00')) / 86400000)
                     : null
+                  // Días de demora: desde la fecha de facturación a hoy (mismo
+                  // criterio que la columna "Días" de Facturas de Venta) —
+                  // distinto del vencimiento de arriba, que es contra la
+                  // fecha de vencimiento, no la de facturación.
+                  const demora = mostrarDemora && f.fecha
+                    ? Math.floor((new Date(hoy + 'T00:00:00') - new Date(f.fecha + 'T00:00:00')) / 86400000)
+                    : null
                   return (
                     <div key={f.id} className="d-flex justify-content-between align-items-center py-2 border-bottom gap-2">
                       <div style={{ minWidth: 0, flex: 1 }}>
@@ -240,6 +267,11 @@ function FacturasListCard({ titulo, icono, color, facturas, hoy }) {
                             : dias === 0 ? 'Hoy'
                             : `${dias}d · ${fmtF(f.fecha_vencimiento)}`}
                         </div>
+                        {demora !== null && (
+                          <div className={demora > 30 ? 'text-danger fw-semibold' : 'text-muted'} style={{ fontSize: '0.68rem' }}>
+                            {demora}d de demora
+                          </div>
+                        )}
                       </div>
                     </div>
                   )
@@ -256,8 +288,8 @@ function FacturasListCard({ titulo, icono, color, facturas, hoy }) {
 // ── Vista Diaria ──────────────────────────────────────────────────────────────
 
 function BankCard({ sb }) {
-  const echeq = sb.echeq_pendiente || 0
-  const disponible = sb.monto - echeq
+  const echeq = esMontoOculto(sb.echeq_pendiente) ? MONTO_OCULTO : (sb.echeq_pendiente || 0)
+  const disponible = [sb.monto, echeq].some(esMontoOculto) ? MONTO_OCULTO : sb.monto - echeq
   return (
     <div className="card border-0 shadow-sm h-100" style={{ borderLeft: '4px solid #0d6efd' }}>
       <div className="card-body py-3 px-3">
@@ -299,8 +331,10 @@ function BankCard({ sb }) {
 }
 
 function PorCobrarCard({ ventasPendientes }) {
-  const echeq = ventasPendientes.echeq_pendiente || 0
-  const total = (ventasPendientes.total_pesos || 0) + echeq
+  const echeq = esMontoOculto(ventasPendientes.echeq_pendiente) ? MONTO_OCULTO : (ventasPendientes.echeq_pendiente || 0)
+  const total = [ventasPendientes.total_pesos, echeq].some(esMontoOculto)
+    ? MONTO_OCULTO
+    : (ventasPendientes.total_pesos || 0) + echeq
   return (
     <div className="card border-0 shadow-sm h-100" style={{ borderLeft: '4px solid #198754' }}>
       <div className="card-body py-3 px-3">
@@ -338,7 +372,7 @@ function PorCobrarCard({ ventasPendientes }) {
   )
 }
 
-function ServiciosMesCard({ pagado, pendiente }) {
+function ServiciosMesCard({ pagado, pendiente, pendienteEstimado }) {
   return (
     <div className="card border-0 shadow-sm h-100" style={{ borderLeft: '4px solid #6f42c1' }}>
       <div className="card-body py-3 px-3">
@@ -350,6 +384,16 @@ function ServiciosMesCard({ pagado, pendiente }) {
             <div style={{ fontSize: '0.78rem', lineHeight: 1.7 }}>
               <div className="text-success">Pagado:&nbsp;<span className="fw-semibold">{fmtM(pagado, 'PESO')}</span></div>
               <div className={pendiente > 0 ? 'text-danger' : 'text-muted'}>Debe:&nbsp;<span className="fw-semibold">{fmtM(pendiente, 'PESO')}</span></div>
+              {pendienteEstimado > 0 && (
+                <>
+                  <div className="text-warning-emphasis" title="Todavía no se cargó el importe real de este mes — es un estimado según el último pago">
+                    Debe (según pago anterior):&nbsp;<span className="fw-semibold">{fmtM(pendienteEstimado, 'PESO')}</span>
+                  </div>
+                  <div className="text-danger fw-bold">
+                    Debe total:&nbsp;{fmtM([pendiente, pendienteEstimado].some(esMontoOculto) ? MONTO_OCULTO : pendiente + pendienteEstimado, 'PESO')}
+                  </div>
+                </>
+              )}
             </div>
           </div>
           <div className="rounded-circle d-flex align-items-center justify-content-center"
@@ -363,9 +407,41 @@ function ServiciosMesCard({ pagado, pendiente }) {
 }
 
 function DailyView({ data, onConfirmar }) {
+  // Pagos por encima del umbral configurado piden elegir quién autoriza (mismo
+  // criterio que Finanzas.jsx) — sin esto, confirmar un e-cheq que lo supera
+  // fallaba en silencio: el backend devuelve 400 con requiereAutorizante y acá
+  // no se manejaba, así que el botón "Confirmar" no hacía nada visible.
+  const [autorizantesPago, setAutorizantesPago] = useState(null)
+  const [pendienteAutorizar, setPendienteAutorizar] = useState(null) // { id, tipo, autorizado_por_id, montoUsd }
   if (!data) return null
   const { saldosBancarios, serviciosPendientes, serviciosMes, comprasPendientes, ventasPendientes, facturasPorPagar = [], facturasPorCobrar = [], vencimientosProximos, echeqsEmitidos, echeqsRecibidos, ivaData, tipoCambioBNA } = data
   const hoy = new Date().toISOString().slice(0, 10)
+
+  const cargarAutorizantesPago = async () => {
+    if (autorizantesPago) return autorizantesPago
+    const r = await api.get('/finanzas/pagos-autorizantes')
+    setAutorizantesPago(r.data)
+    return r.data
+  }
+
+  const confirmarEcheq = async (tipo, facturaId, pagoId, autorizado_por_id) => {
+    const url = tipo === 'compra'
+      ? `/finanzas/facturas-compra/${facturaId}/pagos/${pagoId}/confirmar`
+      : `/finanzas/facturas-venta/${facturaId}/pagos/${pagoId}/confirmar`
+    try {
+      await api.patch(url, autorizado_por_id ? { autorizado_por_id } : undefined)
+    } catch (e) {
+      if (e.response?.data?.requiereAutorizante) {
+        await cargarAutorizantesPago()
+        setPendienteAutorizar({ id: pagoId, tipo, autorizado_por_id: '', montoUsd: e.response.data.montoUsd })
+        return
+      }
+      alert(e.response?.data?.error || 'Error al confirmar')
+      return
+    }
+    setPendienteAutorizar(null)
+    onConfirmar?.()
+  }
 
   const vencidas = serviciosPendientes.filter(s => s.alerta === 'vencida')
   const hoyS    = serviciosPendientes.filter(s => s.alerta === 'hoy')
@@ -413,7 +489,7 @@ function DailyView({ data, onConfirmar }) {
         </div>
         {serviciosMes && (
           <div className="col-6 col-lg-3">
-            <ServiciosMesCard pagado={serviciosMes.pagado} pendiente={serviciosMes.pendiente} />
+            <ServiciosMesCard pagado={serviciosMes.monto_pagado} pendiente={serviciosMes.monto_pendiente} pendienteEstimado={serviciosMes.monto_pendiente_estimado} />
           </div>
         )}
       </div>
@@ -452,15 +528,30 @@ function DailyView({ data, onConfirmar }) {
                       </span>
                     </div>
                     <div className="flex-shrink-0">
-                      <button className="btn btn-sm btn-success py-0 px-2" style={{ fontSize: '0.72rem' }}
-                        title="Confirmar débito bancario"
-                        onClick={async () => {
-                          if (!confirm(`¿Confirmar que el E-CHEQ de ${e.proveedor_nombre} fue debitado del banco?`)) return
-                          await api.patch(`/finanzas/facturas-compra/${e.factura_id}/pagos/${e.id}/confirmar`)
-                          onConfirmar?.()
-                        }}>
-                        <i className="bi bi-check-lg me-1" />Confirmar
-                      </button>
+                      {pendienteAutorizar?.tipo === 'compra' && pendienteAutorizar?.id === e.id ? (
+                        <div className="d-flex align-items-center gap-1">
+                          <select className="form-select form-select-sm" style={{ width: 130, fontSize: '0.7rem' }}
+                            value={pendienteAutorizar.autorizado_por_id}
+                            onChange={ev => setPendienteAutorizar(s => ({ ...s, autorizado_por_id: ev.target.value }))}>
+                            <option value="">¿Quién autoriza?</option>
+                            {(autorizantesPago || []).map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                          </select>
+                          <button className="btn btn-sm btn-warning py-0 px-2" style={{ fontSize: '0.72rem' }}
+                            disabled={!pendienteAutorizar.autorizado_por_id}
+                            onClick={() => confirmarEcheq('compra', e.factura_id, e.id, pendienteAutorizar.autorizado_por_id)}>OK</button>
+                          <button className="btn btn-sm btn-outline-secondary py-0 px-1" style={{ fontSize: '0.72rem' }}
+                            onClick={() => setPendienteAutorizar(null)}>×</button>
+                        </div>
+                      ) : (
+                        <button className="btn btn-sm btn-success py-0 px-2" style={{ fontSize: '0.72rem' }}
+                          title="Confirmar débito bancario"
+                          onClick={async () => {
+                            if (!confirm(`¿Confirmar que el E-CHEQ de ${e.proveedor_nombre} fue debitado del banco?`)) return
+                            await confirmarEcheq('compra', e.factura_id, e.id)
+                          }}>
+                          <i className="bi bi-check-lg me-1" />Confirmar
+                        </button>
+                      )}
                     </div>
                   </div>
                 )
@@ -504,15 +595,30 @@ function DailyView({ data, onConfirmar }) {
                       </span>
                     </div>
                     <div className="flex-shrink-0">
-                      <button className="btn btn-sm btn-success py-0 px-2" style={{ fontSize: '0.72rem' }}
-                        title="Confirmar acreditación bancaria"
-                        onClick={async () => {
-                          if (!confirm(`¿Confirmar que el E-CHEQ de ${e.cliente_nombre} fue acreditado en el banco?`)) return
-                          await api.patch(`/finanzas/facturas-venta/${e.factura_id}/pagos/${e.id}/confirmar`)
-                          onConfirmar?.()
-                        }}>
-                        <i className="bi bi-check-lg me-1" />Confirmar
-                      </button>
+                      {pendienteAutorizar?.tipo === 'venta' && pendienteAutorizar?.id === e.id ? (
+                        <div className="d-flex align-items-center gap-1">
+                          <select className="form-select form-select-sm" style={{ width: 130, fontSize: '0.7rem' }}
+                            value={pendienteAutorizar.autorizado_por_id}
+                            onChange={ev => setPendienteAutorizar(s => ({ ...s, autorizado_por_id: ev.target.value }))}>
+                            <option value="">¿Quién autoriza?</option>
+                            {(autorizantesPago || []).map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                          </select>
+                          <button className="btn btn-sm btn-warning py-0 px-2" style={{ fontSize: '0.72rem' }}
+                            disabled={!pendienteAutorizar.autorizado_por_id}
+                            onClick={() => confirmarEcheq('venta', e.factura_id, e.id, pendienteAutorizar.autorizado_por_id)}>OK</button>
+                          <button className="btn btn-sm btn-outline-secondary py-0 px-1" style={{ fontSize: '0.72rem' }}
+                            onClick={() => setPendienteAutorizar(null)}>×</button>
+                        </div>
+                      ) : (
+                        <button className="btn btn-sm btn-success py-0 px-2" style={{ fontSize: '0.72rem' }}
+                          title="Confirmar acreditación bancaria"
+                          onClick={async () => {
+                            if (!confirm(`¿Confirmar que el E-CHEQ de ${e.cliente_nombre} fue acreditado en el banco?`)) return
+                            await confirmarEcheq('venta', e.factura_id, e.id)
+                          }}>
+                          <i className="bi bi-check-lg me-1" />Confirmar
+                        </button>
+                      )}
                     </div>
                   </div>
                 )
@@ -531,8 +637,9 @@ function DailyView({ data, onConfirmar }) {
             </p>
             <div className="row g-3">
               {ivaData.map((m, i) => {
-                const posicion = (m.iva_ventas || 0) - (m.iva_compras || 0) - (m.perc_iva_compras || 0)
-                const esFavor = posicion <= 0
+                const ivaMasked = [m.iva_ventas, m.iva_compras, m.perc_iva_compras].some(esMontoOculto)
+                const posicion = ivaMasked ? MONTO_OCULTO : (m.iva_ventas || 0) - (m.iva_compras || 0) - (m.perc_iva_compras || 0)
+                const esFavor = !ivaMasked && posicion <= 0
                 return (
                   <div key={m.mes} className={`col-md-4`}>
                     <div className="rounded p-2" style={{ background: i === 0 ? '#f8f5ff' : '#f8f9fa', border: i === 0 ? '1px solid #d8c8f0' : '1px solid #dee2e6' }}>
@@ -558,9 +665,11 @@ function DailyView({ data, onConfirmar }) {
                         <div className="d-flex justify-content-between align-items-center">
                           <span className="fw-bold" style={{ fontSize: '0.78rem' }}>Posición:</span>
                           <span className="fw-bold" style={{ fontSize: '0.88rem', color: esFavor ? '#198754' : '#fd7e14' }}>
-                            {esFavor
-                              ? `A favor ${fmtM(-posicion)}`
-                              : `A pagar ${fmtM(posicion)}`}
+                            {ivaMasked
+                              ? MONTO_OCULTO
+                              : esFavor
+                                ? `A favor ${fmtM(-posicion)}`
+                                : `A pagar ${fmtM(posicion)}`}
                           </span>
                         </div>
                       </div>
@@ -604,6 +713,7 @@ function DailyView({ data, onConfirmar }) {
             color="#198754"
             facturas={facturasPorCobrar}
             hoy={hoy}
+            mostrarDemora
           />
         </div>
       </div>
@@ -706,18 +816,18 @@ function DailyView({ data, onConfirmar }) {
 function PeriodView({ data }) {
   if (!data) return null
   const { kpiC, kpiV, kpiVTotal, porMesC, porMesV, vencimientos, conAnticipo, topProv } = data
-  const balance = (kpiV.total || 0) - (kpiC.total || 0)
+  const balance = restaOMasked(kpiV.monto_total, kpiC.monto_total)
 
   return (
     <div>
       {/* ── KPIs ── */}
       <div className="row g-3 mb-4">
         <div className="col-6 col-xl-3">
-          <KpiCard label="Compras" value={`$ ${fmtK(kpiC.total)}`}
+          <KpiCard label="Compras" value={`$ ${fmtK(kpiC.monto_total)}`}
             sub={`${kpiC.count} facturas`} color="#dc3545" icon="cart3" />
         </div>
         <div className="col-6 col-xl-3">
-          <KpiCard label="Ventas" value={`$ ${fmtK(kpiV.total)}`}
+          <KpiCard label="Ventas" value={`$ ${fmtK(kpiV.monto_total)}`}
             sub={`${kpiV.count} facturas`} color="#198754" icon="shop" />
         </div>
         <div className="col-6 col-xl-3">
@@ -731,7 +841,7 @@ function PeriodView({ data }) {
                 <div style={{ minWidth: 0 }}>
                   <p className="small text-muted mb-1 fw-semibold" style={{ letterSpacing: '0.04em', fontSize: '0.72rem' }}>POR COBRAR (TOTAL)</p>
                   <p className="fw-bold mb-0" style={{ fontSize: '1.35rem', color: '#0d6efd', lineHeight: 1.1 }}>
-                    $ {fmtK((kpiVTotal?.pendiente||0) + (kpiVTotal?.saldo_anticipo||0))}
+                    $ {fmtK(sumaOMasked(kpiVTotal?.monto_pendiente, kpiVTotal?.saldo_anticipo))}
                   </p>
                   <p className="small text-muted mb-0 mt-1">Toda la deuda pendiente</p>
                 </div>
@@ -743,7 +853,7 @@ function PeriodView({ data }) {
               <hr className="my-2" />
               <p className="small mb-0">
                 <span className="text-muted" style={{ fontSize: '0.75rem' }}>Período seleccionado: </span>
-                <strong style={{ color: '#0d6efd' }}>$ {fmtK((kpiV.pendiente||0) + (kpiV.saldo_anticipo||0))}</strong>
+                <strong style={{ color: '#0d6efd' }}>$ {fmtK(sumaOMasked(kpiV.monto_pendiente, kpiV.saldo_anticipo))}</strong>
               </p>
             </div>
           </div>
@@ -770,18 +880,18 @@ function PeriodView({ data }) {
               </p>
               <div className="mb-3">
                 <p className="small text-muted mb-2 fw-semibold">COMPRAS</p>
-                <BarraEstado pagado={kpiC.pagado} con_anticipo={kpiC.con_anticipo} pendiente={kpiC.pendiente} />
+                <BarraEstado pagado={kpiC.monto_pagado} con_anticipo={kpiC.con_anticipo} pendiente={kpiC.monto_pendiente} />
                 <div className="d-flex gap-3 mt-1" style={{ fontSize: '0.78rem' }}>
-                  <span className="text-danger">Pendiente: <strong>{fmtM(kpiC.pendiente)}</strong></span>
+                  <span className="text-danger">Pendiente: <strong>{fmtM(kpiC.monto_pendiente)}</strong></span>
                   {kpiC.saldo_anticipo > 0 && <span className="text-warning">Saldo anticipo: <strong>{fmtM(kpiC.saldo_anticipo)}</strong></span>}
                 </div>
               </div>
               <hr className="my-2" />
               <div>
                 <p className="small text-muted mb-2 fw-semibold">VENTAS</p>
-                <BarraEstado pagado={kpiV.pagado} con_anticipo={kpiV.con_anticipo} pendiente={kpiV.pendiente} />
+                <BarraEstado pagado={kpiV.monto_pagado} con_anticipo={kpiV.con_anticipo} pendiente={kpiV.monto_pendiente} />
                 <div className="d-flex gap-3 mt-1" style={{ fontSize: '0.78rem' }}>
-                  <span className="text-success">Por cobrar: <strong>{fmtM(kpiV.pendiente)}</strong></span>
+                  <span className="text-success">Por cobrar: <strong>{fmtM(kpiV.monto_pendiente)}</strong></span>
                   {kpiV.saldo_anticipo > 0 && <span className="text-warning">Saldo anticipo: <strong>{fmtM(kpiV.saldo_anticipo)}</strong></span>}
                 </div>
               </div>
@@ -820,7 +930,7 @@ function PeriodView({ data }) {
                           <span className="text-muted">{v.numero}</span>
                         </div>
                         <div className="text-end flex-shrink-0">
-                          <div className="fw-semibold">{fmtImporte(v.anticipo > 0 ? v.importe - v.anticipo : v.importe, v.moneda, v.tasa_cambio)}</div>
+                          <div className="fw-semibold">{fmtImporte(v.anticipo > 0 ? restaOMasked(v.importe, v.anticipo) : v.importe, v.moneda, v.tasa_cambio)}</div>
                           <span className={`text-${color}`} style={{ fontSize: '0.7rem' }}>
                             {diasRest < 0 ? `Vencida hace ${-diasRest}d` : diasRest === 0 ? 'Hoy' : `${diasRest}d`}
                           </span>
@@ -859,7 +969,7 @@ function PeriodView({ data }) {
                         <span className="text-muted">{f.fecha_anticipo ? fmtF(f.fecha_anticipo) : '—'}</span>
                       </div>
                       <div className="text-end flex-shrink-0">
-                        <div className="fw-semibold text-warning">{fmtImporte(f.importe - f.anticipo, f.moneda, f.tasa_cambio)}</div>
+                        <div className="fw-semibold text-warning">{fmtImporte(restaOMasked(f.importe, f.anticipo), f.moneda, f.tasa_cambio)}</div>
                         <div className="text-muted" style={{ fontSize: '0.7rem' }}>saldo / {fmtImporte(f.importe, f.moneda, f.tasa_cambio)}</div>
                       </div>
                     </div>
@@ -879,8 +989,8 @@ function PeriodView({ data }) {
               {topProv.length === 0 ? (
                 <p className="text-muted small text-center py-3">Sin datos</p>
               ) : (() => {
-                const max = topProv[0].total
-                return topProv.map((p, i) => <TopProvBar key={i} nombre={p.nombre} total={p.total} max={max} />)
+                const max = topProv[0].monto_total
+                return topProv.map((p, i) => <TopProvBar key={i} nombre={p.nombre} total={p.monto_total} max={max} />)
               })()}
             </div>
           </div>

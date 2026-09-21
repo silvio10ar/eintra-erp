@@ -8,11 +8,22 @@ const CONFIG_PATH = path.resolve(__dirname, '../data/cod_config.json')
 
 router.use(verificarToken)
 
+// Sin gate de módulo, cualquier usuario autenticado podía ver el desglose de
+// CUALQUIER código — bajo impacto (solo explica cómo se arma un código, no
+// hay dato sensible), pero inconsistente con el resto del sistema. Materiales
+// es el único llamador real, así que el permiso que habilita esto es el mismo
+// que ya habilita Materiales (materiales.leer, o codificacion/compras por la
+// jerarquía de módulos de middleware/auth.js).
+const puedeVer = req => req.usuario?.rol === 'admin'
+  || !!req.permisos?.materiales?.leer || !!req.permisos?.materiales?.escribir
+  || !!req.permisos?.codificacion?.leer || !!req.permisos?.compras?.leer
+
 // ── GET /desglose/:codigo ─────────────────────────────────────────────────────
 // Devuelve el desglose posición por posición de un código de 10 dígitos.
 // Único uso restante del esquema de codificación: Materiales lo llama para
 // explicar qué significa cada tramo de un código ya asignado.
 router.get('/desglose/:codigo', (req, res) => {
+  if (!puedeVer(req)) return res.status(403).json({ error: 'Sin permisos de lectura' })
   const codigo = req.params.codigo.toUpperCase()
   if (!codigo || codigo.length !== 10) {
     return res.status(400).json({ error: 'El código debe tener 10 caracteres', posiciones: [] })

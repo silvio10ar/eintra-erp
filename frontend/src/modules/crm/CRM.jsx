@@ -3,8 +3,9 @@ import api from '../../api/client'
 import DateInput from '../../components/DateInput'
 import { formatCuit } from '../../utils/cuit'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
-const fmtN = n => n ? new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 }).format(n) : '—'
+const fmtN = n => esMontoOculto(n) ? MONTO_OCULTO : (n ? new Intl.NumberFormat('es-AR', { maximumFractionDigits: 0 }).format(n) : '—')
 const fmtF = s => s ? s.slice(0, 10).split('-').reverse().join('/') : '—'
 
 const BADGE = {
@@ -258,7 +259,7 @@ export default function CRM() {
                 {fmtN(c.presupuestado)}
               </td>
               <td className="text-end text-success text-nowrap">
-                {c.ganado > 0 ? fmtN(c.ganado) : '—'}
+                {esMontoOculto(c.ganado) || c.ganado > 0 ? fmtN(c.ganado) : '—'}
               </td>
               <td><span className={BADGE[c.estado] ?? 'badge bg-secondary'} style={{ fontSize: '0.72rem' }}>{c.estado}</span></td>
               <td className="text-nowrap">
@@ -548,7 +549,7 @@ export default function CRM() {
                         <span className="me-1 badge bg-light text-dark" style={{ fontSize: '0.68rem' }}>{c.moneda}</span>
                         {fmtN(c.presupuestado)}
                       </td>
-                      <td className="text-end text-success">{c.ganado > 0 ? fmtN(c.ganado) : '—'}</td>
+                      <td className="text-end text-success">{esMontoOculto(c.ganado) || c.ganado > 0 ? fmtN(c.ganado) : '—'}</td>
                       <td><span className={BADGE[c.estado] ?? 'badge bg-secondary'} style={{ fontSize: '0.72rem' }}>{c.estado}</span></td>
                       <td>
                         <button className="btn btn-outline-secondary btn-sm py-0 px-1"

@@ -17,6 +17,32 @@ function debeCambiarPassword(u) {
   return !u.password_changed_at;
 }
 
+// Arma el JWT + el objeto "usuario" que se le devuelve al cliente — login,
+// impersonate y el cambio de contraseña armaban este mismo bloque cada uno
+// por separado (duplicado 3 veces) y se habían desincronizado: impersonate
+// no incluía debe_cambiar_password en el token, así que ese chequeo
+// (middleware/auth.js) nunca se disparaba actuando como otro usuario, aunque
+// a ESE usuario le tocara cambiarla — quedaba sin efecto mientras dura la
+// impersonación. `debeCambiar` fuerza el valor cuando ya se sabe (ej. recién
+// cambiada = false); si no se pasa, se calcula del estado real del usuario.
+function emitirSesion(u, { debeCambiar } = {}) {
+  const requiereCambio = debeCambiar ?? debeCambiarPassword(u);
+  const token = jwt.sign(
+    { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, debe_cambiar_password: requiereCambio },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || '10h' }
+  );
+  const permisos = getPermisosEfectivos(u.id, u.rol);
+  return {
+    token,
+    usuario: {
+      id: u.id, username: u.username, nombre: u.nombre, rol: u.rol,
+      empleado_nombre: u.empleado_nombre || null, rrhh_empleado_id: u.rrhh_empleado_id || null,
+      permisos, debe_cambiar_password: requiereCambio,
+    },
+  };
+}
+
 // Máximo 8 intentos cada 15 min, por combinación IP+usuario (no bloquea a toda una IP compartida)
 const limiteLogin = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -46,15 +72,8 @@ router.post('/login', limiteLogin,
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
     }
 
-    const requiereCambio = debeCambiarPassword(u);
-    const token = jwt.sign(
-      { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, debe_cambiar_password: requiereCambio },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '10h' }
-    );
     db.prepare('INSERT INTO login_log (usuario_id, ip) VALUES (?,?)').run(u.id, req.ip || '');
-    const permisos = getPermisosEfectivos(u.id, u.rol);
-    res.json({ token, usuario: { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, empleado_nombre: u.empleado_nombre || null, rrhh_empleado_id: u.rrhh_empleado_id || null, permisos, debe_cambiar_password: requiereCambio } });
+    res.json(emitirSesion(u));
   }
 );
 
@@ -75,14 +94,8 @@ router.post('/impersonate/:id', verificarToken, (req, res) => {
     WHERE u.id=? AND u.activo=1
   `).get(req.params.id);
   if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
-  const token = jwt.sign(
-    { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '10h' }
-  );
   db.prepare('INSERT INTO login_log (usuario_id, admin_id, ip) VALUES (?,?,?)').run(u.id, req.usuario.id, req.ip || '');
-  const permisos = getPermisosEfectivos(u.id, u.rol);
-  res.json({ token, usuario: { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, empleado_nombre: u.empleado_nombre || null, rrhh_empleado_id: u.rrhh_empleado_id || null, permisos } });
+  res.json(emitirSesion(u));
 });
 
 router.get('/me', verificarToken, (req, res) => {
@@ -179,17 +192,7 @@ router.put('/usuarios/:id/password', verificarToken,
       LEFT JOIN rrhh_empleados e ON e.id = u.rrhh_empleado_id
       WHERE u.id=?
     `).get(req.params.id);
-    const token = jwt.sign(
-      { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, debe_cambiar_password: false },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '10h' }
-    );
-    const permisos = getPermisosEfectivos(u.id, u.rol);
-    res.json({
-      mensaje: 'Contraseña actualizada',
-      token,
-      usuario: { id: u.id, username: u.username, nombre: u.nombre, rol: u.rol, empleado_nombre: u.empleado_nombre || null, rrhh_empleado_id: u.rrhh_empleado_id || null, permisos, debe_cambiar_password: false },
-    });
+    res.json({ mensaje: 'Contraseña actualizada', ...emitirSesion(u, { debeCambiar: false }) });
   }
 );
 
@@ -211,13 +214,20 @@ router.delete('/usuarios/:id', verificarToken, (req, res) => {
   if (id === req.usuario.id) return res.status(400).json({ error: 'No podés eliminar tu propio usuario' });
   const u = db.prepare('SELECT rol FROM usuarios WHERE id=?').get(id);
   if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
-  if (u.rol === 'admin') {
-    const { c } = db.prepare("SELECT COUNT(*) as c FROM usuarios WHERE rol='admin' AND activo=1").get();
-    if (c <= 1) return res.status(400).json({ error: 'No se puede eliminar el único administrador' });
-  }
   try {
-    db.prepare('DELETE FROM usuarios WHERE id=?').run(id);
+    // Contar admins y borrar en la misma transacción — separados, dos
+    // eliminaciones concurrentes de los dos últimos admins podían pasar
+    // ambas el chequeo "queda al menos uno" antes de que la primera
+    // confirmara, dejando el sistema sin ningún administrador.
+    db.transaction(() => {
+      if (u.rol === 'admin') {
+        const { c } = db.prepare("SELECT COUNT(*) as c FROM usuarios WHERE rol='admin' AND activo=1").get();
+        if (c <= 1) throw Object.assign(new Error('No se puede eliminar el único administrador'), { esUltimoAdmin: true });
+      }
+      db.prepare('DELETE FROM usuarios WHERE id=?').run(id);
+    })();
   } catch (e) {
+    if (e.esUltimoAdmin) return res.status(400).json({ error: e.message });
     // Decenas de tablas referencian a un usuario (created_by, login_log, etc.)
     // sin ON DELETE — más simple y confiable que enumerarlas todas a mano.
     if (e.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
@@ -266,18 +276,26 @@ router.post('/puestos', verificarToken, body('nombre').trim().notEmpty(), (req, 
   if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
   const errs = validationResult(req);
   if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
-  const { area = '', mision = '', responsabilidades = '', requisitos = '', reporta_a_id = null } = req.body;
+  const { area = '', mision = '', responsabilidades = '', requisitos = '', reporta_a_id = null, gerente_autorizante = true, oculta_montos = false } = req.body;
   try {
-    const r = db.prepare(`
-      INSERT INTO puestos (nombre,area,mision,responsabilidades,requisitos,reporta_a_id)
-      VALUES (?,?,?,?,?,?)
-    `).run(req.body.nombre.trim(), area, mision, responsabilidades, requisitos, reporta_a_id || null);
-    const ins = db.prepare('INSERT INTO puesto_modulos (puesto_id,modulo,puede_leer,puede_escribir) VALUES (?,?,?,?)');
-    for (const [modulo, p] of Object.entries(req.body.modulos || {})) {
-      if (p && typeof p === 'object' && MODULOS.includes(modulo) && (p.leer || p.escribir))
-        ins.run(r.lastInsertRowid, modulo, p.leer ? 1 : 0, p.escribir ? 1 : 0);
-    }
-    res.status(201).json({ id: r.lastInsertRowid });
+    // El puesto y sus módulos se crean juntos o ninguno — a diferencia del
+    // PUT equivalente (que sí ya usa una transacción), esta ruta hacía las
+    // dos escrituras sueltas: un error a mitad del loop de módulos dejaba el
+    // puesto creado pero sin (todos) sus permisos, sin ningún aviso distinto
+    // al de un alta exitosa.
+    const id = db.transaction(() => {
+      const r = db.prepare(`
+        INSERT INTO puestos (nombre,area,mision,responsabilidades,requisitos,reporta_a_id,gerente_autorizante,oculta_montos)
+        VALUES (?,?,?,?,?,?,?,?)
+      `).run(req.body.nombre.trim(), area, mision, responsabilidades, requisitos, reporta_a_id || null, gerente_autorizante ? 1 : 0, oculta_montos ? 1 : 0);
+      const ins = db.prepare('INSERT INTO puesto_modulos (puesto_id,modulo,puede_leer,puede_escribir) VALUES (?,?,?,?)');
+      for (const [modulo, p] of Object.entries(req.body.modulos || {})) {
+        if (p && typeof p === 'object' && MODULOS.includes(modulo) && (p.leer || p.escribir))
+          ins.run(r.lastInsertRowid, modulo, p.leer ? 1 : 0, p.escribir ? 1 : 0);
+      }
+      return r.lastInsertRowid
+    })()
+    res.status(201).json({ id });
   } catch(e) {
     if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Ya existe un puesto con ese nombre' });
     throw e;
@@ -288,7 +306,7 @@ router.put('/puestos/:id', verificarToken, body('nombre').trim().notEmpty(), (re
   if (req.usuario.rol !== 'admin') return res.status(403).json({ error: 'Sin permisos' });
   const errs = validationResult(req);
   if (!errs.isEmpty()) return res.status(400).json({ errores: errs.array() });
-  const { area = '', mision = '', responsabilidades = '', requisitos = '', reporta_a_id = null } = req.body;
+  const { area = '', mision = '', responsabilidades = '', requisitos = '', reporta_a_id = null, gerente_autorizante = true, oculta_montos = false } = req.body;
   if (reporta_a_id && Number(reporta_a_id) === Number(req.params.id))
     return res.status(400).json({ error: 'Un puesto no puede reportar a sí mismo' });
   // No alcanza con chequear la auto-referencia directa: A puede pasar a
@@ -310,8 +328,8 @@ router.put('/puestos/:id', verificarToken, body('nombre').trim().notEmpty(), (re
   }
   db.transaction(() => {
     db.prepare(`
-      UPDATE puestos SET nombre=?,area=?,mision=?,responsabilidades=?,requisitos=?,reporta_a_id=? WHERE id=?
-    `).run(req.body.nombre.trim(), area, mision, responsabilidades, requisitos, reporta_a_id || null, req.params.id);
+      UPDATE puestos SET nombre=?,area=?,mision=?,responsabilidades=?,requisitos=?,reporta_a_id=?,gerente_autorizante=?,oculta_montos=? WHERE id=?
+    `).run(req.body.nombre.trim(), area, mision, responsabilidades, requisitos, reporta_a_id || null, gerente_autorizante ? 1 : 0, oculta_montos ? 1 : 0, req.params.id);
     db.prepare('DELETE FROM puesto_modulos WHERE puesto_id=?').run(req.params.id);
     const ins = db.prepare('INSERT INTO puesto_modulos (puesto_id,modulo,puede_leer,puede_escribir) VALUES (?,?,?,?)');
     for (const [modulo, p] of Object.entries(req.body.modulos || {})) {

@@ -9,6 +9,7 @@ import FacturaIA from '../compras/FacturaIA'
 import { formatCuit } from '../../utils/cuit'
 import { hoyLocal } from '../../utils/fecha'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 const CONDICIONES_PAGO = [
   'TRANSF. BANCARIA', 'CHEQUE', 'EFECTIVO', 'CUENTA CORRIENTE',
@@ -42,8 +43,8 @@ const BANCOS_REQUERIDOS = ['Banco ICBC', 'Banco Galicia']
 // tarea de Finanzas, no de Administración — Administración solo carga OCs
 // (de clientes); por eso 'control' no forma parte de esta barra, y vive
 // únicamente en el módulo Finanzas standalone.
-const TABS_ORDEN = ['proveedores', 'clientes', 'compras', 'ventas', 'saldos', 'servicios', 'oc-clientes', 'oc-sin-factura', 'pedidos-precio']
-const TABS_FINANZAS = ['compras', 'ventas', 'saldos', 'servicios', 'oc-clientes']
+const TABS_ORDEN = ['proveedores', 'clientes', 'compras', 'ventas', 'saldos', 'servicios', 'polizas', 'oc-clientes', 'oc-sin-factura', 'pedidos-precio']
+const TABS_FINANZAS = ['compras', 'ventas', 'saldos', 'servicios', 'polizas', 'oc-clientes']
 const TAB_INFO = {
   proveedores:   { icon: 'truck',              label: 'Proveedores',        subt: 'Altas, contactos y condiciones de pago' },
   clientes:      { icon: 'person-lines-fill',   label: 'Clientes',          subt: 'Datos comerciales y condiciones de pago' },
@@ -51,6 +52,7 @@ const TAB_INFO = {
   ventas:        { icon: 'shop',                label: 'Facturas de Venta', subt: 'Carga y seguimiento de cobros a clientes', badge: 'bg-secondary' },
   saldos:        { icon: 'bank',                label: 'Tesorería',         subt: 'Saldos bancarios y tipo de cambio' },
   servicios:     { icon: 'lightning-charge',    label: 'Servicios',        subt: 'Pagos recurrentes y sus vencimientos', badge: 'bg-warning text-dark' },
+  polizas:       { icon: 'shield-check',        label: 'Pólizas',          subt: 'Pólizas de seguro y sus cuotas de renovación' },
   'oc-clientes': { icon: 'file-earmark-text',   label: 'OC Clientes',      subt: 'Anticipos y saldos finales por proyecto' },
   'oc-sin-factura': { icon: 'exclamation-triangle', label: 'OC sin factura', subt: 'Órdenes de compra a las que todavía no se les cargó ninguna factura', badge: 'bg-danger' },
   'pedidos-precio': { icon: 'cash-coin',        label: 'Pedidos de precio', subt: 'Materiales que pidieron desde Materiales o Análisis de Proyectos para cargarles el precio', badge: 'bg-warning text-dark' },
@@ -612,7 +614,7 @@ function ModalProveedor({ modal, form, setForm, error, guardando, onClose, onSub
 // vincule directo desde acá sin tener que ir al módulo Compras.
 
 const fmtFOC = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
-const fmtNOC = n => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n ?? 0)
+const fmtNOC = n => esMontoOculto(n) ? MONTO_OCULTO : new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n ?? 0)
 
 function BuscadorFacturaSuelta({ proveedorId, onElegir }) {
   const [query,      setQuery]      = useState('')
@@ -860,6 +862,10 @@ function TabOCSinFactura({ canWrite, onCount }) {
 // de Materiales — quien pidió el precio no necesita permiso de Administración,
 // y quien lo carga acá no necesita permiso de Materiales.
 function TabPedidosPrecio({ canWrite, onCount }) {
+  // Exportar exige escribir en Administración puntualmente (mismo permiso que
+  // ya exige el backend en /pedidos-precio/exportar) — no alcanza con el
+  // canWrite más amplio de esta pestaña (que también entra por compras).
+  const canExportar = getUser()?.rol === 'admin' || !!getPermisos()?.administracion?.escribir
   const [lista,      setLista]      = useState([])
   const [cargando,   setCargando]   = useState(false)
   const [provsList,  setProvsList]  = useState([])
@@ -867,6 +873,8 @@ function TabPedidosPrecio({ canWrite, onCount }) {
   const [proveedores,setProveedores]= useState({})   // { [pedido.id]: proveedor elegido }
   const [monedas,    setMonedas]    = useState({})   // { [pedido.id]: moneda elegida }
   const [guardando,  setGuardando]  = useState(null) // id del pedido en curso
+  const [filtroProveedor, setFiltroProveedor] = useState('')
+  const [exportando, setExportando] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -912,6 +920,27 @@ function TabPedidosPrecio({ canWrite, onCount }) {
     } finally { setGuardando(null) }
   }
 
+  // Solo proveedores con algo pendiente de verdad — no tiene sentido ofrecer
+  // en el filtro uno de la lista completa que hoy no tiene nada por cotizar.
+  const proveedoresPresentes = [...new Set(lista.map(p => p.proveedor).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  const listaFiltrada = filtroProveedor ? lista.filter(p => p.proveedor === filtroProveedor) : lista
+
+  const exportarExcel = async () => {
+    setExportando(true)
+    try {
+      const r = await api.get('/pedidos-precio/exportar', {
+        params: filtroProveedor ? { proveedor: filtroProveedor } : {},
+        responseType: 'blob',
+      })
+      const url = URL.createObjectURL(new Blob([r.data]))
+      const a = document.createElement('a')
+      a.href = url; a.download = `pedidos_precio_${hoyLocal()}.xlsx`; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert('No se pudo exportar')
+    } finally { setExportando(false) }
+  }
+
   return (
     <div>
       {cargando ? (
@@ -922,6 +951,23 @@ function TabPedidosPrecio({ canWrite, onCount }) {
           No hay pedidos de precio pendientes.
         </div>
       ) : (
+        <>
+          <div className="d-flex align-items-center gap-2 mb-2">
+            <select className="form-select form-select-sm" style={{ maxWidth: 260 }}
+              value={filtroProveedor} onChange={e => setFiltroProveedor(e.target.value)}>
+              <option value="">Todos los proveedores ({lista.length})</option>
+              {proveedoresPresentes.map(nom => <option key={nom} value={nom}>{nom}</option>)}
+            </select>
+            {canExportar && (
+              <button className="btn btn-sm btn-outline-success ms-auto" disabled={exportando || listaFiltrada.length === 0} onClick={exportarExcel}>
+                {exportando ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-file-excel me-1" />}
+                Exportar Excel{filtroProveedor ? ` (${filtroProveedor})` : ''}
+              </button>
+            )}
+          </div>
+          {listaFiltrada.length === 0 ? (
+            <div className="text-center text-muted py-4">Ese proveedor no tiene pedidos de precio pendientes.</div>
+          ) : (
         <div className="table-responsive">
           <table className="table table-sm table-hover align-middle" style={{ fontSize: '0.82rem' }}>
             <thead className="table-light">
@@ -933,12 +979,12 @@ function TabPedidosPrecio({ canWrite, onCount }) {
               </tr>
             </thead>
             <tbody>
-              {lista.map(p => (
+              {listaFiltrada.map(p => (
                 <tr key={p.id}>
                   <td className="font-monospace">{p.codigo}</td>
                   <td>{p.descripcion}</td>
                   <td className="text-end text-muted">
-                    {p.precio_costo > 0
+                    {esMontoOculto(p.precio_costo) ? MONTO_OCULTO : p.precio_costo > 0
                       ? `${p.precio_costo} ${p.precio_moneda === 'DÓLAR' ? 'US$' : p.precio_moneda === 'EURO' ? '€' : '$'}`
                       : '—'}
                     {p.precio_fecha && <div style={{ fontSize: '0.7rem' }}>({p.precio_fecha.slice(8,10)}/{p.precio_fecha.slice(5,7)}/{p.precio_fecha.slice(0,4)})</div>}
@@ -979,6 +1025,8 @@ function TabPedidosPrecio({ canWrite, onCount }) {
             </tbody>
           </table>
         </div>
+          )}
+        </>
       )}
     </div>
   )

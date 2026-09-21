@@ -9,6 +9,7 @@ import { PREFIJOS, FAM_NOMBRES } from './prefijos'
 import { formatCuit } from '../../utils/cuit'
 import { nextItemKey } from '../../utils/itemKey'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 const ESTADOS = [
   { v:'Emitida',   c:'warning' },
@@ -17,7 +18,7 @@ const ESTADOS = [
   { v:'Cancelada', c:'danger'  },
 ]
 
-const fmtN = n => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n ?? 0)
+const fmtN = n => esMontoOculto(n) ? MONTO_OCULTO : new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n ?? 0)
 const fmtF = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
 const hoy  = () => new Date().toISOString().slice(0,10)
 
@@ -82,6 +83,7 @@ function calcFinal(p, b1, b2, b3, b4) {
 }
 
 function fmtMonedaOC(n, mon) {
+  if (esMontoOculto(n)) return '$ ' + MONTO_OCULTO
   const v = parseFloat(n)
   if (!v || isNaN(v)) return '—'
   const sym = mon === 'DÓLAR' ? 'USD ' : mon === 'EURO' ? '€ ' : '$ '
@@ -419,13 +421,17 @@ export default function Compras() {
       alert(`${sinCodigo.length} ítem${sinCodigo.length!==1?'s':''} sin producto asignado. Asigná un producto a cada ítem antes de confirmar la recepción.`)
       return
     }
+    if (!nroRemito?.trim()) {
+      alert('Ingresá el N° de remito de esta entrega antes de confirmar la recepción.')
+      return
+    }
     setSavRec(true)
     try {
       const producto_ids = {}
       for (const it of (modalRec.items||[])) {
         if (it.producto_id) producto_ids[it.id] = it.producto_id
       }
-      await api.post(`/compras/oc/${modalRec.id}/recibir`, { recepciones: recCants, fecha: fechaRec, numero_remito: nroRemito||undefined, producto_ids })
+      await api.post(`/compras/oc/${modalRec.id}/recibir`, { recepciones: recCants, fecha: fechaRec, numero_remito: nroRemito.trim(), producto_ids })
       setModalRec(null); setModalOC(null); cargarOC()
       alert('Recepción registrada. Los materiales quedaron pendientes de ingreso al stock.')
     } catch(err) { alert(err.response?.data?.error ?? 'Error al recibir') }
@@ -468,7 +474,7 @@ export default function Compras() {
     if (!linkRecItem?.crearCodigo) return
     setLinkRecItem(p => ({ ...p, crearLoadingCod: true }))
     try {
-      const { data: prod } = await api.post('/materiales', { codigo: linkRecItem.crearCodigo, descripcion, unidad:'UND.', codigo_generado:1 })
+      const { data: prod } = await api.post('/materiales', { codigo: linkRecItem.crearCodigo, descripcion, unidad:'UND.', codigo_generado:1, proveedor: modalRec.proveedor_nombre })
       confirmarLinkRecProd(prod)
     } catch(e) {
       alert(e.response?.data?.error || 'Error al crear el producto')
@@ -931,7 +937,7 @@ export default function Compras() {
                       </thead>
                       <tbody>
                         {(modalOC.items||[]).map(it => {
-                          const sub  = (it.cantidad||0) * (it.precio_final||0)
+                          const sub  = esMontoOculto(it.precio_final) ? MONTO_OCULTO : (it.cantidad||0) * (it.precio_final||0)
                           const pend = (it.cantidad||0) - (it.cant_recibida||0)
                           const bons = [it.bonif1,it.bonif2,it.bonif3,it.bonif4].filter(b=>b>0).map(b=>`${b}%`).join('+')
                           return (
@@ -964,7 +970,11 @@ export default function Compras() {
                       <tfoot>
                         <tr className="fw-bold">
                           <td colSpan={7} className="text-end">TOTAL {modalOC.moneda}</td>
-                          <td className="text-end">{fmtN((modalOC.items||[]).reduce((s,it)=>s+(it.cantidad||0)*(it.precio_final||0),0))}</td>
+                          <td className="text-end">
+                            {(modalOC.items||[]).some(it => esMontoOculto(it.precio_final))
+                              ? MONTO_OCULTO
+                              : fmtN((modalOC.items||[]).reduce((s,it)=>s+(it.cantidad||0)*(it.precio_final||0),0))}
+                          </td>
                           <td colSpan={2}/>
                         </tr>
                       </tfoot>
@@ -1076,17 +1086,25 @@ export default function Compras() {
                       </>}
                     </div>
                     <div className="d-flex gap-2">
-                      <button className="btn btn-sm btn-outline-success"
-                        onClick={async () => {
-                          const resp = await fetch(`/api/v1/compras/oc/${modalOC.id}/exportar`, { headers: { Authorization: `Bearer ${getToken()}` } })
-                          const blob = await resp.blob()
-                          const url  = URL.createObjectURL(blob)
-                          const a    = document.createElement('a')
-                          a.href = url; a.download = `OC_${modalOC.numero}.xlsx`; a.click()
-                          URL.revokeObjectURL(url)
-                        }}>
-                        <i className="bi bi-file-excel me-1"/>Excel
-                      </button>
+                      {canWrite && (
+                        <button className="btn btn-sm btn-outline-success"
+                          onClick={async () => {
+                            try {
+                              const resp = await fetch(`/api/v1/compras/oc/${modalOC.id}/exportar`, { headers: { Authorization: `Bearer ${getToken()}` } })
+                              if (!resp.ok) {
+                                const err = await resp.json().catch(() => null)
+                                throw new Error(err?.error || `Error al generar el Excel (${resp.status})`)
+                              }
+                              const blob = await resp.blob()
+                              const url  = URL.createObjectURL(blob)
+                              const a    = document.createElement('a')
+                              a.href = url; a.download = `OC_${modalOC.numero}.xlsx`; a.click()
+                              URL.revokeObjectURL(url)
+                            } catch (e) { alert(e.message || 'Error al generar el Excel') }
+                          }}>
+                          <i className="bi bi-file-excel me-1"/>Excel
+                        </button>
+                      )}
                       <button className="btn btn-sm btn-outline-secondary"
                         onClick={() => window.open(`/imprimir/oc/${modalOC.id}`, '_blank')}>
                         <i className="bi bi-printer me-1"/>Imprimir
@@ -1545,7 +1563,7 @@ export default function Compras() {
                     <DateInput className="form-control form-control-sm" style={{width:160}} value={fechaRec} onChange={v=>setFechaRec(v)}/>
                   </div>
                   <div className="col">
-                    <label className="form-label small fw-medium">N° Remito</label>
+                    <label className="form-label small fw-medium">N° Remito *</label>
                     <input className="form-control form-control-sm" placeholder="Ej: 0001-00012345" value={nroRemito} onChange={e=>setNroRemito(e.target.value)}/>
                   </div>
                 </div>
@@ -1675,7 +1693,8 @@ export default function Compras() {
               </div>
               <div className="modal-footer py-2">
                 <button className="btn btn-secondary btn-sm" onClick={()=>setModalRec(null)}>Cancelar</button>
-                <button className="btn btn-success btn-sm" onClick={confirmarRecibir} disabled={savRec}>
+                <button className="btn btn-success btn-sm" onClick={confirmarRecibir} disabled={savRec || !nroRemito?.trim()}
+                  title={!nroRemito?.trim() ? 'Ingresá el N° de remito' : ''}>
                   {savRec && <span className="spinner-border spinner-border-sm me-2"/>}
                   <i className="bi bi-box-arrow-in-down me-1"/>Confirmar recepción
                 </button>

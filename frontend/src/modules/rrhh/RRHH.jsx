@@ -3,7 +3,7 @@ import api from '../../api/client'
 import DateInput from '../../components/DateInput'
 import Estructura from './Estructura'
 import { fmtHorasMinutos as fmtH } from '../../utils/horas'
-import { puedeLeer } from '../../store/authStore'
+import { puedeLeer, puedeEscribir } from '../../store/authStore'
 import { manejarPegadoNumero } from '../../utils/numero'
 
 // ── Estilo corporativo para exports .xlsx (ExcelJS) ───────────────────────────
@@ -109,6 +109,7 @@ function fmtF(f) {
 }
 
 export default function RRHH() {
+  const canExportar = puedeEscribir('rrhh') // exportar exige escribir, no alcanza con leer
   const [tab,       setTab]       = useState('dashboard')
   const [dash,      setDash]      = useState(null)
   const [registros, setRegistros] = useState([])
@@ -2219,13 +2220,13 @@ export default function RRHH() {
                   ? <><span className="spinner-border spinner-border-sm me-1"/>Consultando…</>
                   : <><i className="bi bi-search me-1"/>Consultar</>}
               </button>
-              {infData && infData.length > 0 && (
+              {canExportar && infData && infData.length > 0 && (
                 <button className="btn btn-success btn-sm align-self-end"
                   onClick={() => exportarCSV(infTab === 'asistencia' ? 'asistencia' : 'tareas')}>
                   <i className="bi bi-file-earmark-excel me-1"/>Exportar Excel
                 </button>
               )}
-              {infTab === 'asistencia' && (
+              {canExportar && infTab === 'asistencia' && (
                 <button className="btn btn-outline-success btn-sm align-self-end"
                   onClick={exportarTodosExcel} disabled={infExportando}
                   title="Exporta todos los empleados del período, una hoja por empleado">

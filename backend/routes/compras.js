@@ -40,6 +40,18 @@ const leerProveedores = (req, res, next) => {
 };
 // Ninguna pantalla deja cargar cantidad/precio negativo (son inputs numéricos
 // con min="0") — si llega uno así es un valor mal enviado, no un caso real.
+// precio_final = precio_unitario con las bonificaciones encadenadas — mismo
+// cálculo que calcFinal() en Compras.jsx (frontend), acá para poder
+// verificar (no solo confiar) el precio_final que manda el cliente.
+function calcularPrecioFinal(precioUnitario, b1, b2, b3, b4) {
+  let v = parseFloat(precioUnitario) || 0;
+  for (const b of [b1, b2, b3, b4]) {
+    const pct = parseFloat(b) || 0;
+    if (pct > 0) v = v * (1 - pct / 100);
+  }
+  return Math.round(v * 10000) / 10000;
+}
+
 function validarItemsOC(items) {
   if (!items?.length) return null;
   for (const it of items) {
@@ -57,6 +69,16 @@ const puedeFusion = (req) => req.usuario?.rol === 'admin';
 const leerInformesCompras = (req, res, next) => {
   if (req.usuario?.rol === 'admin' || req.permisos?.compras_informes?.leer || req.permisos?.finanzas?.leer) return next();
   return res.status(403).json({ error: 'Sin permisos de lectura' });
+};
+// Exportar (descargar) exige escribir, no alcanza con poder leer en pantalla
+// — así alguien con acceso de solo lectura no puede llevarse los datos.
+const puedeExportarCompras = (req, res, next) => {
+  if (req.usuario?.rol === 'admin' || req.permisos?.compras?.escribir || req.permisos?.finanzas?.escribir) return next();
+  return res.status(403).json({ error: 'No tenés permiso para exportar' });
+};
+const puedeExportarInformesCompras = (req, res, next) => {
+  if (req.usuario?.rol === 'admin' || req.permisos?.compras_informes?.escribir || req.permisos?.finanzas?.escribir) return next();
+  return res.status(403).json({ error: 'No tenés permiso para exportar' });
 };
 
 // ── Plazo de entrega: OC única o por ítem, calculado en días desde la fecha de OC ──
@@ -733,7 +755,8 @@ router.post('/oc', verificarToken, body('proveedor_nombre').trim().notEmpty(), (
       for (const [i, it] of items.entries()) {
         db.prepare('INSERT INTO oc_items (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,dias_plazo,sin_codificar) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
           .run(oc_id, i+1, it.producto_id||null, it.cantidad||0, it.unidad||'UND.', it.descripcion||'',
-               it.precio_unitario||0, it.bonif1||0, it.bonif2||0, it.bonif3||0, it.bonif4||0, it.precio_final||0, it.plazo||'INMEDIATO',
+               it.precio_unitario||0, it.bonif1||0, it.bonif2||0, it.bonif3||0, it.bonif4||0,
+               calcularPrecioFinal(it.precio_unitario, it.bonif1, it.bonif2, it.bonif3, it.bonif4), it.plazo||'INMEDIATO',
                it.dias_plazo!=null && it.dias_plazo!=='' ? parseInt(it.dias_plazo,10) : null, it.sin_codificar ? 1 : 0);
       }
     }
@@ -793,7 +816,8 @@ router.put('/oc/:id', verificarToken, (req, res) => {
       for (const [i, it] of items.entries()) {
         db.prepare('INSERT INTO oc_items (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,dias_plazo,cant_recibida,sin_codificar) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
           .run(req.params.id, i+1, it.producto_id||null, it.cantidad||0, it.unidad||'UND.', it.descripcion||'',
-               it.precio_unitario||0, it.bonif1||0, it.bonif2||0, it.bonif3||0, it.bonif4||0, it.precio_final||0, it.plazo||'INMEDIATO',
+               it.precio_unitario||0, it.bonif1||0, it.bonif2||0, it.bonif3||0, it.bonif4||0,
+               calcularPrecioFinal(it.precio_unitario, it.bonif1, it.bonif2, it.bonif3, it.bonif4), it.plazo||'INMEDIATO',
                it.dias_plazo!=null && it.dias_plazo!=='' ? parseInt(it.dias_plazo,10) : null, it.cant_recibida||0, it.sin_codificar ? 1 : 0);
       }
     }
@@ -822,13 +846,17 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
   if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
   if (oc.estado === 'Cancelada') return res.status(400).json({ error: 'OC cancelada' });
 
-  const { recepciones, fecha, numero_remito, producto_ids } = req.body;
+  const { recepciones, fecha, numero_remito, producto_ids, partidas } = req.body;
+  // Sin remito no hay forma de rastrear después con qué entrega física llegó
+  // cada material — sobre todo si la OC se recibe de a partes, con un remito
+  // distinto cada vez.
+  if (!numero_remito?.trim()) return res.status(400).json({ error: 'Ingresá el N° de remito de esta entrega' });
   const fechaRec = fecha || hoyArgentina();
 
   const insIngreso = db.prepare(`
     INSERT INTO ingresos_pendientes
-      (oc_id,oc_numero,proveedor_nombre,oc_item_id,producto_id,producto_codigo,producto_desc,unidad,cantidad,precio_costo,numero_remito,fecha_recepcion)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+      (oc_id,oc_numero,proveedor_nombre,oc_item_id,producto_id,producto_codigo,producto_desc,unidad,cantidad,precio_costo,numero_remito,fecha_recepcion,partida)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
 
   const trx = db.transaction(() => {
@@ -860,7 +888,7 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
       const prod = db.prepare('SELECT codigo, descripcion, unidad FROM productos WHERE id=?').get(item.producto_id);
       insIngreso.run(oc.id, oc.numero, oc.proveedor_nombre, item.id, item.producto_id,
         prod?.codigo||'', prod?.descripcion||item.descripcion||'', prod?.unidad||item.unidad||'UND.',
-        real, item.precio_final||0, numero_remito||'', fechaRec);
+        real, item.precio_final||0, numero_remito||'', fechaRec, (partidas?.[item.id] || '').trim());
       itemsRecibidos.push(item);
       if (real < pendiente) todosRecibidos = false;
     }
@@ -957,7 +985,9 @@ router.patch('/oc/:id/vincular-factura', verificarToken, (req, res) => {
 // solo comprobante que cubre anticipo + saldo); se rechaza si la usa una
 // cuota de OTRA OC.
 router.patch('/oc/:ocId/cuotas/:cuotaId/vincular-factura', verificarToken, (req, res) => {
-  if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
+  // Mismo criterio que vincular-factura/desvincular-factura de arriba —
+  // Administración también carga/vincula facturas, no solo Compras.
+  if (!req.permisos?.compras?.escribir && !req.permisos?.administracion?.escribir) return res.status(403).json({ error: 'Sin permisos' });
   const cuota = db.prepare('SELECT id FROM oc_compra_cuotas WHERE id=? AND oc_id=?').get(req.params.cuotaId, req.params.ocId);
   if (!cuota) return res.status(404).json({ error: 'Cuota no encontrada' });
   const { factura_id } = req.body;
@@ -991,7 +1021,7 @@ router.patch('/oc/:id/desvincular-factura', verificarToken, (req, res) => {
   res.json({ ok: true });
 });
 
-router.get('/exportar/oc', verificarToken, leerInformesCompras, (req, res) => {
+router.get('/exportar/oc', verificarToken, leerInformesCompras, puedeExportarInformesCompras, (req, res) => {
   const { estado } = req.query;
   const where = estado ? 'WHERE o.estado=?' : '';
   const ocs = db.prepare(`SELECT o.*, COUNT(i.id) as n_items FROM ordenes_compra o LEFT JOIN oc_items i ON o.id=i.oc_id ${where} GROUP BY o.id ORDER BY o.id DESC`).all(...(estado?[estado]:[]));
@@ -1006,7 +1036,7 @@ router.get('/exportar/oc', verificarToken, leerInformesCompras, (req, res) => {
 });
 
 // ── Exportar OC individual a Excel ────────────────────────────────────────────
-router.get('/oc/:id/exportar', verificarToken, leerCompras, (req, res) => {
+router.get('/oc/:id/exportar', verificarToken, leerCompras, puedeExportarCompras, (req, res) => {
   const oc    = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(req.params.id);
   if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
   const items = db.prepare('SELECT * FROM oc_items WHERE oc_id=? ORDER BY item_num').all(oc.id);
@@ -1191,15 +1221,19 @@ router.get('/form49/stock-por-proveedor', verificarToken, leerCompras, (req, res
     SELECT f.id, f.numero, f.fecha, f.proveedor_id, f.proveedor_nombre, f.proveedor_cuit,
            f.moneda, f.tasa_cambio, f.condicion_pago
     FROM form49_ingresos f
-    WHERE ${cond}
+    WHERE (${cond}) AND f.oc_id IS NULL
     ORDER BY f.fecha DESC, f.id DESC
   `).all(...params);
   const result = [];
   for (const f of ingresos) {
+    // Nunca un ítem que ya quedó incluido en una OC anterior (generada acá
+    // mismo o desde el propio Formulario 49) — si no, cada vez que se vuelve
+    // a abrir esta pantalla para el mismo proveedor, lo ya comprado vuelve a
+    // aparecer como pendiente.
     const items = db.prepare(`
       SELECT id, descripcion, cantidad, unidad, precio_unitario, precio_final, producto_id, producto_codigo, plazo, destino
       FROM form49_items
-      WHERE form49_id=?
+      WHERE form49_id=? AND oc_id IS NULL
       ORDER BY id
     `).all(f.id);
     if (items.length) result.push({ ...f, items });
@@ -1230,6 +1264,7 @@ router.post('/form49/generar-oc-proveedor', verificarToken, (req, res) => {
            moneda||'PESOS', tasaCambioOC,
            condicion_pago||'', 'e-intra', obs, 'Recibida', fechaOC, req.usuario.id);
     const oc_id = r.lastInsertRowid;
+    const marcarF49Item = db.prepare('UPDATE form49_items SET oc_id=? WHERE id=?');
     for (const [i, it] of items.entries()) {
       db.prepare(`INSERT INTO oc_items
         (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,
@@ -1237,10 +1272,19 @@ router.post('/form49/generar-oc-proveedor', verificarToken, (req, res) => {
         VALUES (?,?,?,?,?,?,?,0,0,0,0,?,?,?)`)
         .run(oc_id, i+1, it.producto_id||null, it.cantidad||0, it.unidad||'UND.',
              it.descripcion||'', parseFloat(it.precio_unitario)||0,
-             parseFloat(it.precio_final)||0, it.plazo||'INMEDIATO', it.cantidad||0);
+             // bonif fijo en 0 acá arriba, así que precio_final tiene que
+             // ser igual a precio_unitario — no lo que mande el cliente.
+             calcularPrecioFinal(it.precio_unitario, 0, 0, 0, 0), it.plazo||'INMEDIATO', it.cantidad||0);
+      // Sin esto, el ítem seguía apareciendo como pendiente la próxima vez
+      // que se abría "Generar OC por proveedor" para el mismo proveedor.
+      if (it.form49_item_id) marcarF49Item.run(oc_id, it.form49_item_id);
     }
     return oc_id;
   })();
+  // Mismo paso que ya hace la creación normal de una OC (POST /oc) y la
+  // recepción (/oc/:id/recibir) — sin esto, generar la OC desde Ingreso sin
+  // OC dejaba el precio recién cargado sin llegar nunca al catálogo.
+  actualizarCatalogoDesdeOC(items, moneda, fechaOC, proveedor_id, proveedor_nombre);
   res.status(201).json({ oc_numero: numero, oc_id });
 });
 
@@ -1264,12 +1308,12 @@ function insertarItemsF49(fid, numero, proveedor_nombre, items) {
            it.producto_id||null, it.producto_codigo||'');
     if (it.producto_id) {
       db.prepare(`INSERT INTO ingresos_sin_oc_pendientes
-        (form49_id,form49_numero,proveedor_nombre,descripcion,unidad,cantidad,n_parte,precio_costo,producto_id,producto_codigo)
-        VALUES (?,?,?,?,?,?,?,?,?,?)`)
+        (form49_id,form49_numero,proveedor_nombre,descripcion,unidad,cantidad,n_parte,precio_costo,producto_id,producto_codigo,partida)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
         .run(fid, numero, proveedor_nombre, it.descripcion||'', it.unidad||'UND.',
              it.cantidad||0, it.n_parte||'',
              parseFloat(it.precio_final)||0,
-             it.producto_id, it.producto_codigo||'');
+             it.producto_id, it.producto_codigo||'', (it.n_lote||'').trim());
     }
   }
 }
@@ -1336,8 +1380,14 @@ router.put('/form49/:id', verificarToken, (req, res) => {
 
 router.delete('/form49/:id', verificarToken, (req, res) => {
   if (!req.permisos?.compras?.escribir) return res.status(403).json({ error: 'Sin permisos' });
-  db.prepare('DELETE FROM form49_items WHERE form49_id=?').run(req.params.id);
-  db.prepare('DELETE FROM form49_ingresos WHERE id=?').run(req.params.id);
+  // Mismo criterio que el PUT de arriba: si alguno de los ítems ya se había
+  // enviado a Stock (ingresos_sin_oc_pendientes), sin borrar esa fila quedaba
+  // huérfana — referenciando un form49_id/items que ya no existen.
+  db.transaction(() => {
+    db.prepare('DELETE FROM ingresos_sin_oc_pendientes WHERE form49_id=?').run(req.params.id);
+    db.prepare('DELETE FROM form49_items WHERE form49_id=?').run(req.params.id);
+    db.prepare('DELETE FROM form49_ingresos WHERE id=?').run(req.params.id);
+  })();
   res.json({ ok: true });
 });
 
@@ -1378,13 +1428,16 @@ router.post('/form49/:id/generar-oc', verificarToken, (req, res) => {
         (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,cant_recibida)
         VALUES (?,?,?,?,?,?,?,0,0,0,0,?,?,?)`)
         .run(oc_id, i+1, it.producto_id||null, it.cantidad||0, it.unidad||'UND.', it.descripcion||'',
-             parseFloat(it.precio_unitario)||0, parseFloat(it.precio_final)||0,
+             parseFloat(it.precio_unitario)||0,
+             // bonif fijo en 0 acá arriba (mismo motivo que generar-oc-proveedor).
+             calcularPrecioFinal(it.precio_unitario, 0, 0, 0, 0),
              it.plazo||'INMEDIATO', it.cantidad||0);
     }
     db.prepare('UPDATE form49_ingresos SET oc_id=?, oc_numero=? WHERE id=?')
       .run(oc_id, numero, f.id);
     return oc_id;
   })();
+  actualizarCatalogoDesdeOC(items, monedaOC, fechaOC, f.proveedor_id, f.proveedor_nombre);
 
   const oc = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(oc_id);
   res.status(201).json({ oc_numero: numero, oc_id, oc });

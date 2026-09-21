@@ -17,6 +17,11 @@ function NodoOrganigrama({ puesto, hijos, registrarRef }) {
         <div className="card-body py-2 px-3 text-center">
           <div className="fw-semibold small">{puesto.nombre}</div>
           {puesto.area && <div className="text-muted" style={{ fontSize: '0.72rem' }}>{puesto.area}</div>}
+          {puesto.gerente_autorizante === 0 && (
+            <div className="text-muted" style={{ fontSize: '0.66rem' }} title="No autoriza retiros/pagos aunque reporte al máximo nivel">
+              <i className="bi bi-shield-slash me-1" />No es gerencia
+            </div>
+          )}
         </div>
       </div>
       {propios.length > 0 && (

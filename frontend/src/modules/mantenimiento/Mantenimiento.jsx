@@ -4,10 +4,13 @@ import { puedeEscribir, getUser } from '../../store/authStore'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
 import DateInput from '../../components/DateInput'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
-const fmtN = n => n != null ? new Intl.NumberFormat('es-AR').format(n) : '—'
+// Usado hoy solo para el costo de una correctiva (dinero) — el guard queda
+// acá por si en el futuro se reusa fmtN para alguna otra cifra monetaria.
+const fmtN = n => esMontoOculto(n) ? MONTO_OCULTO : n != null ? new Intl.NumberFormat('es-AR').format(n) : '—'
 
 // Estados de alerta según días para vencer: vencida(rojo) <=0, critica(naranja) <=7, proxima(amarillo) <=14, atencion(azul) <=21, al_dia(verde) >21
 const BADGE_ALERTA  = { vencida: 'danger', critica: null, proxima: 'warning', atencion: 'primary', al_dia: 'success', nunca_ejecutada: 'secondary', manual: 'info' }

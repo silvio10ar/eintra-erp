@@ -36,14 +36,18 @@ export default function FormDocumentos({ canWrite }) {
 
   useEffect(() => { cargar() }, [cargar])
 
-  const toggleHistorial = async codigo => {
-    if (historialCodigo === codigo) { setHistorialCodigo(null); return }
-    setHistorialCodigo(codigo)
+  const cargarHistorial = async codigo => {
     setLoadingHist(true)
     try {
       const r = await api.get(`/calidad/documentos/${codigo}/historial`)
       setHistorial(r.data)
     } finally { setLoadingHist(false) }
+  }
+
+  const toggleHistorial = async codigo => {
+    if (historialCodigo === codigo) { setHistorialCodigo(null); return }
+    setHistorialCodigo(codigo)
+    await cargarHistorial(codigo)
   }
 
   const abrirNuevo = () => { setFormNuevo(NUEVO_VACIO); setArchivoNuevo(null); setErrNuevo(''); setModalNuevo(true) }
@@ -77,7 +81,12 @@ export default function FormDocumentos({ canWrite }) {
       await api.post(`/calidad/documentos/${modalRevision.codigo}/revision`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
       setModalRevision(null)
       cargar()
-      if (historialCodigo === modalRevision.codigo) toggleHistorial(modalRevision.codigo).then(() => toggleHistorial(modalRevision.codigo))
+      // El panel de historial ya está abierto para este código — alcanza con
+      // refrescar sus datos, no hay que cerrarlo y reabrirlo (eso llamaba dos
+      // veces seguidas a toggleHistorial sobre el mismo closure con el estado
+      // viejo, así que las dos veces tomaban la rama de "cerrar" y el panel
+      // nunca se volvía a abrir con la revisión recién subida).
+      if (historialCodigo === modalRevision.codigo) await cargarHistorial(modalRevision.codigo)
     } catch (err) {
       setErrRevision(err.response?.data?.error ?? 'Error al subir la nueva revisión')
     } finally { setSavingRevision(false) }

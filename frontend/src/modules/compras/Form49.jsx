@@ -6,10 +6,11 @@ import { PREFIJOS, FAM_NOMBRES } from './prefijos'
 import { formatCuit } from '../../utils/cuit'
 import { nextItemKey } from '../../utils/itemKey'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 const hoy  = () => new Date().toISOString().slice(0,10)
 const fmtF = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
-const fmtN = n => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n ?? 0)
+const fmtN = n => esMontoOculto(n) ? MONTO_OCULTO : new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n ?? 0)
 
 const MONEDAS   = ['PESOS', 'DÓLAR', 'EURO']
 const FORM_ITEM = { descripcion:'', cantidad:1, unidad:'UND.', n_parte:'', n_serie:'', n_lote:'',
@@ -256,6 +257,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
         descripcion,
         unidad: 'UND.',
         codigo_generado: 1,
+        proveedor: modalOCProv?.provSel?.nombre,
       })
       confirmarLinkProd(prod)
     } catch(e) {
@@ -316,6 +318,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
             plazo:           it.plazo || 'INMEDIATO',
             precio_unitario: itemsEdit[it.id]?.precio_unitario ?? it.precio_final ?? 0,
             precio_final:    itemsEdit[it.id]?.precio_final    ?? it.precio_final ?? 0,
+            form49_item_id:  it.id,
           })
         }
       }
@@ -414,7 +417,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
     if (!linkingFormItem?.crearCodigo) return
     setLinkingFormItem(p => ({ ...p, crearLoadingCod: true }))
     try {
-      const { data: prod } = await api.post('/materiales', { codigo: linkingFormItem.crearCodigo, descripcion, unidad:'UND.', codigo_generado:1 })
+      const { data: prod } = await api.post('/materiales', { codigo: linkingFormItem.crearCodigo, descripcion, unidad:'UND.', codigo_generado:1, proveedor: form.proveedor_nombre })
       confirmarLinkFormProd(prod)
     } catch(e) {
       setError(e.response?.data?.error || 'Error al crear el producto')
@@ -423,7 +426,11 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
   }
 
   const totalPages = Math.ceil(total / 50)
-  const totalForm  = form.items.reduce((s, it) => s + (parseFloat(it.cantidad)||0) * (parseFloat(it.precio_final)||0), 0)
+  // Si algún ítem quedó con el precio enmascarado (usuario "oculta_montos"),
+  // sumarlo daría NaN (parseFloat del sentinel) — el total también queda oculto.
+  const totalForm  = form.items.some(it => esMontoOculto(it.precio_final))
+    ? MONTO_OCULTO
+    : form.items.reduce((s, it) => s + (parseFloat(it.cantidad)||0) * (parseFloat(it.precio_final)||0), 0)
 
   return (
     <div>
@@ -558,7 +565,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                         <td className="text-end">{fmtN(it.cantidad)}</td>
                         <td>{it.unidad}</td>
                         <td className="text-end">{fmtN(it.precio_final)}</td>
-                        <td className="text-end">{fmtN((it.cantidad||0)*(it.precio_final||0))}</td>
+                        <td className="text-end">{esMontoOculto(it.precio_final) ? MONTO_OCULTO : fmtN((it.cantidad||0)*(it.precio_final||0))}</td>
                         <td>{it.plazo}</td>
                       </tr>
                     ))}
@@ -566,7 +573,11 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                   <tfoot>
                     <tr className="fw-bold">
                       <td colSpan={6} className="text-end">TOTAL {detalle.moneda}</td>
-                      <td className="text-end">{fmtN((detalle.items||[]).reduce((s,it)=>s+(it.cantidad||0)*(it.precio_final||0),0))}</td>
+                      <td className="text-end">
+                        {(detalle.items||[]).some(it => esMontoOculto(it.precio_final))
+                          ? MONTO_OCULTO
+                          : fmtN((detalle.items||[]).reduce((s,it)=>s+(it.cantidad||0)*(it.precio_final||0),0))}
+                      </td>
                       <td/>
                     </tr>
                   </tfoot>
@@ -882,7 +893,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                               onChange={e => setItem(idx, 'precio_final', parseFloat(e.target.value)||0)} min="0" step="any" />
                           </td>
                           <td className="text-end align-middle pe-2 text-muted">
-                            {fmtN((parseFloat(it.cantidad)||0) * (parseFloat(it.precio_final)||0))}
+                            {esMontoOculto(it.precio_final) ? MONTO_OCULTO : fmtN((parseFloat(it.cantidad)||0) * (parseFloat(it.precio_final)||0))}
                           </td>
                           <td>
                             <input className="form-control form-control-sm border-0 text-center" value={it.plazo}
@@ -1084,8 +1095,14 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                                 {f49.items.map(it => {
                                   const sel = modalOCProv.selItemIds.has(it.id)
                                   const ed  = modalOCProv.itemsEdit[it.id] || {}
-                                  const pf  = parseFloat(ed.precio_final ?? it.precio_final) || 0
-                                  const pu  = parseFloat(ed.precio_unitario ?? it.precio_unitario) || 0
+                                  const pfRaw = ed.precio_final ?? it.precio_final
+                                  const puRaw = ed.precio_unitario ?? it.precio_unitario
+                                  // Un precio enmascarado nunca debe parsearse (parseFloat del
+                                  // sentinel da NaN) ni tratarse como si fuera 0 — el subtotal de
+                                  // esta fila queda marcado como oculto en vez de mostrar basura.
+                                  const itemMasked = esMontoOculto(pfRaw) || esMontoOculto(puRaw)
+                                  const pf  = esMontoOculto(pfRaw) ? 0 : (parseFloat(pfRaw) || 0)
+                                  const pu  = esMontoOculto(puRaw) ? 0 : (parseFloat(puRaw) || 0)
                                   return (
                                     <tr key={it.id} style={!sel ? { opacity:0.4 } : (!it.producto_id ? { background:'#fff8e1', outline:'1px solid #ffc107' } : {})}>
                                       <td className="text-center align-middle">
@@ -1213,7 +1230,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                                           onChange={e => setItemEditOCProv(it.id, 'precio_final', parseFloat(e.target.value)||0)} />
                                       </td>
                                       <td className="text-end align-middle pe-2 text-muted">
-                                        {fmtN(it.cantidad * pf)}
+                                        {itemMasked ? MONTO_OCULTO : fmtN(it.cantidad * pf)}
                                       </td>
                                     </tr>
                                   )
@@ -1226,10 +1243,12 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                           <tr className="fw-bold">
                             <td colSpan={6} className="text-end">TOTAL {modalOCProv.moneda}</td>
                             <td className="text-end pe-2">
-                              {fmtN(modalOCProv.ingresos.flatMap(f=>f.items)
-                                .filter(it => modalOCProv.selItemIds.has(it.id))
-                                .reduce((s,it) => s + it.cantidad * (parseFloat(modalOCProv.itemsEdit[it.id]?.precio_final ?? it.precio_final)||0), 0)
-                              )}
+                              {(() => {
+                                const selItems = modalOCProv.ingresos.flatMap(f=>f.items).filter(it => modalOCProv.selItemIds.has(it.id))
+                                const algunoOculto = selItems.some(it => esMontoOculto(modalOCProv.itemsEdit[it.id]?.precio_final ?? it.precio_final))
+                                if (algunoOculto) return MONTO_OCULTO
+                                return fmtN(selItems.reduce((s,it) => s + it.cantidad * (parseFloat(modalOCProv.itemsEdit[it.id]?.precio_final ?? it.precio_final)||0), 0))
+                              })()}
                             </td>
                             <td/>
                           </tr>
@@ -1355,7 +1374,7 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                               onChange={e => setGenOCItem(idx, 'precio_final', parseFloat(e.target.value)||0)} />
                           </td>
                           <td className="align-middle text-end pe-2 text-muted">
-                            {fmtN((it.cantidad||0) * (it.precio_final||0))}
+                            {esMontoOculto(it.precio_final) ? MONTO_OCULTO : fmtN((it.cantidad||0) * (it.precio_final||0))}
                           </td>
                         </tr>
                       ))}
@@ -1364,7 +1383,9 @@ export default function Form49({ canWrite, proveedores = [], productos = [], pro
                       <tr className="fw-bold">
                         <td colSpan={6} className="text-end">TOTAL {modalGenOC.moneda}</td>
                         <td className="text-end pe-2">
-                          {fmtN(modalGenOC.items.reduce((s,it)=>s+(it.cantidad||0)*(it.precio_final||0),0))}
+                          {modalGenOC.items.some(it => esMontoOculto(it.precio_final))
+                            ? MONTO_OCULTO
+                            : fmtN(modalGenOC.items.reduce((s,it)=>s+(it.cantidad||0)*(it.precio_final||0),0))}
                         </td>
                       </tr>
                     </tfoot>

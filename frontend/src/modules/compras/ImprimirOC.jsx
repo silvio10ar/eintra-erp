@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import api from '../../api/client'
 import logo from '../../assets/logo.avif'
-import { getUser, getToken } from '../../store/authStore'
+import { getUser, getToken, puedeEscribir } from '../../store/authStore'
 import { formatCuit } from '../../utils/cuit'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 /* ── Datos fijos de E-INTRA ───────────────────────────────────────── */
 const EI = {
@@ -18,8 +19,10 @@ const EI = {
 }
 
 const fmtF = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
-const fmtN = (n, dec = 2) =>
-  new Intl.NumberFormat('es-AR', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(n ?? 0)
+const fmtN = (n, dec = 2) => {
+  if (esMontoOculto(n)) return MONTO_OCULTO
+  return new Intl.NumberFormat('es-AR', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(n ?? 0)
+}
 
 function sumarDias(fechaISO, dias) {
   if (!fechaISO || dias === '' || dias == null) return ''
@@ -71,7 +74,12 @@ export default function ImprimirOC() {
     return { num, item: (oc.items || []).find(it => it.item_num === num) ?? null }
   })
 
-  const subtotal = (oc.items || []).reduce((s, it) => s + (it.cantidad || 0) * (it.precio_final || 0), 0)
+  // Si algún ítem viene con el precio enmascarado (usuario con "oculta_montos"),
+  // sumarlo daría basura de concatenación de string — el subtotal también
+  // queda enmascarado en ese caso.
+  const subtotal = (oc.items || []).some(it => esMontoOculto(it.precio_final))
+    ? MONTO_OCULTO
+    : (oc.items || []).reduce((s, it) => s + (it.cantidad || 0) * (it.precio_final || 0), 0)
 
   /* ── Estilos ────────────────────────────────────────────────────── */
   const css = `
@@ -87,30 +95,44 @@ export default function ImprimirOC() {
     .items tbody tr.empty td { color: #bbb; }
     .items tfoot td { border: 1px solid #999; padding: 2px 4px; font-weight: bold; font-size: 7.5pt; }
     .print-btn { position: fixed; top: 12px; right: 12px; background: #0d6efd; color: #fff; border: none; border-radius: 6px; padding: 8px 18px; font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+    /* Tapa el fondo de marca del sistema (se filtra porque esta pantalla no
+       pasa por el layout principal) con un blanco casi total — SIN forzar
+       una altura mínima de hoja completa, que corría el contenido a una
+       segunda hoja extra solo para mostrar el fondo. */
+    .hoja { padding: 1mm 0; background: rgba(255,255,255,.94); }
+    .pie-logo { display: block; margin: 6px auto 0; width: 260px; opacity: .9; }
   `
 
   return (
     <>
       <style>{css}</style>
       <div className="no-print" style={{position:'fixed', top:12, right:12, display:'flex', gap:8, zIndex:999}}>
-        <button style={{padding:'8px 16px', background:'#1d6f42', color:'#fff', border:'none', borderRadius:6, cursor:'pointer', fontSize:13}}
-          onClick={async () => {
-            const resp = await fetch(`/api/v1/compras/oc/${id}/exportar`, { headers: { Authorization: `Bearer ${getToken()}` } })
-            const blob = await resp.blob()
-            const url  = URL.createObjectURL(blob)
-            const a    = document.createElement('a')
-            a.href = url; a.download = `OC_${oc?.numero || id}.xlsx`; a.click()
-            URL.revokeObjectURL(url)
-          }}>
-          📊 Exportar Excel
-        </button>
+        {(puedeEscribir('compras') || puedeEscribir('finanzas')) && (
+          <button style={{padding:'8px 16px', background:'#1d6f42', color:'#fff', border:'none', borderRadius:6, cursor:'pointer', fontSize:13}}
+            onClick={async () => {
+              try {
+                const resp = await fetch(`/api/v1/compras/oc/${id}/exportar`, { headers: { Authorization: `Bearer ${getToken()}` } })
+                if (!resp.ok) {
+                  const err = await resp.json().catch(() => null)
+                  throw new Error(err?.error || `Error al generar el Excel (${resp.status})`)
+                }
+                const blob = await resp.blob()
+                const url  = URL.createObjectURL(blob)
+                const a    = document.createElement('a')
+                a.href = url; a.download = `OC_${oc?.numero || id}.xlsx`; a.click()
+                URL.revokeObjectURL(url)
+              } catch (e) { alert(e.message || 'Error al generar el Excel') }
+            }}>
+            📊 Exportar Excel
+          </button>
+        )}
         <button style={{padding:'8px 16px', background:'#0d6efd', color:'#fff', border:'none', borderRadius:6, cursor:'pointer', fontSize:13}}
           onClick={() => window.print()}>
           🖨 Imprimir / PDF
         </button>
       </div>
 
-      <div style={{padding:'1mm 0'}}>
+      <div className="hoja">
 
         {/* ── ENCABEZADO ──────────────────────────────────────────── */}
         <table style={{marginBottom:'3px'}}>
@@ -256,7 +278,7 @@ export default function ImprimirOC() {
                   <td style={{textAlign:'center'}}>{item.unidad}</td>
                   <td>{item.descripcion}</td>
                   <td style={{textAlign:'right', color:'#555'}}>
-                    {item.precio_unitario > 0 ? fmtN(item.precio_unitario) : '—'}
+                    {esMontoOculto(item.precio_unitario) ? MONTO_OCULTO : (item.precio_unitario > 0 ? fmtN(item.precio_unitario) : '—')}
                   </td>
                   <td style={{textAlign:'center', color:'#555'}}>
                     {item.bonif1 > 0 ? item.bonif1 : ''}
@@ -274,7 +296,7 @@ export default function ImprimirOC() {
                     {fmtN(item.precio_final)}
                   </td>
                   <td style={{textAlign:'right', fontWeight:'bold', background:'#e8f4fd', color:'#1a3a5c'}}>
-                    {fmtN((item.cantidad || 0) * (item.precio_final || 0))}
+                    {esMontoOculto(item.precio_final) ? MONTO_OCULTO : fmtN((item.cantidad || 0) * (item.precio_final || 0))}
                   </td>
                   <td style={{textAlign:'center', fontSize:'7pt'}}>
                     {item.dias_plazo != null && item.dias_plazo !== ''
@@ -343,6 +365,8 @@ export default function ImprimirOC() {
         <div style={{textAlign:'center', fontWeight:'bold', fontStyle:'italic', fontSize:'7pt', textDecoration:'underline', marginTop:'4px', color:'#1a3a5c'}}>
           IMPORTANTE: AL INGRESO A NUESTRAS INSTALACIONES, ES OBLIGATORIO EL USO DE ELEMENTOS DE SEGURIDAD PERSONAL (EPP)
         </div>
+
+        <img src={logo} alt="" className="pie-logo" />
 
       </div>
     </>

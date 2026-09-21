@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, Fragment } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import api from '../../api/client'
 import { puedeEscribir, getUser } from '../../store/authStore'
 import FormGranallado   from './FormGranallado'
@@ -12,6 +13,8 @@ import FormChapaID      from './FormChapaID'
 import FormDocumentos   from './FormDocumentos'
 import FormObjetivos    from './FormObjetivos'
 import Form11           from './Form11'
+import DateInput        from '../../components/DateInput'
+import SubstockPanel    from '../../components/SubstockPanel'
 
 const hoy = () => new Date().toISOString().slice(0, 10)
 const fmtF = iso => iso ? iso.slice(0, 10).split('-').reverse().join('/') : '—'
@@ -41,9 +44,15 @@ const FORM_NC0   = { hoja_ruta_id: '', proyecto_id: '', fecha: hoy(), tipo: 'Pro
 const FORM_INS0  = { hoja_ruta_id: '', tipo: 'granallado', fecha: hoy(), inspector: '', resultado: 'Aprobado', observaciones: '' }
 
 export default function Calidad() {
-  const canWrite   = puedeEscribir('calidad')
+  const canWrite          = puedeEscribir('calidad')
+  const canWriteProyectos = puedeEscribir('proyectos')
   const user       = getUser()
   const userName   = user?.empleado_nombre || user?.nombre || ''
+
+  // Llegada desde "Ver Hoja de Ruta" en el Plan de un proyecto (?proyecto=<id>):
+  // expande su Hoja de Ruta si ya tiene una, o abre el alta pre-cargada si no.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepLinkProyecto = useRef(searchParams.get('proyecto'))
 
   const [tab, setTab]       = useState('hojas_ruta')
   const [subForm, setSubForm] = useState('form21')
@@ -65,6 +74,8 @@ export default function Calidad() {
   const [filtH, setFiltH]       = useState({ estado: '', buscar: '' })
   const [expanded, setExpanded] = useState(new Set())
   const [detalle, setDetalle]   = useState({})    // id → { etapas, nc, inspecciones }
+  const [planTareas, setPlanTareas] = useState({}) // hoja_ruta id → tareas del Plan (proyecto_tarea)
+  const [empleadosList, setEmpleadosList] = useState([])
   const [modalH, setModalH]     = useState(null)  // null | 'new' | { id, ...row }
   const [formH, setFormH]       = useState(FORM_HR0)
   const [savH, setSavH]         = useState(false)
@@ -93,8 +104,31 @@ export default function Calidad() {
 
   useEffect(() => {
     cargarResumen()
-    api.get('/calidad/proyectos-activos').then(r => setProy(r.data)).catch(e => console.error(e))
-    api.get('/calidad/hojas-ruta').then(r => setHojasList(r.data)).catch(e => console.error(e))
+    Promise.all([
+      api.get('/calidad/proyectos-activos'),
+      api.get('/calidad/hojas-ruta'),
+    ]).then(([rProy, rHojas]) => {
+      setProy(rProy.data)
+      setHojasList(rHojas.data)
+      const pid = deepLinkProyecto.current
+      if (pid) {
+        deepLinkProyecto.current = null
+        setSearchParams({}, { replace: true })
+        const hr = rHojas.data.find(h => String(h.proyecto_id) === String(pid))
+        if (hr) {
+          toggleExpand(hr.id)
+          setTimeout(() => document.getElementById(`hr-row-${hr.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 200)
+        } else {
+          const pr = rProy.data.find(p => String(p.id) === String(pid))
+          setFormH({ ...FORM_HR0, responsable: userName, proyecto_id: pid,
+            cliente_nombre: pr?.cliente_nombre || '', descripcion: pr ? `${pr.codigo} – ${pr.nombre}` : '' })
+          setModalH('new'); setErrH('')
+        }
+      }
+    }).catch(e => console.error(e))
+    api.get('/rrhh/empleados-basico').then(({ data }) => {
+      setEmpleadosList(data.filter(e => e.activo !== 0).map(e => e.nombre).sort((a, b) => a.localeCompare(b, 'es')))
+    }).catch(e => console.error(e))
   }, [cargarResumen])
 
   // ── Carga Hojas ────────────────────────────────────────────────────────────
@@ -128,6 +162,15 @@ export default function Calidad() {
   }, [])
   useEffect(() => { if (tab === 'inspecciones') cargarInsps() }, [tab, cargarInsps])
 
+  // Tareas del Plan (Producción/Calidad) de la Hoja de Ruta — mismo registro que
+  // se ve y edita en PlanGantt.jsx, no una copia.
+  const cargarPlanTareas = (hrId, proyectoId) => {
+    if (!proyectoId) { setPlanTareas(p => ({ ...p, [hrId]: [] })); return }
+    api.get(`/gantt/proyecto/${proyectoId}/tareas`)
+      .then(r => setPlanTareas(p => ({ ...p, [hrId]: r.data })))
+      .catch(() => setPlanTareas(p => ({ ...p, [hrId]: [] })))
+  }
+
   // ── Expand HR ─────────────────────────────────────────────────────────────
   const toggleExpand = (id) => {
     setExpanded(prev => {
@@ -138,12 +181,28 @@ export default function Calidad() {
         next.add(id)
         if (!detalle[id]) {
           api.get(`/calidad/hojas-ruta/${id}`)
-            .then(r => setDetalle(p => ({ ...p, [id]: r.data })))
+            .then(r => { setDetalle(p => ({ ...p, [id]: r.data })); cargarPlanTareas(id, r.data.proyecto_id) })
             .catch(() => setDetalle(p => ({ ...p, [id]: { etapas: [], nc: [], inspecciones: [] } })))
         }
       }
       return next
     })
+  }
+
+  // ── Editar una tarea del Plan desde la Hoja de Ruta (misma fila que el Plan) ─
+  const guardarTareaPlan = async (hrId, proyectoId, tarea, patch) => {
+    try {
+      await api.put(`/gantt/proyecto/${proyectoId}/tareas/${tarea.id}`, {
+        nombre: tarea.nombre, duracion_dias: tarea.duracion_dias,
+        responsable: patch.responsable ?? tarea.responsable,
+        area_responsable: tarea.area_responsable,
+        estado: patch.estado ?? tarea.estado,
+        avance: patch.avance ?? tarea.avance,
+        color: tarea.color, observaciones: tarea.observaciones,
+        fecha_inicio_manual: patch.fecha_inicio_manual ?? tarea.fecha_inicio_manual,
+      })
+      cargarPlanTareas(hrId, proyectoId)
+    } catch(e) { alert(e.response?.data?.error || 'Error al guardar la tarea') }
   }
 
   // ── Update etapa ──────────────────────────────────────────────────────────
@@ -291,6 +350,7 @@ export default function Calidad() {
               { key: 'documentos',        icon: 'file-earmark-lock2',  label: 'Documentos'        },
               { key: 'objetivos',         icon: 'bullseye',            label: 'Objetivos'         },
               { key: 'form11',            icon: 'building-check',      label: 'Evaluación Proveedores' },
+              { key: 'substock',          icon: 'box-seam',            label: 'Mi Substock'       },
             ].map(t => (
               <li key={t.key} className="nav-item">
                 <button className={`nav-link${tab === t.key ? ' active' : ''}`} onClick={() => setTab(t.key)}>
@@ -347,7 +407,7 @@ export default function Calidad() {
                     <tbody>
                       {hojas.map(h => (
                         <Fragment key={h.id}>
-                          <tr style={{ cursor: 'pointer' }} onClick={() => toggleExpand(h.id)}>
+                          <tr id={`hr-row-${h.id}`} style={{ cursor: 'pointer' }} onClick={() => toggleExpand(h.id)}>
                             <td className="ps-2">
                               <i className={`bi bi-chevron-${expanded.has(h.id) ? 'down' : 'right'} text-muted`} style={{ fontSize: '0.8rem' }} />
                             </td>
@@ -385,11 +445,24 @@ export default function Calidad() {
                                 {!detalle[h.id] ? (
                                   <span className="text-muted"><div className="spinner-border spinner-border-sm me-2" />Cargando etapas...</span>
                                 ) : (
-                                  <EtapasGrid
-                                    etapas={detalle[h.id].etapas || []}
-                                    canWrite={canWrite}
-                                    onGuardar={(etapaId, campos) => updateEtapa(h.id, etapaId, campos)}
-                                  />
+                                  <>
+                                    <TareasPlanGrid
+                                      proyectoId={h.proyecto_id}
+                                      tareas={planTareas[h.id] || []}
+                                      empleados={empleadosList}
+                                      canWrite={canWriteProyectos}
+                                      onGuardar={(tarea, patch) => guardarTareaPlan(h.id, h.proyecto_id, tarea, patch)}
+                                    />
+                                    {detalle[h.id].etapas?.length > 0 && (
+                                      <div className="mt-3">
+                                        <EtapasGrid
+                                          etapas={detalle[h.id].etapas}
+                                          canWrite={canWrite}
+                                          onGuardar={(etapaId, campos) => updateEtapa(h.id, etapaId, campos)}
+                                        />
+                                      </div>
+                                    )}
+                                  </>
                                 )}
                               </td>
                             </tr>
@@ -600,6 +673,13 @@ export default function Calidad() {
             </div>
           )}
 
+          {/* ════ MI SUBSTOCK ══════════════════════════════════════════════════ */}
+          {tab === 'substock' && (
+            <div className="p-3">
+              <SubstockPanel substock="calidad" canWrite={canWrite} />
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -662,6 +742,12 @@ export default function Calidad() {
                       <input type="date" className="form-control" value={formH.fecha_despacho || ''} onChange={e => setFormH(p => ({ ...p, fecha_despacho: e.target.value }))} />
                     </div>
                   )}
+                  {modalH !== 'new' && (
+                    <div className="col-md-4">
+                      <label className="form-label fw-semibold">Número de serie</label>
+                      <input className="form-control" value={formH.numero_serie || ''} onChange={e => setFormH(p => ({ ...p, numero_serie: e.target.value }))} />
+                    </div>
+                  )}
                   <div className="col-12">
                     <label className="form-label fw-semibold">Observaciones</label>
                     <textarea className="form-control" rows={2} value={formH.observaciones || ''} onChange={e => setFormH(p => ({ ...p, observaciones: e.target.value }))} />
@@ -670,7 +756,7 @@ export default function Calidad() {
                     <div className="col-12">
                       <div className="alert alert-info py-2 mb-0" style={{ fontSize: '0.85rem' }}>
                         <i className="bi bi-info-circle me-1" />
-                        Se crearán automáticamente <strong>9 etapas estándar</strong>: Corte, Armado y soldadura, Granallado, Pintura base, Pintura final, Montaje, Prueba funcional, Control final, Despacho.
+                        Las tareas de esta Hoja de Ruta se toman automáticamente del <strong>Plan del proyecto vinculado</strong> (áreas Producción y Calidad).
                       </div>
                     </div>
                   )}
@@ -833,6 +919,153 @@ export default function Calidad() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Matching de área sin depender de tildes/mayúsculas — las gerencias del
+// organigrama son texto libre, no hay un valor fijo "Producción"/"Calidad" en el código.
+const normalizarArea    = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+const esAreaProduccion  = area => normalizarArea(area).includes('produccion')
+const esAreaCalidad     = area => normalizarArea(area).includes('calidad')
+
+const ESTADOS_TAREA_PLAN = ['Pendiente', 'En proceso', 'Completado', 'Cancelado', 'Bloqueado']
+const BADGE_TAREA_PLAN   = { Pendiente: 'secondary', 'En proceso': 'primary', Completado: 'success', Cancelado: 'danger', Bloqueado: 'warning' }
+const DOT_TAREA_PLAN     = { Pendiente: '#adb5bd', 'En proceso': '#0d6efd', Completado: '#198754', Cancelado: '#dc3545', Bloqueado: '#ffc107' }
+
+// Tareas de Producción y Calidad del Plan (proyecto_tarea) de este proyecto —
+// se editan acá o desde PlanGantt.jsx, es la misma fila en los dos lados.
+function TareasPlanGrid({ proyectoId, tareas, empleados, canWrite, onGuardar }) {
+  const [local, setLocal] = useState({})
+
+  if (!proyectoId) return (
+    <div className="text-muted py-2" style={{ fontSize: '0.85rem' }}>
+      <i className="bi bi-info-circle me-1" />Sin proyecto vinculado — no hay tareas del Plan para mostrar.
+    </div>
+  )
+
+  const produccion = tareas.filter(t => esAreaProduccion(t.area_responsable))
+  const calidad    = tareas.filter(t => esAreaCalidad(t.area_responsable))
+
+  if (!produccion.length && !calidad.length) return (
+    <div className="text-muted py-2" style={{ fontSize: '0.85rem' }}>
+      <i className="bi bi-info-circle me-1" />El proyecto no tiene tareas de Producción o Calidad cargadas en el Plan.
+    </div>
+  )
+
+  const get = (t, k) => local[t.id]?.[k] ?? t[k] ?? ''
+  const set = (id, k, v) => setLocal(p => ({ ...p, [id]: { ...p[id], [k]: v } }))
+
+  const guardar = (t, patch = {}) => onGuardar(t, {
+    responsable:         patch.responsable         ?? get(t, 'responsable'),
+    estado:              patch.estado              ?? get(t, 'estado'),
+    avance:              patch.avance              ?? get(t, 'avance'),
+    fecha_inicio_manual: patch.fecha_inicio_manual  ?? get(t, 'fecha_inicio_manual'),
+  })
+
+  // Función (no componente) — se invoca inline, no como <Seccion/>, para no crear
+  // un tipo de componente nuevo en cada render (eso remonta la subtree y hace
+  // perder el foco del input en cada tecla).
+  const renderSeccion = (titulo, icono, filas) => filas.length > 0 && (
+    <div className="mb-3">
+      <div className="fw-semibold text-muted mb-2" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        <i className={`bi ${icono} me-1`} />{titulo} · {filas.length} tarea{filas.length !== 1 ? 's' : ''}
+      </div>
+      <div className="table-responsive">
+        <table className="table table-sm table-bordered align-middle mb-0" style={{ fontSize: '0.82rem' }}>
+          <thead className="table-light">
+            <tr>
+              <th style={{ width: 36, textAlign: 'center' }}>#</th>
+              <th>Tarea</th>
+              <th style={{ width: 150 }}>Responsable</th>
+              <th style={{ width: 140 }}>Fechas</th>
+              <th style={{ width: 130 }}>Inicio fijo</th>
+              <th style={{ width: 140 }}>Estado</th>
+              <th style={{ width: 90 }}>Avance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filas.map(t => {
+              const est = get(t, 'estado') || 'Pendiente'
+              return (
+                <tr key={t.id}>
+                  <td className="text-center text-muted fw-semibold">{t.orden}</td>
+                  <td style={{ lineHeight: 1.35 }}>{t.nombre}</td>
+                  <td>
+                    {canWrite ? (
+                      <select className="form-select form-select-sm border-0 px-1"
+                        style={{ background: 'transparent' }}
+                        value={get(t, 'responsable')}
+                        onChange={ev => { set(t.id, 'responsable', ev.target.value); guardar(t, { responsable: ev.target.value }) }}>
+                        <option value="">—</option>
+                        {!empleados.includes(get(t, 'responsable')) && get(t, 'responsable') && (
+                          <option value={get(t, 'responsable')}>{get(t, 'responsable')}</option>
+                        )}
+                        {empleados.map(nom => <option key={nom} value={nom}>{nom}</option>)}
+                      </select>
+                    ) : (get(t, 'responsable') || '—')}
+                  </td>
+                  <td style={{ fontSize: '0.76rem', color: '#6c757d' }}>
+                    {t.fecha_inicio_calc ? (
+                      <>
+                        {fmtF(t.fecha_inicio_calc)}
+                        {t.fecha_inicio_manual && <i className="bi bi-pin-angle-fill ms-1 text-warning" title="Fecha de inicio fijada a mano" />}
+                        <br />{fmtF(t.fecha_fin_calc)}
+                      </>
+                    ) : '—'}
+                  </td>
+                  <td>
+                    {canWrite ? (
+                      <div className="d-flex align-items-center gap-1">
+                        <DateInput style={{ width: 95 }}
+                          value={get(t, 'fecha_inicio_manual')}
+                          onChange={v => { set(t.id, 'fecha_inicio_manual', v); guardar(t, { fecha_inicio_manual: v }) }} />
+                        {get(t, 'fecha_inicio_manual') && (
+                          <button type="button" className="btn btn-sm btn-outline-secondary py-0 px-1" title="Volver a automático"
+                            onClick={() => { set(t.id, 'fecha_inicio_manual', ''); guardar(t, { fecha_inicio_manual: '' }) }}>
+                            <i className="bi bi-x" />
+                          </button>
+                        )}
+                      </div>
+                    ) : (get(t, 'fecha_inicio_manual') ? fmtF(get(t, 'fecha_inicio_manual')) : '—')}
+                  </td>
+                  <td>
+                    {canWrite ? (
+                      <div className="d-flex align-items-center gap-1">
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: DOT_TAREA_PLAN[est], flexShrink: 0 }} />
+                        <select className="form-select form-select-sm border-0 px-1 flex-grow-1"
+                          style={{ background: 'transparent', fontSize: '0.8rem' }}
+                          value={est}
+                          onChange={ev => { set(t.id, 'estado', ev.target.value); guardar(t, { estado: ev.target.value }) }}>
+                          {ESTADOS_TAREA_PLAN.map(s => <option key={s}>{s}</option>)}
+                        </select>
+                      </div>
+                    ) : (
+                      <span className={`badge bg-${BADGE_TAREA_PLAN[est] || 'secondary'}`} style={{ fontSize: '0.72rem' }}>{est}</span>
+                    )}
+                  </td>
+                  <td>
+                    {canWrite ? (
+                      <input type="number" min="0" max="100" className="form-control form-control-sm border-0 px-1"
+                        style={{ background: 'transparent', width: 70 }}
+                        value={get(t, 'avance') ?? 0}
+                        onChange={ev => set(t.id, 'avance', ev.target.value)}
+                        onBlur={ev => guardar(t, { avance: parseInt(ev.target.value) || 0 })} />
+                    ) : `${get(t, 'avance') || 0}%`}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+
+  return (
+    <div>
+      {renderSeccion('Tareas de Producción (Plan)', 'bi-gear', produccion)}
+      {renderSeccion('Tareas de Calidad (Plan)', 'bi-clipboard2-check', calidad)}
     </div>
   )
 }

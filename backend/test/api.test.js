@@ -234,6 +234,114 @@ test('alta de factura de compra con Form49: queda todo o nada (transacción)', a
   assert.ok(body.f49_numero)
 })
 
+test('Generar OC desde Ingreso sin OC (por Formulario 49 individual, y por proveedor agrupando varios) actualiza el precio de costo en el catálogo', async () => {
+  const t = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
+
+  // ── Caso 1: generar OC desde UN Formulario 49 puntual ──
+  const prod1 = await fetch(`${BASE}/stock/productos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'GENOC-F49-1', descripcion: 'Material generar OC individual' }),
+  }).then(r => r.json())
+  assert.equal(prod1.precio_costo, 0)
+
+  const f49 = await fetch(`${BASE}/compras/form49`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      proveedor_nombre: 'Proveedor GenOC Individual', fecha: '2026-02-01',
+      items: [{ descripcion: 'Material generar OC individual', cantidad: 3, producto_id: prod1.id, producto_codigo: prod1.codigo }],
+    }),
+  }).then(r => r.json())
+
+  const rGenOC = await fetch(`${BASE}/compras/form49/${f49.id}/generar-oc`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      items: [{ producto_id: prod1.id, cantidad: 3, unidad: 'UND.', descripcion: 'Material generar OC individual', precio_unitario: 250, precio_final: 250 }],
+    }),
+  })
+  assert.equal(rGenOC.status, 201)
+
+  const prod1Tras = await fetch(`${BASE}/stock/productos`, { headers: { Authorization: `Bearer ${t}` } })
+    .then(r => r.json()).then(rows => rows.find(p => p.id === prod1.id))
+  assert.equal(prod1Tras.precio_costo, 250, 'generar la OC desde un Formulario 49 puntual debe actualizar el precio de costo del catálogo, no solo el de la OC')
+  assert.equal(prod1Tras.proveedor, 'Proveedor GenOC Individual')
+
+  // ── Caso 2: "Generar OC por proveedor" agrupando varios Formularios 49 ──
+  const prod2 = await fetch(`${BASE}/stock/productos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'GENOC-PROV-1', descripcion: 'Material generar OC por proveedor' }),
+  }).then(r => r.json())
+  assert.equal(prod2.precio_costo, 0)
+
+  const rGenOCProv = await fetch(`${BASE}/compras/form49/generar-oc-proveedor`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      proveedor_nombre: 'Proveedor GenOC Agrupado', fecha: '2026-02-05', moneda: 'PESOS',
+      items: [{ producto_id: prod2.id, cantidad: 5, unidad: 'UND.', descripcion: 'Material generar OC por proveedor', precio_unitario: 80, precio_final: 80 }],
+      fuente_numeros: ['F49-TEST'],
+    }),
+  })
+  assert.equal(rGenOCProv.status, 201)
+
+  const prod2Tras = await fetch(`${BASE}/stock/productos`, { headers: { Authorization: `Bearer ${t}` } })
+    .then(r => r.json()).then(rows => rows.find(p => p.id === prod2.id))
+  assert.equal(prod2Tras.precio_costo, 80, '"Generar OC por proveedor" también debe actualizar el precio de costo del catálogo')
+  assert.equal(prod2Tras.proveedor, 'Proveedor GenOC Agrupado')
+})
+
+test('"Generar OC por proveedor": un ítem ya incluido en una OC no vuelve a aparecer como pendiente para ese proveedor', async () => {
+  const t = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
+
+  const prodA = await fetch(`${BASE}/stock/productos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'STOCKPROV-A', descripcion: 'Material A stock por proveedor' }),
+  }).then(r => r.json())
+  const prodB = await fetch(`${BASE}/stock/productos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'STOCKPROV-B', descripcion: 'Material B stock por proveedor' }),
+  }).then(r => r.json())
+
+  const f49_1 = await fetch(`${BASE}/compras/form49`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      proveedor_nombre: 'Proveedor Stock Por Test', fecha: '2026-03-01',
+      items: [{ descripcion: 'Material A stock por proveedor', cantidad: 2, producto_id: prodA.id, producto_codigo: prodA.codigo }],
+    }),
+  }).then(r => r.json())
+  const f49_2 = await fetch(`${BASE}/compras/form49`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      proveedor_nombre: 'Proveedor Stock Por Test', fecha: '2026-03-02',
+      items: [{ descripcion: 'Material B stock por proveedor', cantidad: 3, producto_id: prodB.id, producto_codigo: prodB.codigo }],
+    }),
+  }).then(r => r.json())
+
+  const antes = await fetch(`${BASE}/compras/form49/stock-por-proveedor?proveedor_nombre=${encodeURIComponent('Proveedor Stock Por Test')}`, { headers: { Authorization: `Bearer ${t}` } }).then(r => r.json())
+  const itemsAntes = antes.flatMap(f => f.items)
+  assert.ok(itemsAntes.some(it => it.producto_id === prodA.id), 'material A debe verse como pendiente antes de generar la OC')
+  assert.ok(itemsAntes.some(it => it.producto_id === prodB.id), 'material B debe verse como pendiente antes de generar la OC')
+  const itemA = itemsAntes.find(it => it.producto_id === prodA.id)
+
+  // Genera la OC solo con el material A (deja B afuera a propósito).
+  const rGenOC = await fetch(`${BASE}/compras/form49/generar-oc-proveedor`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      proveedor_nombre: 'Proveedor Stock Por Test', fecha: '2026-03-05', moneda: 'PESOS',
+      items: [{ producto_id: prodA.id, cantidad: 2, unidad: 'UND.', descripcion: 'Material A stock por proveedor', precio_unitario: 100, precio_final: 100, form49_item_id: itemA.id }],
+      fuente_numeros: [f49_1.numero],
+    }),
+  })
+  assert.equal(rGenOC.status, 201)
+
+  const despues = await fetch(`${BASE}/compras/form49/stock-por-proveedor?proveedor_nombre=${encodeURIComponent('Proveedor Stock Por Test')}`, { headers: { Authorization: `Bearer ${t}` } }).then(r => r.json())
+  const itemsDespues = despues.flatMap(f => f.items)
+  assert.ok(!itemsDespues.some(it => it.producto_id === prodA.id), 'material A ya incluido en la OC no debe volver a aparecer como pendiente')
+  assert.ok(itemsDespues.some(it => it.producto_id === prodB.id), 'material B, que quedó afuera de la OC, debe seguir apareciendo como pendiente')
+
+  // El Formulario 49 entero también deja de aparecer si TODOS sus ítems ya se usaron.
+  const f49_1_id = f49_1.id
+  assert.ok(!despues.some(f => f.id === f49_1_id), 'un Formulario 49 con todos sus ítems ya usados no debe volver a listarse')
+})
+
 test('Mi Parte: un usuario sin permiso de rrhh/partes igual puede leer categorias/proyectos/actividades', async () => {
   // Regresión: estas rutas alimentan el autoservicio "Mi Parte" de cualquier
   // empleado y no deben depender del permiso de módulo rrhh/partes.
@@ -716,6 +824,46 @@ test('editar un pago ya registrado (Ventas y Compras): corrige sus datos sin dup
   assert.equal(facturaCFinal.pago_confirmado, 1, 'tras corregir el importe al total de la factura de compra, debe quedar marcada como pagada')
 })
 
+test('Factura de venta cobrada por pagos itemizados (no por el botón simple "Marcar cobrada") también queda con fecha_pago, y se limpia al reabrirse', async () => {
+  const t = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
+
+  const factura = await fetch(`${BASE}/finanzas/facturas-venta`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ numero: 'FV-FPAGO-1', fecha: '2026-01-01', cliente_nombre: 'Cliente Fecha Pago Test', importe: 1000, moneda: 'PESO' }),
+  }).then(r => r.json())
+  assert.equal(factura.fecha_pago, '', 'arranca sin fecha de pago')
+
+  // Primer pago parcial: no llega a saldar la factura, sigue sin fecha_pago.
+  await fetch(`${BASE}/finanzas/facturas-venta/${factura.id}/pagos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tipo: 'parcial', forma_pago: 'transferencia', importe: 400, moneda: 'PESO', fecha: '2026-01-10', estado: 'confirmado' }),
+  })
+  const trasParcial = await fetch(`${BASE}/finanzas/facturas-venta`, { headers: { Authorization: `Bearer ${t}` } })
+    .then(r => r.json()).then(rows => rows.find(f => f.id === factura.id))
+  assert.equal(trasParcial.pago_confirmado, 0)
+  assert.equal(trasParcial.fecha_pago, '', 'con un pago parcial todavía no está cobrada, no debe tener fecha de pago')
+
+  // Segundo pago: completa el saldo — antes este flujo (a diferencia del botón
+  // "Marcar cobrada") dejaba pago_confirmado=1 pero fecha_pago en blanco.
+  const pagoFinal = await fetch(`${BASE}/finanzas/facturas-venta/${factura.id}/pagos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tipo: 'parcial', forma_pago: 'transferencia', importe: 600, moneda: 'PESO', fecha: '2026-01-20', estado: 'confirmado' }),
+  }).then(r => r.json())
+  const trasCompleto = await fetch(`${BASE}/finanzas/facturas-venta`, { headers: { Authorization: `Bearer ${t}` } })
+    .then(r => r.json()).then(rows => rows.find(f => f.id === factura.id))
+  assert.equal(trasCompleto.pago_confirmado, 1, 'con los dos pagos ya está saldada')
+  assert.equal(trasCompleto.fecha_pago, '2026-01-20', 'debe quedar la fecha del pago que la terminó de saldar, no vacía')
+
+  // Se borra el pago que la saldaba: vuelve a quedar pendiente y sin fecha_pago.
+  await fetch(`${BASE}/finanzas/facturas-venta/${factura.id}/pagos/${pagoFinal.id}`, {
+    method: 'DELETE', headers: { Authorization: `Bearer ${t}` },
+  })
+  const trasBorrar = await fetch(`${BASE}/finanzas/facturas-venta`, { headers: { Authorization: `Bearer ${t}` } })
+    .then(r => r.json()).then(rows => rows.find(f => f.id === factura.id))
+  assert.equal(trasBorrar.pago_confirmado, 0, 'al borrar el pago que la saldaba, vuelve a quedar pendiente')
+  assert.equal(trasBorrar.fecha_pago, '', 'y la fecha de pago debe limpiarse, no quedar la de un pago que ya no existe')
+})
+
 test('generador de códigos de materiales: familia de Válvulas (401..411, por material) genera correlativos igual que cualquier otra familia', async () => {
   const t = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
 
@@ -1180,7 +1328,11 @@ test('pagos en moneda extranjera se convierten a pesos antes de sumarlos contra 
   }).then(r => r.json())
   await fetch(`${BASE}/finanzas/facturas-compra/${facturaC.id}/pagos`, {
     method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tipo: 'total', forma_pago: 'transferencia', importe: 1000, moneda: 'DÓLAR', tasa_cambio: 1000, fecha: '2026-11-02' }),
+    // USD 1000 puede tocar (o superar, según la última cotización cargada por otro
+    // test) el umbral de autorización de pagos — se manda un autorizante admin
+    // (siempre válido) para que este test siga probando únicamente la conversión
+    // de moneda, no el control de autorización (que tiene sus propios tests).
+    body: JSON.stringify({ tipo: 'total', forma_pago: 'transferencia', importe: 1000, moneda: 'DÓLAR', tasa_cambio: 1000, fecha: '2026-11-02', autorizado_por_id: 1 }),
   })
   const facturaCFinal = await fetch(`${BASE}/finanzas/facturas-compra`, { headers: { Authorization: `Bearer ${t}` } })
     .then(r => r.json()).then(rows => rows.find(f => f.id === facturaC.id))
@@ -1194,11 +1346,61 @@ test('pagos en moneda extranjera se convierten a pesos antes de sumarlos contra 
   }).then(r => r.json())
   await fetch(`${BASE}/finanzas/facturas-venta/${facturaV.id}/pagos`, {
     method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tipo: 'total', forma_pago: 'transferencia', importe: 1000, moneda: 'DÓLAR', tasa_cambio: 1000, fecha: '2026-11-02' }),
+    body: JSON.stringify({ tipo: 'total', forma_pago: 'transferencia', importe: 1000, moneda: 'DÓLAR', tasa_cambio: 1000, fecha: '2026-11-02', autorizado_por_id: 1 }),
   })
   const facturaVFinal = await fetch(`${BASE}/finanzas/facturas-venta`, { headers: { Authorization: `Bearer ${t}` } })
     .then(r => r.json()).then(rows => rows.find(f => f.id === facturaV.id))
   assert.equal(facturaVFinal.pago_confirmado, 1, 'un cobro de USD 1000 sobre una factura de USD 1000 debe saldarla del lado de ventas también')
+})
+
+test('Pagos: confirmar uno que supera el umbral configurado exige elegir un autorizante, igual que el retiro de stock', async () => {
+  const t = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
+
+  // Cotización de referencia fija, para que el umbral en USD sea determinístico.
+  await fetch(`${BASE}/finanzas/tipo-cambio`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moneda: 'DÓLAR', valor: 1000, fecha: '2026-11-03' }),
+  })
+
+  const factura = await fetch(`${BASE}/finanzas/facturas-compra`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ numero: 'FC-UMBRAL-1', fecha: '2026-11-03', proveedor_nombre: 'Proveedor Umbral Test', importe: 2000000, moneda: 'PESO' }),
+  }).then(r => r.json())
+
+  // USD 2000 (2.000.000 / 1000) supera el umbral por defecto de USD 1000 — sin
+  // autorizante, la confirmación tiene que rechazarse con el flag para que el
+  // frontend sepa que hay que mostrar el selector, no solo un error genérico.
+  const sinAutorizante = await fetch(`${BASE}/finanzas/facturas-compra/${factura.id}/pagos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tipo: 'total', forma_pago: 'transferencia', importe: 2000000, moneda: 'PESO', fecha: '2026-11-04' }),
+  })
+  assert.equal(sinAutorizante.status, 400, 'un pago de USD 2000 sin autorizante no se puede confirmar')
+  const bodySinAutorizante = await sinAutorizante.json()
+  assert.equal(bodySinAutorizante.requiereAutorizante, true, 'el rechazo tiene que traer el flag para que el frontend muestre el selector')
+
+  const conAutorizante = await fetch(`${BASE}/finanzas/facturas-compra/${factura.id}/pagos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tipo: 'total', forma_pago: 'transferencia', importe: 2000000, moneda: 'PESO', fecha: '2026-11-04', autorizado_por_id: 1 }),
+  })
+  assert.equal(conAutorizante.status, 201, 'con un autorizante válido de la lista, el pago se confirma')
+  const pago = await conAutorizante.json()
+  assert.equal(pago.estado, 'confirmado')
+  assert.equal(pago.autorizado_por_id, 1)
+  assert.equal(pago.autorizado_por_nombre, 'Administrador')
+
+  // Un pago chico, sobre la misma factura, no exige nada.
+  const facturaChica = await fetch(`${BASE}/finanzas/facturas-venta`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ numero: 'FV-UMBRAL-1', fecha: '2026-11-03', cliente_nombre: 'Cliente Umbral Test', importe: 5000, moneda: 'PESO' }),
+  }).then(r => r.json())
+  const pagoChico = await fetch(`${BASE}/finanzas/facturas-venta/${facturaChica.id}/pagos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tipo: 'total', forma_pago: 'transferencia', importe: 5000, moneda: 'PESO', fecha: '2026-11-04' }),
+  })
+  assert.equal(pagoChico.status, 201, 'un cobro de USD 5 no necesita autorizante')
+
+  const autorizantes = await fetch(`${BASE}/finanzas/pagos-autorizantes`, { headers: { Authorization: `Bearer ${t}` } }).then(r => r.json())
+  assert.ok(Array.isArray(autorizantes) && autorizantes.some(a => a.id === 1), 'la lista de autorizantes incluye al admin')
 })
 
 test('el anticipo de una factura de compra se registra como un pago real y reduce el saldo pendiente', async () => {
@@ -1589,6 +1791,93 @@ test('Recibir OC: actualiza el precio de costo del material en stock con el prec
   assert.equal(productoTrasRecibir.proveedor, 'Proveedor Recepcion Test', 'el proveedor de la OC recibida también debe quedar en el catálogo, no solo el precio')
 })
 
+test('Confirmar un ingreso pendiente (con y sin OC) copia el proveedor real al movimiento de stock, no lo deja en blanco', async () => {
+  const t = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
+
+  // ── Desde OC ──
+  const producto = await fetch(`${BASE}/stock/productos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'PROV-MOV-OC-1', descripcion: 'Material ingreso con proveedor' }),
+  }).then(r => r.json())
+  const oc = await fetch(`${BASE}/compras/oc`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      proveedor_nombre: 'Proveedor Ingreso Movimiento Test', fecha: '2026-01-01', moneda: 'PESOS',
+      items: [{ producto_id: producto.id, descripcion: 'Material ingreso con proveedor', cantidad: 3, precio_unitario: 100, precio_final: 100 }],
+    }),
+  }).then(r => r.json())
+  await fetch(`${BASE}/compras/oc/${oc.id}/recibir`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fecha: '2026-01-10', recepciones: { [oc.items[0].id]: 3 } }),
+  })
+  const pendientes = await fetch(`${BASE}/stock/ingresos-pendientes`, { headers: { Authorization: `Bearer ${t}` } }).then(r => r.json())
+  const pendiente = pendientes.find(p => p.producto_id === producto.id)
+  assert.ok(pendiente, 'debe quedar un ingreso pendiente de confirmar')
+  assert.equal(pendiente.proveedor_nombre, 'Proveedor Ingreso Movimiento Test')
+
+  await fetch(`${BASE}/stock/ingresos-pendientes/${pendiente.id}/confirmar`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}` },
+  })
+  const historialOC = await fetch(`${BASE}/stock/movimientos?producto_id=${producto.id}`, { headers: { Authorization: `Bearer ${t}` } }).then(r => r.json())
+  const movOC = historialOC.datos.find(m => m.tipo === 'entrada')
+  assert.equal(movOC.proveedor, 'Proveedor Ingreso Movimiento Test', 'el movimiento de stock debe quedar con el proveedor de la OC, no en blanco')
+
+  // ── Sin OC (Form49) ──
+  const productoF49 = await fetch(`${BASE}/stock/productos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'PROV-MOV-F49-1', descripcion: 'Material ingreso sin OC' }),
+  }).then(r => r.json())
+  await fetch(`${BASE}/compras/form49`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      proveedor_nombre: 'Proveedor Sin OC Test', fecha: '2026-01-05',
+      items: [{ descripcion: 'Material ingreso sin OC', cantidad: 2, precio_final: 50, producto_id: productoF49.id, producto_codigo: productoF49.codigo }],
+    }),
+  })
+  const pendientesSinOC = await fetch(`${BASE}/stock/ingresos-sin-oc-pendientes`, { headers: { Authorization: `Bearer ${t}` } }).then(r => r.json())
+  const pendienteSinOC = pendientesSinOC.find(p => p.producto_id === productoF49.id)
+  assert.ok(pendienteSinOC, 'debe quedar un ingreso sin OC pendiente de confirmar')
+
+  await fetch(`${BASE}/stock/ingresos-sin-oc-pendientes/${pendienteSinOC.id}/confirmar`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  const historialF49 = await fetch(`${BASE}/stock/movimientos?producto_id=${productoF49.id}`, { headers: { Authorization: `Bearer ${t}` } }).then(r => r.json())
+  const movF49 = historialF49.datos.find(m => m.tipo === 'entrada')
+  assert.equal(movF49.proveedor, 'Proveedor Sin OC Test', 'el ingreso sin OC también debe quedar con el proveedor real en el movimiento')
+})
+
+test('Entrada manual a stock exige proveedor; "E-INTRA SRL" existe como caso único para material fabricado propio', async () => {
+  const t = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
+
+  const proveedores = await fetch(`${BASE}/compras/proveedores`, { headers: { Authorization: `Bearer ${t}` } }).then(r => r.json())
+  assert.ok(proveedores.some(p => p.nombre === 'E-INTRA SRL'), 'E-INTRA SRL debe existir en la lista de proveedores para material fabricado propio')
+
+  const producto = await fetch(`${BASE}/stock/productos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'PROV-ENTRADA-1', descripcion: 'Material entrada manual' }),
+  }).then(r => r.json())
+
+  const sinProveedor = await fetch(`${BASE}/stock/movimientos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ producto_id: producto.id, tipo: 'entrada', cantidad: 5, fecha: '2026-08-24' }),
+  })
+  assert.equal(sinProveedor.status, 400, 'una entrada manual sin proveedor debe rechazarse')
+
+  const conFabricacionPropia = await fetch(`${BASE}/stock/movimientos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ producto_id: producto.id, tipo: 'entrada', cantidad: 5, fecha: '2026-08-24', proveedor: 'E-INTRA SRL' }),
+  })
+  assert.equal(conFabricacionPropia.status, 201, 'con proveedor "E-INTRA SRL" (fabricación propia) sí debe aceptarse')
+
+  // Una salida no exige proveedor (el requisito es solo para lo que entra a stock).
+  const salidaSinProveedor = await fetch(`${BASE}/stock/movimientos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ producto_id: producto.id, tipo: 'salida', cantidad: 1, fecha: '2026-08-24', autorizado_por_id: 1 }),
+  })
+  assert.equal(salidaSinProveedor.status, 201, 'una salida no debe exigir proveedor')
+})
+
 test('OC de compras: al crearla con un ítem ya codificado, el proveedor de la OC queda en el catálogo del material (no solo el precio)', async () => {
   const t = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
 
@@ -1711,7 +2000,7 @@ test('Materiales: filtros por familia, alerta de stock y precio vencido se resue
   // Alerta de stock: agotado (0), bajo (stock<=mínimo) y ok (>0).
   await fetch(`${BASE}/stock/movimientos`, {
     method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ producto_id: prod.id, tipo: 'entrada', cantidad: 5, fecha: hoy }),
+    body: JSON.stringify({ producto_id: prod.id, tipo: 'entrada', cantidad: 5, fecha: hoy, proveedor: 'E-INTRA SRL' }),
   })
   await fetch(`${BASE}/materiales/${prod.id}`, {
     method: 'PUT', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
@@ -2132,6 +2421,43 @@ test('Pedido de precio: cualquiera lo pide desde Materiales/Análisis de Proyect
   assert.equal(cancelacionPropia.status, 200)
   const pendientesTrasCancelar = await fetch(`${BASE}/pedidos-precio/pendientes-ids`, { headers: { Authorization: `Bearer ${solTok}` } }).then(r => r.json())
   assert.ok(!pendientesTrasCancelar.some(p => p.producto_id === prod2.id))
+})
+
+test('Pedido de precio: exportar a Excel trae solo Proveedor y Material, filtrado por proveedor si se pide', async () => {
+  const admin = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
+
+  const matA = await fetch(`${BASE}/materiales`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'PEDPRECIO-EXP-A', descripcion: 'Material proveedor A', proveedor: 'Proveedor Export A' }),
+  }).then(r => r.json())
+  const matB = await fetch(`${BASE}/materiales`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'PEDPRECIO-EXP-B', descripcion: 'Material proveedor B', proveedor: 'Proveedor Export B' }),
+  }).then(r => r.json())
+  for (const m of [matA, matB]) {
+    await fetch(`${BASE}/pedidos-precio`, {
+      method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ producto_id: m.id }),
+    })
+  }
+
+  // Sin filtro: trae los dos pendientes (más lo que haya quedado de otros tests, así que se busca por código).
+  const respTodos = await fetch(`${BASE}/pedidos-precio/exportar`, { headers: { Authorization: `Bearer ${admin}` } })
+  assert.equal(respTodos.status, 200)
+  assert.match(respTodos.headers.get('content-type') || '', /spreadsheetml/)
+  const wbTodos = XLSX.read(Buffer.from(await respTodos.arrayBuffer()), { type: 'buffer' })
+  const filasTodos = XLSX.utils.sheet_to_json(wbTodos.Sheets[wbTodos.SheetNames[0]])
+  assert.ok(filasTodos.some(f => f.Proveedor === 'Proveedor Export A' && f.Material === 'Material proveedor A'))
+  assert.ok(filasTodos.some(f => f.Proveedor === 'Proveedor Export B' && f.Material === 'Material proveedor B'))
+  assert.ok(filasTodos.every(f => !f.Material.includes('PEDPRECIO')), 'el código interno de E-INTRA no debe aparecer en el Excel que se le manda al proveedor')
+  assert.ok(Object.keys(filasTodos[0]).every(k => k === 'Proveedor' || k === 'Material'), 'el Excel debe tener solo esas dos columnas')
+
+  // Filtrado por proveedor: trae solo lo de ese proveedor.
+  const respFiltrado = await fetch(`${BASE}/pedidos-precio/exportar?proveedor=${encodeURIComponent('Proveedor Export A')}`, { headers: { Authorization: `Bearer ${admin}` } })
+  const wbFiltrado = XLSX.read(Buffer.from(await respFiltrado.arrayBuffer()), { type: 'buffer' })
+  const filasFiltrado = XLSX.utils.sheet_to_json(wbFiltrado.Sheets[wbFiltrado.SheetNames[0]])
+  assert.ok(filasFiltrado.every(f => f.Proveedor === 'Proveedor Export A'), 'filtrado por proveedor no debe traer materiales de otro proveedor')
+  assert.ok(filasFiltrado.some(f => f.Material === 'Material proveedor A'))
 })
 
 test('Pedido de precio: con escritura de Compras (sin nada de Administración) se puede resolver y cancelar un pedido ajeno', async () => {
@@ -3358,6 +3684,73 @@ test('Autorizantes de retiro de stock: se muestra y guarda el nombre de RRHH, no
   assert.equal(propio.autorizado_por_nombre, 'ROBERTO GOMEZ GERENTE RRHH', 'el pedido debe quedar guardado con el nombre de RRHH del autorizante')
 })
 
+test('Historial de movimientos y exportación de Stock: solo gerentes y admin, no cualquiera con permiso de Stock', async () => {
+  const admin = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
+
+  const puestosPrevios = await fetch(`${BASE}/auth/puestos`, { headers: { Authorization: `Bearer ${admin}` } }).then(r => r.json())
+  function contarDescendientesTest(id) {
+    let total = 0
+    const pila = [id]
+    while (pila.length) {
+      const actual = pila.pop()
+      for (const p of puestosPrevios) if (p.reporta_a_id === actual) { total++; pila.push(p.id) }
+    }
+    return total
+  }
+  let raizId = puestosPrevios.filter(p => !p.reporta_a_id)
+    .map(p => ({ id: p.id, desc: contarDescendientesTest(p.id) }))
+    .sort((a, b) => b.desc - a.desc || a.id - b.id)[0]?.id
+  if (!raizId) {
+    raizId = (await fetch(`${BASE}/auth/puestos`, {
+      method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre: 'CEO Historial Stock Test', area: 'Gerencia General' }),
+    }).then(r => r.json())).id
+  }
+  const gerentePuesto = await fetch(`${BASE}/auth/puestos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre: 'Gerente Historial Stock Test', area: 'Depósito', reporta_a_id: raizId }),
+  }).then(r => r.json())
+
+  async function crearUsuarioStock(username, puestoId) {
+    const u = await fetch(`${BASE}/auth/usuarios`, {
+      method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, nombre: username, password: 'inicial123', rol: 'solo_lectura' }),
+    }).then(r => r.json())
+    await fetch(`${BASE}/auth/usuarios/${u.id}/permisos`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stock: { leer: true, escribir: true } }),
+    })
+    if (puestoId) {
+      await fetch(`${BASE}/auth/usuarios/${u.id}/puestos`, {
+        method: 'PUT', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ puesto_ids: [puestoId] }),
+      })
+    }
+    return u.id
+  }
+  const idGerente  = await crearUsuarioStock('gerente_historial_stock_test', gerentePuesto.id)
+  const idDeposito = await crearUsuarioStock('deposito_historial_stock_test', null)
+
+  const tokGerente  = tok({ id: idGerente,  username: 'gerente_historial_stock_test',  nombre: 'Gerente Test',  rol: 'solo_lectura' })
+  const tokDeposito = tok({ id: idDeposito, username: 'deposito_historial_stock_test', nombre: 'Depósito Test', rol: 'solo_lectura' })
+
+  for (const ruta of ['/stock/movimientos', '/stock/exportar', '/stock/exportar-historial', '/stock/movimientos/valores?campo=proveedor']) {
+    const rDeposito = await fetch(`${BASE}${ruta}`, { headers: { Authorization: `Bearer ${tokDeposito}` } })
+    assert.equal(rDeposito.status, 403, `${ruta}: un usuario con permiso de Stock pero sin puesto de gerencia no debe poder verlo`)
+
+    const rGerente = await fetch(`${BASE}${ruta}`, { headers: { Authorization: `Bearer ${tokGerente}` } })
+    assert.equal(rGerente.status, 200, `${ruta}: un gerente de gerencia sí debe poder verlo`)
+
+    const rAdmin = await fetch(`${BASE}${ruta}`, { headers: { Authorization: `Bearer ${admin}` } })
+    assert.equal(rAdmin.status, 200, `${ruta}: admin siempre debe poder verlo`)
+  }
+
+  // El resto de Stock (consultar/registrar movimientos) sigue abierto al que
+  // solo tiene el permiso de módulo, sin necesidad de ser gerente.
+  const rProductos = await fetch(`${BASE}/stock/productos?buscar=xx`, { headers: { Authorization: `Bearer ${tokDeposito}` } })
+  assert.equal(rProductos.status, 200, 'consultar el catálogo de stock no debe exigir ser gerente')
+})
+
 test('CUIT: se normaliza a formato XX-XXXXXXXX-X al guardar, venga como venga, en todos los módulos que lo usan', async () => {
   const admin = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
 
@@ -4504,7 +4897,7 @@ test('Análisis de Proyectos: calcula costo de mano de obra (horas × costo_hora
   // Una entrada (reposición de stock, no consumo) con el mismo proyecto no debe sumar nada.
   await fetch(`${BASE}/stock/movimientos`, {
     method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ producto_id: producto.id, tipo: 'entrada', cantidad: 50, fecha: '2026-08-03', proyecto: 'ANALISIS01' }),
+    body: JSON.stringify({ producto_id: producto.id, tipo: 'entrada', cantidad: 50, fecha: '2026-08-03', proyecto: 'ANALISIS01', proveedor: 'E-INTRA SRL' }),
   })
   // Una salida de OTRO proyecto no debe mezclarse.
   const otroProyecto = await fetch(`${BASE}/proyectos`, {
@@ -4555,4 +4948,63 @@ test('Análisis de Proyectos: calcula costo de mano de obra (horas × costo_hora
 
   const empleadosAdmin = await fetch(`${BASE}/rrhh/empleados`, { headers: { Authorization: `Bearer ${admin}` } }).then(r => r.json())
   assert.equal(empleadosAdmin.find(e => e.id === empleado.id).costo_hora, 1500, 'el admin sí debe ver el costo por hora')
+})
+
+test('Análisis de Proyectos: un material con precio de costo en dólares se convierte a pesos antes de sumarlo a la mano de obra (que siempre es en pesos)', async () => {
+  const admin = tok({ id: 1, username: 'admin', nombre: 'Admin', rol: 'admin' })
+
+  await fetch(`${BASE}/finanzas/tipo-cambio`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moneda: 'DÓLAR', valor: 1000, fuente: 'BNA', fecha: '2026-08-01' }),
+  })
+
+  const empleado = await fetch(`${BASE}/rrhh/empleados`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre: 'Empleado Moneda Test', costo_hora: 500 }),
+  }).then(r => r.json())
+  const proyecto = await fetch(`${BASE}/proyectos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'ANALISISMONEDA01', nombre: 'Proyecto Moneda Test' }),
+  }).then(r => r.json())
+  await fetch(`${BASE}/rrhh/registros`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fecha: '2026-08-01', empleado_id: empleado.id, proyecto_id: proyecto.id, horas: 4 }),
+  })
+  // Mano de obra: 4 × 500 = 2000 pesos.
+
+  // Material cargado en dólares — el retiro de stock tiene que convertirse a
+  // pesos (× 1000) antes de sumarse a la mano de obra, no sumarse "10" a secas.
+  const materialUSD = await fetch(`${BASE}/materiales`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: 'MAT-USD-ANALISIS-1', descripcion: 'Material en dólares', precio_costo: 10, precio_moneda: 'DÓLAR' }),
+  }).then(r => r.json())
+  await fetch(`${BASE}/stock/movimientos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ producto_id: materialUSD.id, tipo: 'entrada', cantidad: 50, fecha: '2026-08-01', proveedor: 'E-INTRA SRL' }),
+  })
+  await fetch(`${BASE}/stock/movimientos`, {
+    method: 'POST', headers: { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ producto_id: materialUSD.id, tipo: 'salida', cantidad: 3, fecha: '2026-08-01', proyecto: 'ANALISISMONEDA01', autorizado_por_id: 1 }),
+  })
+  // Material retirado: 3 × US$10 = US$30 → convertido a pesos: 30 × 1000 = 30000.
+
+  const lista = await fetch(`${BASE}/analisis-proyectos`, { headers: { Authorization: `Bearer ${admin}` } }).then(r => r.json())
+  const fila = lista.find(p => p.id === proyecto.id)
+  assert.equal(fila.costo_mano_obra, 2000)
+  assert.equal(fila.costo_materiales, 30000, 'US$30 al tipo de cambio 1000 = 30000 pesos, no 30 a secas mezclado con pesos')
+  assert.equal(fila.costo_total, 32000, 'la suma tiene que ser en la misma moneda (pesos), no dólares + pesos como si fueran lo mismo')
+  // Además de pesos, la lista informa el equivalente en dólares de cada total.
+  assert.equal(fila.costo_mano_obra_usd, 2, '2000 pesos / 1000 = US$2')
+  assert.equal(fila.costo_materiales_usd, 30, '30000 pesos / 1000 = US$30')
+  assert.equal(fila.costo_total_usd, 32, '32000 pesos / 1000 = US$32')
+
+  const detalle = await fetch(`${BASE}/analisis-proyectos/${proyecto.id}`, { headers: { Authorization: `Bearer ${admin}` } }).then(r => r.json())
+  const filaMaterial = detalle.porMaterial.find(m => m.id === materialUSD.id)
+  assert.equal(filaMaterial.precio_moneda, 'DÓLAR', 'el detalle debe informar en qué moneda está cargado el precio de costo')
+  assert.equal(filaMaterial.precio_costo, 10, 'el precio de costo se muestra en su moneda original, sin convertir')
+  assert.equal(filaMaterial.subtotal, 30000, 'el subtotal que se usa para el total sí tiene que estar convertido a pesos')
+  assert.equal(filaMaterial.subtotal_usd, 30, 'el subtotal por material también se informa en dólares')
+  assert.equal(detalle.costo_mano_obra_usd, 2)
+  assert.equal(detalle.costo_materiales_usd, 30)
+  assert.equal(detalle.costo_total_usd, 32)
 })

@@ -3,13 +3,16 @@ import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
 import { getUser, getPermisos } from '../../store/authStore'
 import logo from '../../assets/logo.avif'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 /* ── Helpers ────────────────────────────────────────────────────── */
+// fmt formatea cantidades/conteos (productos, OC, proyectos...), nunca
+// dinero — no necesita el guard de montos ocultos.
 const fmt = n =>
   new Intl.NumberFormat('es-AR', { minimumFractionDigits: 0 }).format(n ?? 0)
 
 const fmtMoney = n =>
-  new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n ?? 0)
+  esMontoOculto(n) ? MONTO_OCULTO : new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n ?? 0)
 
 const fmtFecha = iso =>
   iso ? new Date(iso + 'T00:00:00').toLocaleDateString('es-AR') : '—'
@@ -103,9 +106,12 @@ export default function Dashboard() {
     rol === 'admin' || !!(permisos[modulo]?.leer || permisos[modulo]?.escribir)
   const puedeSincronizar = rol === 'admin' || !!permisos.rrhh?.escribir
 
-  const verKpi = s => tieneAcceso(s)
+  // Producción (Órdenes de Trabajo) oculto a propósito, todavía no se va a
+  // implementar/usar — ver Layout.jsx.
+  const verKpi = s => s !== 'produccion' && tieneAcceso(s)
   const verAlerta = s => {
-    const mapa = { ots_urgentes: 'produccion', stock_bajo: 'stock', oc_pendientes: 'compras' }
+    if (s === 'ots_urgentes') return false
+    const mapa = { stock_bajo: 'stock', oc_pendientes: 'compras' }
     return tieneAcceso(mapa[s] ?? s)
   }
 
@@ -362,17 +368,7 @@ export default function Dashboard() {
               onClick={() => navigate('/proyectos', { state: { filtEst: 'Activo' } })}
             />
           )}
-          {verKpi('produccion') && (
-            <KpiCard
-              valor={fmt(produccion.abiertas)}
-              label="OT abiertas"
-              icon="tools"
-              colorClass="text-danger"
-              bgClass="bg-danger bg-opacity-10"
-              sub={produccion.urgentes > 0 ? `🔴 ${produccion.urgentes} urgentes` : `${produccion.vencidas} vencidas`}
-              onClick={() => navigate('/produccion')}
-            />
-          )}
+          {/* Producción (Órdenes de Trabajo) oculto a propósito — ver Layout.jsx */}
           {verKpi('finanzas') && (
             <KpiCard
               valor={fmtMoney(finanzas.saldo_total)}

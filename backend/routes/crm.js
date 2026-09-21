@@ -41,7 +41,12 @@ router.get('/stats', verificarToken, leerCRM, (req, res) => {
 
 // ── Cotizaciones ──────────────────────────────────────────────────────────
 router.get('/cotizaciones', verificarToken, leerCRM, (req, res) => {
-  const { page = 1, limit = 50, estado = '', anio = '', buscar = '', moneda = '' } = req.query
+  const { page: pageQ, limit: limitQ, estado = '', anio = '', buscar = '', moneda = '' } = req.query
+  // Ver comentario equivalente en ventas.js: un default en la desestructuración
+  // no cubre un query param con basura (ej. ?limit=abc → NaN), que better-sqlite3
+  // rechaza al bindearlo.
+  const page  = Math.max(1, parseInt(pageQ) || 1)
+  const limit = Math.max(1, parseInt(limitQ) || 50)
   const where = ['1=1'], p = []
   if (estado) { where.push('c.estado=?');              p.push(estado) }
   if (anio)   { where.push("SUBSTR(c.fecha,1,4)=?");   p.push(anio) }
@@ -51,7 +56,7 @@ router.get('/cotizaciones', verificarToken, leerCRM, (req, res) => {
     where.push(bc.cond); p.push(...bc.params)
   }
   const w = where.join(' AND ')
-  const offset = (parseInt(page) - 1) * parseInt(limit)
+  const offset = (page - 1) * limit
 
   const total = db.prepare(`
     SELECT COUNT(*) c FROM crm_cotizaciones c
@@ -66,7 +71,7 @@ router.get('/cotizaciones', verificarToken, leerCRM, (req, res) => {
     LEFT JOIN crm_contactos ct ON ct.id=c.contacto_id
     WHERE ${w} ORDER BY c.fecha DESC, c.id DESC
     LIMIT ? OFFSET ?
-  `).all(...p, parseInt(limit), offset)
+  `).all(...p, limit, offset)
 
   res.json({ total, datos })
 })
@@ -114,11 +119,13 @@ router.delete('/cotizaciones/:id', verificarToken, escribirCRM, (req, res) => {
 
 // ── Empresas ──────────────────────────────────────────────────────────────
 router.get('/empresas', verificarToken, leerCRM, (req, res) => {
-  const { buscar = '', page = 1, limit = 100 } = req.query
+  const { buscar = '', page: pageQ, limit: limitQ } = req.query
+  const page  = Math.max(1, parseInt(pageQ) || 1)
+  const limit = Math.max(1, parseInt(limitQ) || 100)
   const where = ['e.activo=1'], p = []
   if (buscar) { const bc = buscarCondicion(buscar, ['e.nombre']); where.push(bc.cond); p.push(...bc.params) }
   const w = where.join(' AND ')
-  const offset = (parseInt(page) - 1) * parseInt(limit)
+  const offset = (page - 1) * limit
 
   const total = db.prepare(`SELECT COUNT(*) c FROM crm_empresas e WHERE ${w}`).get(...p).c
   // Subqueries en vez de LEFT JOIN a contactos + cotizaciones a la vez: unir
@@ -135,7 +142,7 @@ router.get('/empresas', verificarToken, leerCRM, (req, res) => {
     WHERE ${w}
     ORDER BY e.nombre ASC
     LIMIT ? OFFSET ?
-  `).all(...p, parseInt(limit), offset)
+  `).all(...p, limit, offset)
 
   res.json({ total, datos })
 })

@@ -2,10 +2,15 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import api from '../../api/client'
 import { formatCuit } from '../../utils/cuit'
+import logo from '../../assets/logo.avif'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
-const fmt2 = n => n != null
-  ? new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
-  : '0,00'
+const fmt2 = n => {
+  if (esMontoOculto(n)) return MONTO_OCULTO
+  return n != null
+    ? new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
+    : '0,00'
+}
 const fmtF = s => s ? s.slice(0, 10).split('-').reverse().join('/') : ''
 
 export default function ImprimirPresupuesto() {
@@ -30,7 +35,8 @@ export default function ImprimirPresupuesto() {
   )
   if (!ppto) return <div className="p-4 text-danger">Presupuesto no encontrado</div>
 
-  const total = ppto.items.reduce((s, it) =>
+  const montosOcultos = ppto.items.some(it => esMontoOculto(it.precio_final) || esMontoOculto(it.precio_unitario))
+  const total = montosOcultos ? MONTO_OCULTO : ppto.items.reduce((s, it) =>
     s + (parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_final) || 0), 0)
 
   const hasBonif = ppto.items.some(it => it.bonif1 > 0 || it.bonif2 > 0 || it.bonif3 > 0 || it.bonif4 > 0)
@@ -45,7 +51,12 @@ export default function ImprimirPresupuesto() {
           .no-print { display: none !important; }
           body { font-size: 9.5pt; }
         }
-        .page { max-width: 800px; margin: 0 auto; padding: 20px; }
+        /* Tapa el fondo de marca del sistema (se filtra porque esta pantalla
+           no pasa por el layout principal) con un blanco casi total — SIN
+           forzar una altura mínima de hoja completa, que corría el
+           contenido a una segunda hoja extra solo para mostrar el fondo. */
+        .page { max-width: 800px; margin: 0 auto; padding: 20px; background: rgba(255,255,255,.94); }
+        .pie-logo { display: block; margin: 16px auto 0; width: 260px; opacity: .9; }
         .header { background: #1a3c6e; color: #fff; padding: 14px 20px;
                   display: flex; justify-content: space-between; align-items: center;
                   border-radius: 4px 4px 0 0; }
@@ -158,7 +169,9 @@ export default function ImprimirPresupuesto() {
             {ppto.items.map((it, i) => {
               const bonifStr = [it.bonif1, it.bonif2, it.bonif3, it.bonif4]
                 .filter(b => b > 0).map(b => `${b}%`).join('+') || '—'
-              const subtotal = (parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_final) || 0)
+              const subtotal = (esMontoOculto(it.precio_final) || esMontoOculto(it.precio_unitario))
+                ? MONTO_OCULTO
+                : (parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_final) || 0)
               return (
                 <tr key={i}>
                   <td className="c">{it.item_num || i + 1}</td>
@@ -219,6 +232,8 @@ export default function ImprimirPresupuesto() {
         <div className="page-foot">
           E-INTRA SRL · silvio.licenziato@e-intrasrl.com
         </div>
+
+        <img src={logo} alt="" className="pie-logo" />
       </div>
     </>
   )

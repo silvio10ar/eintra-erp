@@ -37,6 +37,7 @@ tar -czf $TMP_TAR `
   "backend/helpers" `
   "backend/db/database.js" `
   "backend/scripts" `
+  "backend/assets" `
   "frontend/src" `
   "frontend/package.json" `
   "frontend/vite.config.js" `
@@ -49,7 +50,7 @@ OK "Paquete listo ($kb KB)"
 
 # ─── 3. Subir y extraer en el servidor ───────────────────────────────────────
 Paso 3 "Subiendo archivos al servidor (ingresar contrasena)..."
-$dirs = "$RUTA_REMOTA/backend/routes $RUTA_REMOTA/backend/middleware $RUTA_REMOTA/backend/helpers $RUTA_REMOTA/backend/db $RUTA_REMOTA/backend/scripts $RUTA_REMOTA/backend/data $RUTA_REMOTA/frontend/src $RUTA_REMOTA/uploads $RUTA_REMOTA/releases"
+$dirs = "$RUTA_REMOTA/backend/routes $RUTA_REMOTA/backend/middleware $RUTA_REMOTA/backend/helpers $RUTA_REMOTA/backend/db $RUTA_REMOTA/backend/scripts $RUTA_REMOTA/backend/assets $RUTA_REMOTA/backend/data $RUTA_REMOTA/frontend/src $RUTA_REMOTA/uploads $RUTA_REMOTA/releases"
 scp @O -q $TMP_TAR "${SSH}:${RUTA_REMOTA}/deploy.tar.gz"
 if ($LASTEXITCODE -ne 0) { Fallo "Error al subir el paquete" }
 # Antes de pisar el codigo actual, guardar una copia (best-effort) para poder volver atras
@@ -161,8 +162,10 @@ mkdir -p "`$RUTA/logs"
 NODE_BIN=`$(which node 2>/dev/null || echo /usr/bin/node)
 CRON_MAIL="0 0 * * * `$NODE_BIN `$RUTA/backend/scripts/backup-email.js >> `$RUTA/logs/backup.log 2>&1"
 CRON_DISK="5 0 * * * `$NODE_BIN `$RUTA/backend/scripts/backup-disk.js >> `$RUTA/logs/backup-disk.log 2>&1"
-( crontab -l 2>/dev/null | grep -v "backup-email.js" | grep -v "backup-disk.js" || true ; echo "`$CRON_MAIL" ; echo "`$CRON_DISK" ) | crontab -
+CRON_DASH="*/5 * * * * `$NODE_BIN `$RUTA/backend/scripts/enviar-dashboard-finanzas.js >> `$RUTA/logs/dashboard-finanzas.log 2>&1"
+( crontab -l 2>/dev/null | grep -v "backup-email.js" | grep -v "backup-disk.js" | grep -v "enviar-dashboard-finanzas.js" || true ; echo "`$CRON_MAIL" ; echo "`$CRON_DISK" ; echo "`$CRON_DASH" ) | crontab -
 echo "[cron] Backup BD programado a medianoche (mail + copia local en backend/db/backups/)"
+echo "[cron] Reporte diario de Finanzas: chequeo cada 5 min (hora configurable en Configuracion del sistema)"
 
 echo ""
 echo "[OK] Servicio activo en http://`$(hostname -I | awk '{print `$1}'):3002"

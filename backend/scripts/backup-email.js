@@ -27,7 +27,7 @@ const transport = nodemailer.createTransport({
   port:   parseInt(getConfig('smtp_port', '587')),
   secure: getConfig('smtp_secure', 'false') === 'true',
   auth:   { user, pass: getConfig('smtp_pass') },
-  tls:    { rejectUnauthorized: false },
+  tls:    { rejectUnauthorized: getConfig('smtp_tls_reject_unauthorized', 'true') !== 'false' },
 })
 
 const fecha = new Date().toISOString().slice(0, 10)

@@ -109,7 +109,7 @@ router.get('/dashboard', verificarToken, leerRRHH, (req, res) => {
            COALESCE(SUM(r.horas),0) AS horas
     FROM proyectos p
     LEFT JOIN rrhh_registros r ON r.proyecto_id = p.id AND r.fecha BETWEEN ? AND ?
-    WHERE p.codigo NOT LIKE 'HIST-%'
+    WHERE p.codigo NOT LIKE 'HIST-%' AND p.codigo NOT LIKE 'PROV-%'
     GROUP BY p.id
     HAVING horas > 0
     ORDER BY horas DESC
@@ -190,13 +190,16 @@ router.get('/registros', verificarToken, leerRRHHOParte, (req, res) => {
 
 router.post('/registros', verificarToken, (req, res) => {
   if (!puedeParte(req)) return res.status(403).json({ error: 'Sin permiso' });
-  const { fecha, empleado_id, proyecto_id, categoria_id, hora_inicio, hora_fin, horas, modulo, descripcion } = req.body;
+  const { fecha, empleado_id, proyecto_id, actividad_id, categoria_id, hora_inicio, hora_fin, horas, modulo, descripcion } = req.body;
   if (!fecha || !empleado_id || !horas) return res.status(400).json({ error: 'fecha, empleado_id y horas son requeridos' });
 
+  // actividad_id: mismo campo que ya insertan /registros/batch y el PUT de
+  // abajo — sin él acá, un registro cargado por esta ruta perdía en silencio
+  // a qué actividad estaba asociado.
   const r = db.prepare(`
-    INSERT INTO rrhh_registros (fecha,empleado_id,proyecto_id,categoria_id,hora_inicio,hora_fin,horas,modulo,descripcion)
-    VALUES (?,?,?,?,?,?,?,?,?)
-  `).run(fecha, empleado_id, proyecto_id || null, categoria_id || null,
+    INSERT INTO rrhh_registros (fecha,empleado_id,proyecto_id,actividad_id,categoria_id,hora_inicio,hora_fin,horas,modulo,descripcion)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `).run(fecha, empleado_id, proyecto_id || null, actividad_id || null, categoria_id || null,
          hora_inicio || '', hora_fin || '', Number(horas), modulo || '', descripcion || '');
 
   res.json({ id: r.lastInsertRowid });
@@ -243,6 +246,11 @@ router.post('/registros/batch', verificarToken, (req, res) => {
 router.put('/registros/:id', verificarToken, (req, res) => {
   if (!puedeParte(req)) return res.status(403).json({ error: 'Sin permiso' });
   const { fecha, empleado_id, proyecto_id, actividad_id, categoria_id, hora_inicio, hora_fin, horas, modulo, descripcion } = req.body;
+  // Mismo requisito que POST /registros — sin esto, un body con fecha/
+  // empleado_id/horas faltante (ej. un campo vacío) llegaba tal cual al
+  // bind de better-sqlite3, que tira una excepción sin capturar (500 crudo
+  // en vez de un 400 con mensaje claro).
+  if (!fecha || !empleado_id || !horas) return res.status(400).json({ error: 'fecha, empleado_id y horas son requeridos' });
 
   db.prepare(`
     UPDATE rrhh_registros
@@ -304,6 +312,10 @@ router.put('/empleados/:id', verificarToken, (req, res) => {
           dni, fecha_ingreso, fecha_egreso, costo_hora } = req.body;
   const e = db.prepare('SELECT * FROM rrhh_empleados WHERE id=?').get(req.params.id);
   if (!e) return res.status(404).json({ error: 'No encontrado' });
+  // Igual que del lado de lectura (puedeVerCostoHora, más arriba) — quien no
+  // tiene permiso de Análisis de Proyectos tampoco puede escribir el costo
+  // por hora, aunque tenga escritura de RRHH en general.
+  const nuevoCostoHora = (costo_hora !== undefined && puedeVerCostoHora(req)) ? parseFloat(costo_hora) || 0 : e.costo_hora;
   db.prepare(`UPDATE rrhh_empleados SET nombre=?,tipo=?,empresa=?,activo=?,id_dispositivo=?,horario_entrada=?,horario_salida=?,obliga_fichar=?,dni=?,fecha_ingreso=?,fecha_egreso=?,costo_hora=? WHERE id=?`)
     .run(nombre.trim().toUpperCase(), tipo || 'interno', empresa || '',
          activo !== undefined ? Number(activo) : 1,
@@ -312,7 +324,7 @@ router.put('/empleados/:id', verificarToken, (req, res) => {
          horario_salida  || '',
          obliga_fichar !== undefined ? Number(obliga_fichar) : 1,
          dni ?? e.dni, fecha_ingreso ?? e.fecha_ingreso, fecha_egreso ?? e.fecha_egreso,
-         costo_hora !== undefined ? parseFloat(costo_hora) || 0 : e.costo_hora,
+         nuevoCostoHora,
          req.params.id);
   res.json({ ok: true });
 });
@@ -332,7 +344,7 @@ router.delete('/empleados/:id', verificarToken, (req, res) => {
 // Organigrama: solo los campos organizacionales del puesto, nunca sus permisos de sistema
 router.get('/organigrama', verificarToken, leerRRHH, (req, res) => {
   const rows = db.prepare(`
-    SELECT id, nombre, area, mision, responsabilidades, requisitos, reporta_a_id
+    SELECT id, nombre, area, mision, responsabilidades, requisitos, reporta_a_id, gerente_autorizante
     FROM puestos ORDER BY nombre
   `).all();
   res.json(rows);
@@ -383,7 +395,7 @@ router.get('/proyectos', verificarToken, (req, res) => {
     SELECT p.id, p.codigo, p.nombre, p.estado, p.cliente_nombre,
            COALESCE((SELECT SUM(horas) FROM rrhh_registros r WHERE r.proyecto_id = p.id), 0) AS total_horas
     FROM proyectos p
-    WHERE p.codigo NOT LIKE 'HIST-%'
+    WHERE p.codigo NOT LIKE 'HIST-%' AND p.codigo NOT LIKE 'PROV-%'
     ORDER BY p.estado='Activo' DESC, p.nombre
   `).all();
   res.json(rows);
@@ -490,7 +502,7 @@ router.put('/dispositivos/:id', verificarToken, (req, res) => {
 });
 
 // ── Test conexión ─────────────────────────────────────────────────────────────
-router.post('/dispositivos/:id/test', verificarToken, async (req, res) => {
+router.post('/dispositivos/:id/test', verificarToken, leerRRHH, async (req, res) => {
   const disp = db.prepare('SELECT * FROM rrhh_dispositivos WHERE id=?').get(req.params.id);
   if (!disp) return res.status(404).json({ error: 'No encontrado' });
   try {
@@ -809,9 +821,20 @@ router.get('/partes/semana', verificarToken, leerRRHHOParte, (req, res) => {
   for (let i = dias - 1; i >= 0; i--) fechas.push(fechaArgentinaHace(i));
   const desde = fechas[0], hasta = fechas[fechas.length - 1];
 
-  const empleados = db.prepare(
-    `SELECT id, nombre, tipo FROM rrhh_empleados WHERE activo=1 ORDER BY tipo, nombre`
-  ).all();
+  // Con el permiso liviano de "partes" (pensado para cargar el propio parte
+  // diario) alcanza igual para este endpoint por leerRRHHOParte, pero sin
+  // este recorte devolvía el cuadro de cumplimiento horario de TODA la
+  // empresa — cualquiera con solo ese permiso mínimo veía la asistencia de
+  // todos los demás. Con RRHH.leer (o admin) sí se ve la empresa completa.
+  const puedeVerTodos = req.usuario?.rol === 'admin' || !!req.permisos?.rrhh?.leer
+  const miEmpleadoId = puedeVerTodos ? null
+    : db.prepare('SELECT rrhh_empleado_id FROM usuarios WHERE id=?').get(req.usuario.id)?.rrhh_empleado_id
+
+  const empleados = puedeVerTodos
+    ? db.prepare(`SELECT id, nombre, tipo FROM rrhh_empleados WHERE activo=1 ORDER BY tipo, nombre`).all()
+    : miEmpleadoId
+      ? db.prepare(`SELECT id, nombre, tipo FROM rrhh_empleados WHERE activo=1 AND id=?`).all(miEmpleadoId)
+      : [];
 
   const partes = db.prepare(`
     SELECT empleado_id, fecha,
@@ -989,10 +1012,17 @@ router.get('/informes/asistencia', verificarToken, leerRRHH, (req, res) => {
   const feriados = new Set(
     db.prepare('SELECT fecha FROM rrhh_feriados WHERE fecha BETWEEN ? AND ?').all(desde, hasta).map(r => r.fecha)
   );
+  // Aritmética en UTC puro (Date.UTC + getUTCDay), no `new Date(desde+'T00:00:00')`
+  // parseado en hora local — igual criterio que fechaArgentinaHace() en
+  // helpers/fecha.js: así el resultado no depende de en qué zona horaria
+  // esté configurado el proceso de Node del servidor.
   const dias = [];
-  for (let d = new Date(desde + 'T00:00:00'); d <= new Date(hasta + 'T00:00:00'); d.setDate(d.getDate() + 1)) {
-    const dow   = d.getDay(); // 0=domingo, 6=sábado
-    const fecha = d.toISOString().slice(0, 10);
+  const [dY, dM, dD] = desde.split('-').map(Number);
+  const [hY, hM, hD] = hasta.split('-').map(Number);
+  for (let t = Date.UTC(dY, dM - 1, dD); t <= Date.UTC(hY, hM - 1, hD); t += 86400000) {
+    const dt    = new Date(t);
+    const dow   = dt.getUTCDay(); // 0=domingo, 6=sábado
+    const fecha = dt.toISOString().slice(0, 10);
     if (dow !== 0 && dow !== 6 && !feriados.has(fecha)) dias.push(fecha);
   }
 
@@ -1209,11 +1239,11 @@ router.post('/mi-parte', verificarToken, (req, res) => {
   const { registros } = req.body;
   if (!Array.isArray(registros) || registros.length === 0)
     return res.status(400).json({ error: 'Sin registros' });
-  const ins = db.prepare('INSERT INTO rrhh_registros (fecha,empleado_id,proyecto_id,categoria_id,hora_inicio,hora_fin,horas,modulo,descripcion) VALUES (?,?,?,?,?,?,?,?,?)');
+  const ins = db.prepare('INSERT INTO rrhh_registros (fecha,empleado_id,proyecto_id,actividad_id,categoria_id,hora_inicio,hora_fin,horas,modulo,descripcion) VALUES (?,?,?,?,?,?,?,?,?,?)');
   let insertados = 0;
   db.transaction(() => {
     for (const r of registros) {
-      ins.run(r.fecha, u.rrhh_empleado_id, r.proyecto_id || null, r.categoria_id || null,
+      ins.run(r.fecha, u.rrhh_empleado_id, r.proyecto_id || null, r.actividad_id || null, r.categoria_id || null,
               r.hora_inicio || null, r.hora_fin || null, r.horas, r.modulo || '', r.descripcion || '');
       insertados++;
     }

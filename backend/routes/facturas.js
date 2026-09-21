@@ -106,6 +106,10 @@ router.post('/guardar-compra', verificarToken, (req, res) => {
   } = req.body
 
   if (!numero?.trim()) return res.status(400).json({ error: 'Falta número de factura' })
+  // Mismo criterio que validarItemsOC en compras.js: un monto negativo acá
+  // se cuela después en totales/reconciliaciones basadas en SUM.
+  if ([importe, neto_gravado, iva_21].some(v => parseFloat(v) < 0))
+    return res.status(400).json({ error: 'Los montos de la factura no pueden ser negativos' })
   const cuitFmt = formatCuit(cuit)
   // Si no viene una tasa explícita, se toma la del sistema a la fecha de la
   // factura (nunca un default fijo de 1 — con moneda extranjera eso guardaría
@@ -123,11 +127,16 @@ router.post('/guardar-compra', verificarToken, (req, res) => {
       parseFloat(neto_gravado) || 0, parseFloat(iva_21) || 0, parseFloat(importe) || 0,
       moneda, tasaCambioEfectiva, observaciones, req.usuario.id)
 
-    // Actualizar OC vinculada
+    // Actualizar OC vinculada — importe_facturado es la suma de TODAS las
+    // facturas ya vinculadas a esta OC (no solo la que se acaba de cargar):
+    // pisarlo con el importe de una sola factura hacía que una OC facturada
+    // en varias cuotas mostrara solo el importe de la última cargada en vez
+    // del total facturado real.
     if (oc_id) {
-      db.prepare(`UPDATE ordenes_compra SET nro_factura=?, importe_facturado=?, estado=
-        CASE WHEN estado='Emitida' THEN 'Recibida' ELSE estado END WHERE id=?`)
-        .run(numero.trim(), parseFloat(importe) || 0, oc_id)
+      db.prepare(`UPDATE ordenes_compra SET nro_factura=?,
+        importe_facturado=(SELECT COALESCE(SUM(importe),0) FROM facturas_compra WHERE oc_id=?),
+        estado=CASE WHEN estado='Emitida' THEN 'Recibida' ELSE estado END WHERE id=?`)
+        .run(numero.trim(), oc_id, oc_id)
     }
 
     // Crear Form49 si no hay OC
@@ -175,6 +184,8 @@ router.post('/guardar-venta', verificarToken, (req, res) => {
   } = req.body
 
   if (!numero?.trim()) return res.status(400).json({ error: 'Falta número de factura' })
+  if (parseFloat(importe) < 0)
+    return res.status(400).json({ error: 'El importe de la factura no puede ser negativo' })
   const tasaCambioEfectiva = tasa_cambio ? parseFloat(tasa_cambio) : (tasaCambioSistema(moneda, fecha) || 1)
 
   const r = db.prepare(`

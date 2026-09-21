@@ -14,7 +14,12 @@ function logEstado(equipo_id, estado_anterior, estado_nuevo, motivo = '') {
   try {
     db.prepare('INSERT INTO mant_historial_estados (equipo_id,estado_anterior,estado_nuevo,motivo) VALUES (?,?,?,?)')
       .run(equipo_id, estado_anterior, estado_nuevo, motivo);
-  } catch(e) {}
+  } catch(e) {
+    // No se re-lanza a propósito (un fallo de log no debe tumbar la
+    // transición de estado real), pero antes ni quedaba rastro en ningún
+    // lado de que un cambio de estado no se pudo auditar.
+    console.error(`[mantenimiento] No se pudo registrar historial de estado (equipo ${equipo_id}, ${estado_anterior}→${estado_nuevo}): ${e.message}`);
+  }
 }
 
 const ALERTAS_BASE_SQL = `

@@ -7,12 +7,14 @@ import CRM from '../crm/CRM'
 import { formatCuit } from '../../utils/cuit'
 import { nextItemKey } from '../../utils/itemKey'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
-const fmtN = n => n != null ? new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n) : '—'
+const fmtN = n => esMontoOculto(n) ? MONTO_OCULTO : (n != null ? new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n) : '—')
 const fmtF = s => s ? s.slice(0,10).split('-').reverse().join('/') : '—'
 const hoy  = () => new Date().toISOString().slice(0,10)
 
 function calcFinal(p, b1, b2, b3, b4) {
+  if (esMontoOculto(p)) return MONTO_OCULTO
   let v = parseFloat(p) || 0
   for (const b of [b1, b2, b3, b4]) {
     const pct = parseFloat(b) || 0
@@ -201,8 +203,10 @@ export default function Ventas() {
   const addItem = () => setForm(f => ({ ...f, items: [...f.items, { ...ITEM0, _key: nextItemKey() }] }))
   const delItem = i => setForm(f => ({ ...f, items: f.items.filter((_, j) => j !== i) }))
 
-  const totalPpto = form.items.reduce((s, it) =>
-    s + (parseFloat(it.cantidad)||0) * (parseFloat(it.precio_final)||0), 0)
+  const totalPpto = form.items.some(it => esMontoOculto(it.precio_final) || esMontoOculto(it.precio_unitario))
+    ? MONTO_OCULTO
+    : form.items.reduce((s, it) =>
+        s + (parseFloat(it.cantidad)||0) * (parseFloat(it.precio_final)||0), 0)
 
   // ── Abrir / guardar presupuesto ───────────────────────────────────────────
   const abrirNuevo = () => {

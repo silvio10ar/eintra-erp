@@ -27,8 +27,8 @@ router.get('/resumen', verificarToken, (req, res) => {
   const pptoMes      = db.prepare("SELECT COUNT(*) as c FROM presupuestos WHERE fecha>=?").get(desde).c;
 
   // ── Proyectos ──────────────────────────────────────────────────────────────
-  const proyActivos  = db.prepare("SELECT COUNT(*) as c FROM proyectos WHERE estado='Activo'  AND codigo NOT LIKE 'HIST-%'").get().c;
-  const proyEnEspera = db.prepare("SELECT COUNT(*) as c FROM proyectos WHERE estado='En espera' AND codigo NOT LIKE 'HIST-%'").get().c;
+  const proyActivos  = db.prepare("SELECT COUNT(*) as c FROM proyectos WHERE estado='Activo'  AND codigo NOT LIKE 'HIST-%' AND codigo NOT LIKE 'PROV-%'").get().c;
+  const proyEnEspera = db.prepare("SELECT COUNT(*) as c FROM proyectos WHERE estado='En espera' AND codigo NOT LIKE 'HIST-%' AND codigo NOT LIKE 'PROV-%'").get().c;
 
   // ── Producción ─────────────────────────────────────────────────────────────
   const otAbiertas  = db.prepare("SELECT COUNT(*) as c FROM ordenes_trabajo WHERE estado IN ('Pendiente','En proceso','Pausada')").get().c;

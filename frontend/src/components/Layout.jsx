@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { getUser, clearAuth, getPermisos, getToken } from '../store/authStore'
 import MiParte from './MiParte'
+import AyudaModulo from './AyudaModulo'
 import logo from '../assets/logo.avif'
 
 // Las secciones del menú se agrupan por gerencia (rama del organigrama que
@@ -11,6 +12,7 @@ import logo from '../assets/logo.avif'
 const TODOS_LOS_ITEMS = [
   { to: '/dashboard',      label: 'Dashboard',       icon: 'speedometer2',      modulo: null },
   { to: '/ventas',         label: 'Ventas',          icon: 'briefcase',         modulo: 'ventas' },
+  { to: '/venta-repuestos', label: 'Venta de Repuestos', icon: 'truck',         modulo: 'venta_repuestos' },
   { to: '/proyectos',      label: 'Proyectos',       icon: 'kanban',           modulo: 'proyectos' },
   { to: '/analisis-proyectos', label: 'Análisis de Proyectos', icon: 'graph-up-arrow', modulo: 'analisis_proyectos' },
   { to: '/costeo-equipos', label: 'Costeo de Equipos', icon: 'calculator', modulo: 'costeo_equipos' },
@@ -19,6 +21,7 @@ const TODOS_LOS_ITEMS = [
   // sin que un admin le tenga que asignar un permiso aparte.
   { to: '/mis-tareas',     label: 'Mis Tareas',      icon: 'check2-square',    modulo: null },
   { to: '/produccion',     label: 'Producción',      icon: 'tools',            modulo: 'produccion' },
+  { to: '/electrico',      label: 'Eléctrico',       icon: 'lightning-charge', modulo: 'electrico' },
   { to: '/mantenimiento',  label: 'Mantenimiento',   icon: 'wrench-adjustable', modulo: 'mantenimiento' },
   { to: '/calidad',        label: 'Calidad',         icon: 'clipboard2-check', modulo: 'calidad' },
   { to: '/compras',        label: 'Compras',         icon: 'cart3',            modulo: 'compras' },
@@ -188,6 +191,7 @@ export default function Layout() {
             </span>
           </div>
           <div className="d-flex align-items-center gap-2 gap-sm-3 flex-shrink-0">
+            <AyudaModulo />
             <button className="btn btn-sm btn-outline-secondary position-relative" title="Mensajes"
               onClick={() => navigate('/mensajes')}>
               <i className="bi bi-envelope" />
@@ -217,7 +221,9 @@ export default function Layout() {
 
         {/* Page */}
         <main className="page-content">
-          <Outlet />
+          <div className="page-shell">
+            <Outlet />
+          </div>
         </main>
       </div>
 

@@ -275,12 +275,14 @@ export default function Usuarios() {
     setPermisosForm(p => ({ ...p, [m]: { ...p[m], [field]: val } }))
 
   /* ── Catálogo de puestos: crear / editar / eliminar ──────────────── */
-  const PUESTO_VACIO = { id: null, nombre: '', area: '', mision: '', responsabilidades: '', requisitos: '', reporta_a_id: '', modulos: {} }
+  const PUESTO_VACIO = { id: null, nombre: '', area: '', mision: '', responsabilidades: '', requisitos: '', reporta_a_id: '', gerente_autorizante: true, oculta_montos: false, modulos: {} }
   const nuevoPuestoForm = () => { setErrPuesto(''); setPuestoForm({ ...PUESTO_VACIO }) }
   const editarPuestoForm = p => { setErrPuesto(''); setPuestoForm({
     id: p.id, nombre: p.nombre,
     area: p.area || '', mision: p.mision || '', responsabilidades: p.responsabilidades || '',
     requisitos: p.requisitos || '', reporta_a_id: p.reporta_a_id || '',
+    gerente_autorizante: p.gerente_autorizante !== 0,
+    oculta_montos: p.oculta_montos === 1,
     modulos: { ...p.modulos },
   }) }
 
@@ -298,6 +300,8 @@ export default function Usuarios() {
         area: puestoForm.area, mision: puestoForm.mision,
         responsabilidades: puestoForm.responsabilidades, requisitos: puestoForm.requisitos,
         reporta_a_id: puestoForm.reporta_a_id || null,
+        gerente_autorizante: puestoForm.gerente_autorizante,
+        oculta_montos: puestoForm.oculta_montos,
       }
       if (puestoForm.id) await api.put(`/auth/puestos/${puestoForm.id}`, body)
       else await api.post('/auth/puestos', body)
@@ -706,6 +710,36 @@ export default function Usuarios() {
                             <option key={p.id} value={p.id}>{p.nombre}</option>
                           ))}
                         </select>
+                      </div>
+                      <div className="col-md-6 d-flex align-items-end">
+                        <div className="form-check">
+                          <input className="form-check-input" type="checkbox" id="gerenteAutorizante"
+                            checked={puestoForm.gerente_autorizante}
+                            onChange={e => setPuestoForm(p => ({ ...p, gerente_autorizante: e.target.checked }))} />
+                          <label className="form-check-label small" htmlFor="gerenteAutorizante">
+                            Es gerencia real (puede autorizar retiros/pagos)
+                          </label>
+                          <div className="form-text" style={{ fontSize: '0.72rem' }}>
+                            Destildar para un puesto que reporta al máximo nivel pero no es gerencia
+                            (ej. Auditoría de Calidad) — no va a poder autorizar retiros de stock ni
+                            pagos, ni exportar donde eso se exige.
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-md-6 d-flex align-items-end">
+                        <div className="form-check">
+                          <input className="form-check-input" type="checkbox" id="ocultaMontos"
+                            checked={puestoForm.oculta_montos}
+                            onChange={e => setPuestoForm(p => ({ ...p, oculta_montos: e.target.checked }))} />
+                          <label className="form-check-label small" htmlFor="ocultaMontos">
+                            Oculta montos (ve $ •••••• en vez de cifras reales)
+                          </label>
+                          <div className="form-text" style={{ fontSize: '0.72rem' }}>
+                            Tildar para un puesto que necesita ver otros datos de un módulo (OC,
+                            stock) pero nunca los importes reales — se enmascaran automáticamente
+                            en cualquier pantalla a la que tenga acceso, hoy o en el futuro.
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <label className="form-label small fw-medium mt-2">Accesos al sistema</label>

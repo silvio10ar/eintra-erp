@@ -5,6 +5,10 @@ const { db }  = require('../db/database');
 const { verificarToken, puede } = require('../middleware/auth');
 const { traerCotizacionBNA } = require('../helpers/bnaScraper');
 const { hoyArgentina } = require('../helpers/fecha');
+const { obtenerAutorizantes } = require('../helpers/organigrama');
+const { enviarMensajeSistema } = require('../helpers/mensajes');
+const { getConfig } = require('../helpers/config');
+const { MESES_POR_PERIODICIDAD, sumarMeses } = require('../helpers/servicios');
 const leerFinanzas = puede.leer('finanzas');
 // Una factura en moneda extranjera puede quedar con un resto de unos pocos
 // pesos por redondeo del tipo de cambio al convertir pagos y NC a pesos para
@@ -20,6 +24,16 @@ const leerFinanzasOAdministracion = (req, res, next) => {
     return next();
   }
   return res.status(403).json({ error: 'Sin permisos de lectura' });
+};
+// Exportar (descargar) no es lo mismo que leer en pantalla — alguien con
+// acceso de solo lectura (leer, sin escribir) puede ver los datos pero no
+// llevárselos. Se exige escribir en al menos uno de los mismos módulos que
+// habilitan la lectura de cada pantalla.
+const puedeExportarFinanzas = puede.escribir('finanzas');
+const puedeExportarFinanzasOAdministracion = (req, res, next) => {
+  const p = req.permisos || {};
+  if (req.usuario?.rol === 'admin' || p.finanzas?.escribir || p.administracion?.escribir) return next();
+  return res.status(403).json({ error: 'No tenés permiso para exportar' });
 };
 const { buscarCondicion } = require('../helpers/buscar');
 const { sqlFechaIso } = require('../helpers/fecha');
@@ -44,6 +58,67 @@ const sqlTotalPesos = (col, monCol, tcCol) =>
   `(CASE WHEN ${monCol} IN ('PESO','PESOS') OR ${monCol} IS NULL OR ${monCol}='' THEN ${col} ELSE ${col} * COALESCE(${tcCol},1) END)`;
 const esNC = tipo => typeof tipo === 'string' && tipo.startsWith('NC');
 
+// Convierte un pago a un valor de referencia en USD, para compararlo contra
+// el umbral de autorización (§4 del diagnóstico de organización: aplicar el
+// mismo criterio de autorización del organigrama que ya usa el retiro de
+// stock a lo que de verdad mueve plata). Se pasa primero a pesos con la
+// misma lógica que ya usa el resto de Finanzas (totalEnPesos) y de ahí a
+// USD con la última cotización BNA cargada — no hay otra fuente de "USD de
+// hoy" más confiable en el sistema. Si nunca se cargó una cotización,
+// devuelve null: no se puede evaluar el umbral, y se opta por no bloquear
+// la confirmación en vez de trabar Tesorería por un dato de configuración.
+function ultimaCotizacionUSD() {
+  const row = db.prepare(`
+    SELECT valor FROM tipo_cambio WHERE moneda='DÓLAR' ORDER BY created_at DESC, id DESC LIMIT 1
+  `).get();
+  return row ? parseFloat(row.valor) || null : null;
+}
+function montoEnUSD(p) {
+  const cot = ultimaCotizacionUSD();
+  if (!cot) return null;
+  return totalEnPesos(p) / cot;
+}
+
+// Si el pago supera el umbral configurable, exige elegir un autorizante de
+// la misma lista admin/gerentes que ya usa el retiro de stock. Se evalúa
+// recién al confirmar (ahí es cuando la plata realmente se mueve), no al
+// cargar el pago.
+function resolverAutorizantePago(pago, body) {
+  const umbral = parseFloat(getConfig('pago_umbral_autorizacion_usd', '1000')) || 1000;
+  const usd = montoEnUSD(pago);
+  if (usd === null || usd < umbral) return { ok: true, autorizante: null };
+  const autorizante = obtenerAutorizantes().find(u => u.id === parseInt(body.autorizado_por_id));
+  if (!autorizante) {
+    return {
+      ok: false,
+      error: `Este pago es de USD ${usd.toFixed(0)} (supera el umbral de USD ${umbral}) — elegí quién lo autoriza`,
+      requiereAutorizante: true, montoUsd: Math.round(usd), umbralUsd: umbral,
+    };
+  }
+  return { ok: true, autorizante };
+}
+
+// Mismo aviso post-hecho que ya usa el retiro de stock: la plata ya se
+// movió, se le informa al autorizante elegido qué fue lo que confirmó.
+function notificarAutorizantePago(tipoOp, facturaId, pagoId, autorizante, usuario) {
+  const esCompra = tipoOp === 'compra';
+  const factura = db.prepare(`
+    SELECT numero, ${esCompra ? 'proveedor_nombre' : 'cliente_nombre'} AS nombre
+    FROM ${esCompra ? 'facturas_compra' : 'facturas_venta'} WHERE id=?
+  `).get(facturaId);
+  const pago = db.prepare(`
+    SELECT importe, moneda, fecha, forma_pago FROM ${esCompra ? 'pagos_factura_compra' : 'pagos_factura_venta'} WHERE id=?
+  `).get(pagoId);
+  if (!factura || !pago) return;
+  enviarMensajeSistema({
+    de_id: usuario.id, de_nombre: usuario.nombre, para_id: autorizante.id,
+    asunto: `Pago autorizado — Factura ${factura.numero}`,
+    cuerpo: `Se confirmó un pago ${esCompra ? 'a proveedor' : 'de cliente'} que requería tu autorización:\n\n`
+      + `${esCompra ? 'Proveedor' : 'Cliente'}: ${factura.nombre}\nFactura: ${factura.numero}\n`
+      + `Importe: ${pago.importe} ${pago.moneda}\nForma de pago: ${pago.forma_pago}\nFecha: ${pago.fecha}\n`,
+  });
+}
+
 // Mismo criterio que ya usan las rutas de pagos (importe > 0): el formulario
 // nunca deja cargar un monto negativo (todos los inputs usan min="0"), así
 // que si llega uno es un valor mal enviado, no un caso de uso real a soportar.
@@ -51,8 +126,9 @@ const esNC = tipo => typeof tipo === 'string' && tipo.startsWith('NC');
 // (anula el monto de la factura que referencia, ver esNC/resolverNcFacturaId) —
 // no se valida su signo. No incluye campos que pueden ser negativos por otra
 // naturaleza (ej. dif_cambio, a favor o en contra) ni retenciones sin input propio.
-const CAMPOS_MONTO_FACTURA_COMPRA = ['neto_gravado', 'no_grav_exento', 'iva_21', 'iva_10_5', 'iva_27', 'otros_imp', 'perc_iva', 'perc_iibb'];
-const CAMPOS_MONTO_FACTURA_VENTA  = ['neto_gravado', 'iva_21', 'iva_10_5', 'total_cobrado'];
+// (Listas centralizadas en helpers/masking.js — las usa también el enmascarado
+// de montos reales para puestos como Auditoría de Calidad.)
+const { CAMPOS_MONTO_FACTURA_COMPRA, CAMPOS_MONTO_FACTURA_VENTA } = require('../helpers/masking');
 function validarMontosFactura(body, campos, tipoFacturaEfectivo) {
   if (!esNC(tipoFacturaEfectivo ?? body.tipo_factura) && body.importe !== undefined && parseFloat(body.importe) < 0) return 'El importe no puede ser negativo';
   for (const campo of campos) {
@@ -91,40 +167,47 @@ const puedeConfirmarPago = req =>
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
-router.get('/dashboard', verificarToken, leerFinanzas, (req, res) => {
-  const hoy = hoyArgentina()
-  const { desde = '', hasta = hoy } = req.query
+// Extraído a función propia para poder reusarlo también desde el reporte
+// diario por mail (helpers/reporteDashboardFinanzas.js), que corre fuera de
+// un request HTTP (vía script de cron) y necesita exactamente los mismos
+// números que ve un usuario parado en esta pantalla.
+function calcularDashboardFinanzas(desde = '', hasta = '') {
+  hasta = hasta || hoyArgentina()
   const filtC = desde ? 'fecha >= ? AND fecha <= ?' : 'fecha <= ?'
   const argsC = desde ? [desde, hasta] : [hasta]
 
+  // Alias con raíz "monto_"/"pesos" a propósito (no "total"/"pagado"/
+  // "pendiente" a secas) para que el enmascarado de montos (helpers/masking.js)
+  // los reconozca sin ambigüedad — esas mismas palabras sueltas se usan en
+  // otros módulos (Stock, Producción, Ventas) para contadores, no para dinero.
   const tpC = sqlTotalPesos('importe', 'moneda', 'tasa_cambio')
   const tpV = sqlTotalPesos('importe', 'moneda', 'tasa_cambio')
   const kpiC = db.prepare(`
     SELECT COUNT(*) as count,
-      COALESCE(SUM(${tpC}),0) as total,
-      COALESCE(SUM(CASE WHEN pago_confirmado=1 THEN ${tpC} ELSE 0 END),0) as pagado,
-      COALESCE(SUM(CASE WHEN pago_confirmado=0 AND (anticipo IS NULL OR anticipo=0) THEN ${tpC} ELSE 0 END),0) as pendiente,
+      COALESCE(SUM(${tpC}),0) as monto_total,
+      COALESCE(SUM(CASE WHEN pago_confirmado=1 THEN ${tpC} ELSE 0 END),0) as monto_pagado,
+      COALESCE(SUM(CASE WHEN pago_confirmado=0 AND (anticipo IS NULL OR anticipo=0) THEN ${tpC} ELSE 0 END),0) as monto_pendiente,
       COALESCE(SUM(CASE WHEN pago_confirmado=0 AND anticipo>0 THEN ${tpC} ELSE 0 END),0) as con_anticipo,
       COALESCE(SUM(CASE WHEN pago_confirmado=0 AND anticipo>0 THEN ${sqlTotalPesos('(importe-anticipo)', 'moneda', 'tasa_cambio')} ELSE 0 END),0) as saldo_anticipo
     FROM facturas_compra WHERE ${filtC}`).get(...argsC)
 
   const kpiV = db.prepare(`
     SELECT COUNT(*) as count,
-      COALESCE(SUM(${tpV}),0) as total,
-      COALESCE(SUM(CASE WHEN pago_confirmado=1 THEN ${tpV} ELSE 0 END),0) as pagado,
-      COALESCE(SUM(CASE WHEN pago_confirmado=0 AND (anticipo IS NULL OR anticipo=0) THEN ${tpV} ELSE 0 END),0) as pendiente,
+      COALESCE(SUM(${tpV}),0) as monto_total,
+      COALESCE(SUM(CASE WHEN pago_confirmado=1 THEN ${tpV} ELSE 0 END),0) as monto_pagado,
+      COALESCE(SUM(CASE WHEN pago_confirmado=0 AND (anticipo IS NULL OR anticipo=0) THEN ${tpV} ELSE 0 END),0) as monto_pendiente,
       COALESCE(SUM(CASE WHEN pago_confirmado=0 AND anticipo>0 THEN ${tpV} ELSE 0 END),0) as con_anticipo,
       COALESCE(SUM(CASE WHEN pago_confirmado=0 AND anticipo>0 THEN ${sqlTotalPesos('(importe-anticipo)', 'moneda', 'tasa_cambio')} ELSE 0 END),0) as saldo_anticipo
     FROM facturas_venta WHERE ${filtC}`).get(...argsC)
 
   // Últimos 12 meses para el gráfico
   const porMesC = db.prepare(`
-    SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(${tpC}),0) as total, COUNT(*) as count
+    SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(${tpC}),0) as monto_total, COUNT(*) as count
     FROM facturas_compra WHERE fecha >= date('now','-11 months','start of month') AND fecha <= ?
     GROUP BY mes ORDER BY mes`).all(hasta)
 
   const porMesV = db.prepare(`
-    SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(${tpV}),0) as total, COUNT(*) as count
+    SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(${tpV}),0) as monto_total, COUNT(*) as count
     FROM facturas_venta WHERE fecha >= date('now','-11 months','start of month') AND fecha <= ?
     GROUP BY mes ORDER BY mes`).all(hasta)
 
@@ -137,7 +220,7 @@ router.get('/dashboard', verificarToken, leerFinanzas, (req, res) => {
         CASE WHEN fv.pago_confirmado=0
           THEN MAX(0, ${sqlTotalPesos('fv.importe', 'fv.moneda', 'fv.tasa_cambio')} - COALESCE(pag.total_pagado, 0) - COALESCE(nc.total_nc, 0))
           ELSE 0 END
-      ), 0) as pendiente,
+      ), 0) as monto_pendiente,
       0 as saldo_anticipo
     FROM facturas_venta fv
     LEFT JOIN (
@@ -198,23 +281,38 @@ router.get('/dashboard', verificarToken, leerFinanzas, (req, res) => {
 
   // Top proveedores del período
   const topProv = db.prepare(`
-    SELECT proveedor_nombre as nombre, COUNT(*) as count, COALESCE(SUM(${tpC}),0) as total
+    SELECT proveedor_nombre as nombre, COUNT(*) as count, COALESCE(SUM(${tpC}),0) as monto_total
     FROM facturas_compra WHERE ${filtC} AND proveedor_nombre != ''
-    GROUP BY proveedor_nombre ORDER BY total DESC LIMIT 8`).all(...argsC)
+    GROUP BY proveedor_nombre ORDER BY monto_total DESC LIMIT 8`).all(...argsC)
 
-  res.json({ kpiC, kpiV, kpiVTotal, porMesC, porMesV, vencimientos, conAnticipo, topProv })
+  return { kpiC, kpiV, kpiVTotal, porMesC, porMesV, vencimientos, conAnticipo, topProv }
+}
+
+router.get('/dashboard', verificarToken, leerFinanzas, (req, res) => {
+  const { desde = '', hasta = '' } = req.query
+  res.json(calcularDashboardFinanzas(desde, hasta))
 })
 
-router.get('/dashboard-diario', verificarToken, leerFinanzas, (req, res) => {
+// Extraído a función propia por el mismo motivo que calcularDashboardFinanzas
+// — el reporte diario por mail (helpers/reporteDashboardFinanzas.js) tiene
+// que reflejar EXACTAMENTE lo mismo que ve un usuario parado en la pestaña
+// "Estado Hoy" de Finanzas, no un resumen aparte con otros números.
+function obtenerDashboardDiario() {
   const hoy = hoyArgentina()
 
-  // Último saldo por banco + E-CHEQs sin confirmar de ese banco
+  // Último saldo por banco + E-CHEQs sin confirmar de ese banco — la resta
+  // "saldo - e-cheqs pendientes" que hace el frontend (BankCard) asume que
+  // ambos números están en la MISMA moneda que la cuenta (sb.moneda), así
+  // que acá se suman solo los e-cheques de esa misma moneda (no se convierte
+  // a pesos: eso rompería la resta para una cuenta en USD, y mezclar
+  // monedas sin filtrar sumaba pesos y dólares como si fueran lo mismo).
   const saldosBancarios = db.prepare(`
     SELECT s1.entidad, s1.monto, s1.moneda, s1.created_at, u.nombre as usuario_nombre,
       COALESCE((
         SELECT SUM(pfc.importe)
         FROM pagos_factura_compra pfc
         WHERE pfc.forma_pago = 'e-cheq' AND pfc.estado = 'pendiente' AND pfc.entidad = s1.entidad
+          AND COALESCE(NULLIF(pfc.moneda,''),'PESO') = COALESCE(NULLIF(s1.moneda,''),'PESO')
       ), 0) as echeq_pendiente
     FROM saldo_bancario s1
     LEFT JOIN usuarios u ON u.id = s1.created_by
@@ -242,13 +340,30 @@ router.get('/dashboard-diario', verificarToken, leerFinanzas, (req, res) => {
 
   // Resumen de servicios recurrentes del mes en curso (por vencimiento, no por
   // cuándo se cargó el pago) — para el cuadro "Servicios del mes" del dashboard.
-  const serviciosMes = db.prepare(`
+  // Las cuotas que `generarCuotasDelMes` crea automáticamente el día 1 nacen
+  // con monto=0 (todavía nadie cargó el importe real) — antes quedaban afuera
+  // de la cuenta por completo, mostrando una deuda del mes más baja de la que
+  // realmente hay. Para esas, se estima la deuda con el monto de la última
+  // cuota cargada de ese servicio, aparte de la deuda con monto real.
+  const serviciosMesRow = db.prepare(`
     SELECT
-      COALESCE(SUM(CASE WHEN estado='pagado'    THEN monto ELSE 0 END),0) as pagado,
-      COALESCE(SUM(CASE WHEN estado='pendiente' THEN monto ELSE 0 END),0) as pendiente
-    FROM servicios_cuotas
-    WHERE substr(vencimiento,1,7) = substr(?,1,7) AND monto IS NOT NULL AND monto > 0
+      COALESCE(SUM(CASE WHEN c.estado='pagado' THEN c.monto ELSE 0 END),0) as pagado,
+      COALESCE(SUM(CASE WHEN c.estado='pendiente' AND c.monto > 0 THEN c.monto ELSE 0 END),0) as pendiente,
+      COALESCE(SUM(CASE WHEN c.estado='pendiente' AND (c.monto IS NULL OR c.monto = 0) THEN
+        (SELECT c2.monto FROM servicios_cuotas c2 WHERE c2.servicio_id = c.servicio_id AND c2.id < c.id ORDER BY c2.id DESC LIMIT 1)
+      ELSE 0 END),0) as pendiente_estimado
+    FROM servicios_cuotas c
+    WHERE substr(c.vencimiento,1,7) = substr(?,1,7)
   `).get(hoy)
+  const serviciosMes = {
+    // Nombres con raíz "monto_" a propósito (no "pagado"/"pendiente" a secas)
+    // para que el enmascarado de montos (helpers/masking.js) los reconozca sin
+    // ambigüedad — esas mismas palabras sueltas se usan en otros módulos para
+    // contadores, no para dinero.
+    monto_pagado: serviciosMesRow.pagado,
+    monto_pendiente: serviciosMesRow.pendiente,
+    monto_pendiente_estimado: serviciosMesRow.pendiente_estimado,
+  }
 
   // Una factura anulada del todo por una NC no tiene nada realmente pendiente
   // (nunca se cobró/pagó, pero tampoco queda nada por cobrar/pagar) — sin
@@ -415,7 +530,11 @@ router.get('/dashboard-diario', verificarToken, leerFinanzas, (req, res) => {
     return { mes, label, iva_compras: ic.iva_base, perc_iva_compras: ic.percepciones, iva_ventas: iv.total }
   })
 
-  res.json({ saldosBancarios, serviciosPendientes, serviciosMes, comprasPendientes, ventasPendientes, facturasPorPagar, facturasPorCobrar, vencimientosProximos, echeqsEmitidos, echeqsRecibidos, ivaData, tipoCambioBNA })
+  return { saldosBancarios, serviciosPendientes, serviciosMes, comprasPendientes, ventasPendientes, facturasPorPagar, facturasPorCobrar, vencimientosProximos, echeqsEmitidos, echeqsRecibidos, ivaData, tipoCambioBNA }
+}
+
+router.get('/dashboard-diario', verificarToken, leerFinanzas, (req, res) => {
+  res.json(obtenerDashboardDiario())
 })
 
 // ── Cuentas ────────────────────────────────────────────────────────────────────
@@ -565,7 +684,7 @@ router.get('/resumen/mes', verificarToken, leerFinanzas, (req, res) => {
   res.json(row);
 });
 
-router.get('/exportar', verificarToken, leerFinanzas, (req, res) => {
+router.get('/exportar', verificarToken, leerFinanzas, puedeExportarFinanzas, (req, res) => {
   const { desde, hasta } = req.query;
   const conds=['1=1'], params=[];
   if (desde) { conds.push('fecha>=?'); params.push(desde); }
@@ -663,7 +782,7 @@ router.get('/facturas-compra', verificarToken, leerFinanzasOAdministracion, (req
 
 // Excel mensual de Facturas de Compra para el estudio contable (liquidación de
 // impuestos) — mismos filtros que el listado, pensado para desde/hasta = un mes.
-router.get('/facturas-compra/exportar', verificarToken, leerFinanzasOAdministracion, (req, res) => {
+router.get('/facturas-compra/exportar', verificarToken, leerFinanzasOAdministracion, puedeExportarFinanzasOAdministracion, (req, res) => {
   const { buscar, desde, hasta, moneda, pago, conOc } = req.query;
 
   const conds = [];
@@ -944,7 +1063,7 @@ router.put('/facturas-compra/:id', verificarToken, (req, res) => {
          parseFloat(iva_27??f.iva_27)||0,
          parseFloat(otros_imp??f.otros_imp)||0, parseFloat(perc_iva??f.perc_iva)||0,
          parseFloat(perc_iibb??f.perc_iibb)||0,
-         parseFloat(importe??f.importe), moneda??f.moneda, parseFloat(tasa_cambio??f.tasa_cambio),
+         parseFloat(importe??f.importe)||0, moneda??f.moneda, parseFloat(tasa_cambio??f.tasa_cambio)||1,
          fecha_vencimiento??f.fecha_vencimiento, observaciones??f.observaciones, nc.id, req.params.id);
   // Si se cambió o quitó a qué factura anula, la anterior también deja de tener
   // esta NC restándole saldo — hay que recalcularla además de la nueva/actual.
@@ -990,19 +1109,41 @@ router.patch('/facturas-compra/:id/anticipo', verificarToken, (req, res) => {
   if (!f) return res.status(404).json({ error: 'No encontrada' });
   const { anticipo, fecha_anticipo } = req.body;
   const monto = parseFloat(anticipo) || 0;
+  // Un anticipo se registra directo como pago confirmado (entra a Tesorería
+  // ya efectivizado) — le aplica el mismo umbral que a cualquier otro pago.
+  let autorizante = null;
+  if (monto > 0) {
+    const r = resolverAutorizantePago({ importe: monto, moneda: f.moneda, tasa_cambio: f.tasa_cambio }, req.body);
+    if (!r.ok) return res.status(400).json(r);
+    autorizante = r.autorizante;
+  }
   // El anticipo también se registra como un pago real (tipo 'anticipo') — de lo
   // contrario queda en una columna que el cálculo de saldo (recalcPagoFC) nunca lee,
-  // y la factura puede quedar "trabada" como impaga aunque esté saldada.
-  db.prepare("UPDATE facturas_compra SET anticipo=?, fecha_anticipo=?, updated_at=datetime('now','localtime') WHERE id=?")
-    .run(monto, fecha_anticipo||'', req.params.id);
-  if (monto > 0) {
-    db.prepare(`
-      INSERT INTO pagos_factura_compra (factura_id, tipo, forma_pago, importe, moneda, tasa_cambio, fecha, estado)
-      VALUES (?, 'anticipo', 'transferencia', ?, ?, ?, ?, 'confirmado')
-    `).run(req.params.id, monto, f.moneda || 'PESO', f.tasa_cambio || 1, fecha_anticipo || '');
-  }
-  recalcPagoFC(req.params.id);
+  // y la factura puede quedar "trabada" como impaga aunque esté saldada. Las tres
+  // escrituras (factura + pago + recálculo) van en una sola transacción — un
+  // crash a mitad de camino no puede dejar el anticipo cargado en la factura
+  // sin su pago correspondiente (que es lo único que recalcPagoFC de verdad lee).
+  let pagoId = null;
+  db.transaction(() => {
+    db.prepare("UPDATE facturas_compra SET anticipo=?, fecha_anticipo=?, updated_at=datetime('now','localtime') WHERE id=?")
+      .run(monto, fecha_anticipo||'', req.params.id);
+    if (monto > 0) {
+      pagoId = db.prepare(`
+        INSERT INTO pagos_factura_compra (factura_id, tipo, forma_pago, importe, moneda, tasa_cambio, fecha, estado, autorizado_por_id, autorizado_por_nombre)
+        VALUES (?, 'anticipo', 'transferencia', ?, ?, ?, ?, 'confirmado', ?, ?)
+      `).run(req.params.id, monto, f.moneda || 'PESO', f.tasa_cambio || 1, fecha_anticipo || '', autorizante?.id||null, autorizante?.nombre||null).lastInsertRowid;
+    }
+    recalcPagoFC(req.params.id);
+  })();
+  if (autorizante && pagoId) notificarAutorizantePago('compra', req.params.id, pagoId, autorizante, req.usuario);
   res.json(db.prepare('SELECT id,pago_confirmado,anticipo,fecha_anticipo FROM facturas_compra WHERE id=?').get(req.params.id));
+});
+
+// Lista de quién puede figurar como autorizante de un pago que supera el
+// umbral configurado — mismo criterio (admin ∪ gerentes de gerencia) que ya
+// usa el selector de autorizante de un retiro de stock.
+router.get('/pagos-autorizantes', verificarToken, leerFinanzasOAdministracion, (req, res) => {
+  res.json(obtenerAutorizantes());
 });
 
 // ── Pagos de facturas de compra ───────────────────────────────────────────────
@@ -1019,14 +1160,24 @@ router.post('/facturas-compra/:id/pagos', verificarToken, (req, res) => {
   if (!parseFloat(importe) || parseFloat(importe) <= 0) return res.status(400).json({ error: 'Importe requerido' });
   if (!fecha) return res.status(400).json({ error: 'Fecha requerida' });
   const estadoFinal = (forma_pago === 'cheque_diferido' || forma_pago === 'e-cheq') ? 'pendiente' : 'confirmado';
+  // Un pago puede nacer ya "confirmado" (transferencia/efectivo) sin pasar
+  // nunca por /confirmar — el umbral tiene que evaluarse también acá, si no
+  // alcanza con cargarlo directo para saltearse el control.
+  let autorizante = null;
+  if (estadoFinal === 'confirmado') {
+    const r0 = resolverAutorizantePago({ importe, moneda, tasa_cambio }, req.body);
+    if (!r0.ok) return res.status(400).json(r0);
+    autorizante = r0.autorizante;
+  }
   const r = db.prepare(`
     INSERT INTO pagos_factura_compra
-      (factura_id,tipo,forma_pago,entidad,importe,moneda,tasa_cambio,fecha,fecha_acreditacion,estado,observaciones,created_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      (factura_id,tipo,forma_pago,entidad,importe,moneda,tasa_cambio,fecha,fecha_acreditacion,estado,observaciones,created_by,autorizado_por_id,autorizado_por_nombre)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(req.params.id, tipo||'parcial', forma_pago||'transferencia', entidad||'',
          parseFloat(importe), moneda||'PESO', parseFloat(tasa_cambio)||1, fecha, fecha_acreditacion||'',
-         estadoFinal, observaciones||'', req.usuario.id);
+         estadoFinal, observaciones||'', req.usuario.id, autorizante?.id||null, autorizante?.nombre||null);
   recalcPagoFC(req.params.id);
+  if (autorizante) notificarAutorizantePago('compra', req.params.id, r.lastInsertRowid, autorizante, req.usuario);
   res.status(201).json(db.prepare('SELECT * FROM pagos_factura_compra WHERE id=?').get(r.lastInsertRowid));
 });
 
@@ -1037,25 +1188,45 @@ router.patch('/facturas-compra/:id/pagos/:pid', verificarToken, (req, res) => {
   const { tipo, forma_pago, entidad, importe, moneda, tasa_cambio, fecha, fecha_acreditacion, estado, observaciones } = req.body;
   // Pasar a "confirmado" es la misma acción de tesorería que /confirmar — no
   // se puede colar por esta vía genérica con un permiso más laxo.
-  if (estado === 'confirmado' && p.estado !== 'confirmado' && !puedeConfirmarPago(req)) {
-    return res.status(403).json({ error: 'Solo Finanzas puede confirmar un pago' });
+  let autorizante = null;
+  if (estado === 'confirmado' && p.estado !== 'confirmado') {
+    if (!puedeConfirmarPago(req)) return res.status(403).json({ error: 'Solo Finanzas puede confirmar un pago' });
+    // El umbral se evalúa contra el importe/moneda que va a quedar guardado
+    // (si este mismo PATCH también los está cambiando), no contra el pago
+    // viejo — si no, subir el importe y confirmar en el mismo request se
+    // colaba sin la autorización que ese monto nuevo exige.
+    const pNuevo = { ...p, importe: importe ?? p.importe, moneda: moneda ?? p.moneda, tasa_cambio: tasa_cambio ?? p.tasa_cambio };
+    const r = resolverAutorizantePago(pNuevo, req.body);
+    if (!r.ok) return res.status(400).json(r);
+    autorizante = r.autorizante;
   }
   db.prepare(`UPDATE pagos_factura_compra SET
-    tipo=?,forma_pago=?,entidad=?,importe=?,moneda=?,tasa_cambio=?,fecha=?,fecha_acreditacion=?,estado=?,observaciones=? WHERE id=?`)
+    tipo=?,forma_pago=?,entidad=?,importe=?,moneda=?,tasa_cambio=?,fecha=?,fecha_acreditacion=?,estado=?,observaciones=?,
+    autorizado_por_id=COALESCE(?,autorizado_por_id), autorizado_por_nombre=COALESCE(?,autorizado_por_nombre) WHERE id=?`)
     .run(tipo??p.tipo, forma_pago??p.forma_pago, entidad??p.entidad,
-         parseFloat(importe??p.importe), moneda??p.moneda, parseFloat(tasa_cambio??p.tasa_cambio)||1, fecha??p.fecha,
+         parseFloat(importe??p.importe)||0, moneda??p.moneda, parseFloat(tasa_cambio??p.tasa_cambio)||1, fecha??p.fecha,
          fecha_acreditacion??p.fecha_acreditacion, estado??p.estado,
-         observaciones??p.observaciones, req.params.pid);
+         observaciones??p.observaciones, autorizante?.id||null, autorizante?.nombre||null, req.params.pid);
   recalcPagoFC(req.params.id);
+  if (autorizante) notificarAutorizantePago('compra', req.params.id, req.params.pid, autorizante, req.usuario);
   res.json(db.prepare('SELECT * FROM pagos_factura_compra WHERE id=?').get(req.params.pid));
 });
 
 router.patch('/facturas-compra/:id/pagos/:pid/confirmar', verificarToken, (req, res) => {
   if (!puedeConfirmarPago(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const p = db.prepare('SELECT id FROM pagos_factura_compra WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id);
+  const p = db.prepare('SELECT * FROM pagos_factura_compra WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id);
   if (!p) return res.status(404).json({ error: 'Pago no encontrado' });
-  db.prepare("UPDATE pagos_factura_compra SET estado='confirmado' WHERE id=?").run(req.params.pid);
+  let autorizante = null;
+  if (p.estado !== 'confirmado') {
+    const r = resolverAutorizantePago(p, req.body || {});
+    if (!r.ok) return res.status(400).json(r);
+    autorizante = r.autorizante;
+  }
+  db.prepare(`UPDATE pagos_factura_compra SET estado='confirmado',
+    autorizado_por_id=COALESCE(?,autorizado_por_id), autorizado_por_nombre=COALESCE(?,autorizado_por_nombre) WHERE id=?`)
+    .run(autorizante?.id||null, autorizante?.nombre||null, req.params.pid);
   recalcPagoFC(req.params.id);
+  if (autorizante) notificarAutorizantePago('compra', req.params.id, req.params.pid, autorizante, req.usuario);
   res.json(db.prepare('SELECT * FROM pagos_factura_compra WHERE id=?').get(req.params.pid));
 });
 
@@ -1180,7 +1351,7 @@ router.put('/facturas-venta/:id', verificarToken, (req, res) => {
          parseFloat(ret_gcia??f.ret_gcia)||0, parseFloat(ret_contratista??f.ret_contratista)||0,
          parseFloat(ret_ss??f.ret_ss)||0, parseFloat(dif_cambio??f.dif_cambio)||0,
          parseFloat(total_cobrado??f.total_cobrado)||0,
-         parseFloat(importe??f.importe), moneda??f.moneda, parseFloat(tasa_cambio??f.tasa_cambio),
+         parseFloat(importe??f.importe)||0, moneda??f.moneda, parseFloat(tasa_cambio??f.tasa_cambio)||1,
          fecha_vencimiento??f.fecha_vencimiento, fecha_pago??f.fecha_pago??'',
          observaciones??f.observaciones, nc.id, req.params.id);
   if (f.nc_factura_id && f.nc_factura_id !== nc.id) recalcPagoFV(f.nc_factura_id);
@@ -1230,8 +1401,19 @@ function recalcPagoFV(factura_id) {
     SELECT COALESCE(SUM(ABS(${sqlTotalPesos('importe','moneda','tasa_cambio')})),0) AS s
     FROM facturas_venta WHERE nc_factura_id=?`).get(factura_id).s : 0;
   const saldo = totalEnPesos(fv) - pagado - totalNc;
-  db.prepare("UPDATE facturas_venta SET pago_confirmado=?, updated_at=datetime('now','localtime') WHERE id=?")
-    .run(saldo <= TOLERANCIA_SALDO_PESOS ? 1 : 0, factura_id);
+  const cobrada = saldo <= TOLERANCIA_SALDO_PESOS;
+  // Quedaba "Cobrada" sin fecha_pago cuando se saldaba por pagos itemizados
+  // (esta función) en vez del botón simple de "Marcar cobrada" (que sí la
+  // pone) — la fecha de pago pasa a ser la del último pago real que la saldó,
+  // no la de hoy, y se limpia si se reabre (se borra/edita un pago y deja de
+  // estar cobrada).
+  const fechaPago = cobrada
+    ? db.prepare(`
+        SELECT MAX(fecha) AS f FROM pagos_factura_venta
+        WHERE factura_id=? AND (estado='confirmado' OR forma_pago='e-cheq')`).get(factura_id).f || ''
+    : '';
+  db.prepare("UPDATE facturas_venta SET pago_confirmado=?, fecha_pago=?, updated_at=datetime('now','localtime') WHERE id=?")
+    .run(cobrada ? 1 : 0, fechaPago, factura_id);
 }
 
 router.get('/facturas-venta/:id/pagos', verificarToken, leerFinanzasOAdministracion, (req, res) => {
@@ -1247,17 +1429,26 @@ router.post('/facturas-venta/:id/pagos', verificarToken, (req, res) => {
   if (!parseFloat(importe) || parseFloat(importe) <= 0) return res.status(400).json({ error: 'Importe debe ser mayor a 0' });
   if (!fecha) return res.status(400).json({ error: 'Fecha requerida' });
   const estadoFinal = ((forma_pago === 'cheque_diferido' || forma_pago === 'e-cheq') && estado !== 'confirmado') ? 'pendiente' : (estado || 'confirmado');
+  // Mismo umbral que del lado de compras — nace confirmado, no pasa por /confirmar.
+  let autorizanteNuevo = null;
+  if (estadoFinal === 'confirmado') {
+    const r0 = resolverAutorizantePago({ importe, moneda, tasa_cambio }, req.body);
+    if (!r0.ok) return res.status(400).json(r0);
+    autorizanteNuevo = r0.autorizante;
+  }
   const r = db.prepare(`
     INSERT INTO pagos_factura_venta
       (factura_id,tipo,forma_pago,entidad,importe,moneda,tasa_cambio,fecha,fecha_acreditacion,estado,observaciones,
-       ret_iibb,ret_iva,ret_gcia,ret_contratista,ret_ss,created_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+       ret_iibb,ret_iva,ret_gcia,ret_contratista,ret_ss,created_by,autorizado_por_id,autorizado_por_nombre)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(req.params.id, tipo||'parcial', forma_pago||'transferencia', entidad||'',
          parseFloat(importe), moneda||'PESO', parseFloat(tasa_cambio)||1, fecha, fecha_acreditacion||'',
          estadoFinal, observaciones||'',
          parseFloat(ret_iibb)||0, parseFloat(ret_iva)||0, parseFloat(ret_gcia)||0,
-         parseFloat(ret_contratista)||0, parseFloat(ret_ss)||0, req.usuario.id);
+         parseFloat(ret_contratista)||0, parseFloat(ret_ss)||0, req.usuario.id,
+         autorizanteNuevo?.id||null, autorizanteNuevo?.nombre||null);
   recalcPagoFV(req.params.id);
+  if (autorizanteNuevo) notificarAutorizantePago('venta', req.params.id, r.lastInsertRowid, autorizanteNuevo, req.usuario);
   res.status(201).json(db.prepare('SELECT * FROM pagos_factura_venta WHERE id=?').get(r.lastInsertRowid));
 });
 
@@ -1265,31 +1456,49 @@ router.patch('/facturas-venta/:id/pagos/:pid', verificarToken, (req, res) => {
   if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
   const p = db.prepare('SELECT * FROM pagos_factura_venta WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id);
   if (!p) return res.status(404).json({ error: 'Pago no encontrado' });
-  if (req.body.estado === 'confirmado' && p.estado !== 'confirmado' && !puedeConfirmarPago(req)) {
-    return res.status(403).json({ error: 'Solo Finanzas puede confirmar un pago' });
+  let autorizante = null;
+  if (req.body.estado === 'confirmado' && p.estado !== 'confirmado') {
+    if (!puedeConfirmarPago(req)) return res.status(403).json({ error: 'Solo Finanzas puede confirmar un pago' });
+    // Igual criterio que en facturas-compra: el umbral se evalúa contra el
+    // importe/moneda que va a quedar guardado, no contra el pago viejo.
+    const pNuevo = { ...p, importe: req.body.importe ?? p.importe, moneda: req.body.moneda ?? p.moneda, tasa_cambio: req.body.tasa_cambio ?? p.tasa_cambio };
+    const r0 = resolverAutorizantePago(pNuevo, req.body);
+    if (!r0.ok) return res.status(400).json(r0);
+    autorizante = r0.autorizante;
   }
   const { tipo, forma_pago, entidad, importe, moneda, tasa_cambio, fecha, fecha_acreditacion, estado, observaciones,
           ret_iibb, ret_iva, ret_gcia, ret_contratista, ret_ss } = req.body;
   db.prepare(`UPDATE pagos_factura_venta SET
     tipo=?,forma_pago=?,entidad=?,importe=?,moneda=?,tasa_cambio=?,fecha=?,fecha_acreditacion=?,estado=?,observaciones=?,
-    ret_iibb=?,ret_iva=?,ret_gcia=?,ret_contratista=?,ret_ss=? WHERE id=?`)
+    ret_iibb=?,ret_iva=?,ret_gcia=?,ret_contratista=?,ret_ss=?,
+    autorizado_por_id=COALESCE(?,autorizado_por_id), autorizado_por_nombre=COALESCE(?,autorizado_por_nombre) WHERE id=?`)
     .run(tipo??p.tipo, forma_pago??p.forma_pago, entidad??p.entidad,
-         parseFloat(importe??p.importe), moneda??p.moneda, parseFloat(tasa_cambio??p.tasa_cambio)||1, fecha??p.fecha,
+         parseFloat(importe??p.importe)||0, moneda??p.moneda, parseFloat(tasa_cambio??p.tasa_cambio)||1, fecha??p.fecha,
          fecha_acreditacion??p.fecha_acreditacion, estado??p.estado,
          observaciones??p.observaciones,
          parseFloat(ret_iibb??p.ret_iibb)||0, parseFloat(ret_iva??p.ret_iva)||0,
          parseFloat(ret_gcia??p.ret_gcia)||0, parseFloat(ret_contratista??p.ret_contratista)||0,
-         parseFloat(ret_ss??p.ret_ss)||0, req.params.pid);
+         parseFloat(ret_ss??p.ret_ss)||0, autorizante?.id||null, autorizante?.nombre||null, req.params.pid);
   recalcPagoFV(req.params.id);
+  if (autorizante) notificarAutorizantePago('venta', req.params.id, req.params.pid, autorizante, req.usuario);
   res.json(db.prepare('SELECT * FROM pagos_factura_venta WHERE id=?').get(req.params.pid));
 });
 
 router.patch('/facturas-venta/:id/pagos/:pid/confirmar', verificarToken, (req, res) => {
   if (!puedeConfirmarPago(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const p = db.prepare('SELECT id FROM pagos_factura_venta WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id);
+  const p = db.prepare('SELECT * FROM pagos_factura_venta WHERE id=? AND factura_id=?').get(req.params.pid, req.params.id);
   if (!p) return res.status(404).json({ error: 'Pago no encontrado' });
-  db.prepare("UPDATE pagos_factura_venta SET estado='confirmado' WHERE id=?").run(req.params.pid);
+  let autorizante = null;
+  if (p.estado !== 'confirmado') {
+    const r0 = resolverAutorizantePago(p, req.body || {});
+    if (!r0.ok) return res.status(400).json(r0);
+    autorizante = r0.autorizante;
+  }
+  db.prepare(`UPDATE pagos_factura_venta SET estado='confirmado',
+    autorizado_por_id=COALESCE(?,autorizado_por_id), autorizado_por_nombre=COALESCE(?,autorizado_por_nombre) WHERE id=?`)
+    .run(autorizante?.id||null, autorizante?.nombre||null, req.params.pid);
   recalcPagoFV(req.params.id);
+  if (autorizante) notificarAutorizantePago('venta', req.params.id, req.params.pid, autorizante, req.usuario);
   res.json(db.prepare('SELECT * FROM pagos_factura_venta WHERE id=?').get(req.params.pid));
 });
 
@@ -1389,7 +1598,11 @@ router.post('/tipo-cambio/bna-hoy', verificarToken, async (req, res) => {
       LEFT JOIN usuarios u ON u.id = tc.created_by WHERE tc.id=?
     `).get(r.lastInsertRowid)
   }
-  res.status(201).json({ dolar: insertar('DÓLAR', cot.dolar), euro: insertar('EURO', cot.euro) })
+  // Las dos monedas se cargan juntas o ninguna — sin transacción, un error a
+  // mitad de camino podía dejar cargado el dólar de hoy sin el euro (u otro
+  // registro repetido si se reintenta a mano después).
+  const { dolar, euro } = db.transaction(() => ({ dolar: insertar('DÓLAR', cot.dolar), euro: insertar('EURO', cot.euro) }))()
+  res.status(201).json({ dolar, euro })
 })
 
 // ── Servicios recurrentes ─────────────────────────────────────────────────────
@@ -1411,19 +1624,19 @@ router.get('/servicios', verificarToken, leerFinanzasOAdministracion, (req, res)
 // "+ Nuevo servicio" en vez de uno ya existente.
 router.post('/servicios', verificarToken, (req, res) => {
   if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const { descripcion, usuario, info_pago, periodicidad } = req.body;
+  const { descripcion, usuario, info_pago, periodicidad, tipo } = req.body;
   if (!descripcion?.trim()) return res.status(400).json({ error: 'Descripción requerida' });
-  const r = db.prepare(`INSERT INTO servicios (descripcion,usuario,info_pago,periodicidad) VALUES (?,?,?,?)`)
-    .run(descripcion.trim(), usuario||'', info_pago||'', periodicidad||'mensual');
+  const r = db.prepare(`INSERT INTO servicios (descripcion,usuario,info_pago,periodicidad,tipo) VALUES (?,?,?,?,?)`)
+    .run(descripcion.trim(), usuario||'', info_pago||'', periodicidad||'mensual', tipo||'otro');
   const serv = db.prepare('SELECT * FROM servicios WHERE id=?').get(r.lastInsertRowid);
   res.status(201).json(serv);
 });
 
 router.put('/servicios/:id', verificarToken, (req, res) => {
   if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
-  const { descripcion, usuario, info_pago, periodicidad, activo } = req.body;
-  db.prepare(`UPDATE servicios SET descripcion=?,usuario=?,info_pago=?,periodicidad=?,activo=? WHERE id=?`)
-    .run(descripcion||'', usuario||'', info_pago||'', periodicidad||'mensual', activo??1, req.params.id);
+  const { descripcion, usuario, info_pago, periodicidad, tipo, activo } = req.body;
+  db.prepare(`UPDATE servicios SET descripcion=?,usuario=?,info_pago=?,periodicidad=?,tipo=?,activo=? WHERE id=?`)
+    .run(descripcion||'', usuario||'', info_pago||'', periodicidad||'mensual', tipo||'otro', activo??1, req.params.id);
   res.json(db.prepare('SELECT * FROM servicios WHERE id=?').get(req.params.id));
 });
 
@@ -1438,18 +1651,20 @@ router.delete('/servicios/:id', verificarToken, (req, res) => {
 // Reemplaza el viejo listado por-servicio (que solo mostraba la última cuota
 // y mezclaba pendientes "sin importe" fabricadas al pagar la anterior).
 router.get('/servicios-cuotas', verificarToken, leerFinanzasOAdministracion, (req, res) => {
-  const { buscar, estado, periodicidad } = req.query;
+  const { buscar, estado, periodicidad, tipo } = req.query;
   const conds = [];
   const params = [];
   if (buscar) { const b = buscarCondicion(buscar, ['s.descripcion', 's.usuario']); conds.push(b.cond); params.push(...b.params); }
   if (periodicidad) { conds.push('s.periodicidad = ?'); params.push(periodicidad); }
+  if (tipo) { conds.push('s.tipo = ?'); params.push(tipo); }
   const hoy = hoyArgentina();
   if (estado === 'pendiente') conds.push("c.estado='pendiente'");
   else if (estado === 'pagado') conds.push("c.estado='pagado'");
   else if (estado === 'vencido') { conds.push("c.estado='pendiente' AND c.vencimiento!='' AND c.vencimiento<?"); params.push(hoy); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const rows = db.prepare(`
-    SELECT c.*, s.descripcion, s.usuario, s.info_pago, s.periodicidad, s.activo AS servicio_activo
+    SELECT c.*, s.descripcion, s.usuario, s.info_pago, s.periodicidad, s.tipo, s.activo AS servicio_activo,
+      (SELECT c2.monto FROM servicios_cuotas c2 WHERE c2.servicio_id = c.servicio_id AND c2.id < c.id ORDER BY c2.id DESC LIMIT 1) AS monto_anterior
     FROM servicios_cuotas c
     JOIN servicios s ON s.id = c.servicio_id
     ${where}
@@ -1498,6 +1713,108 @@ router.post('/servicios-cuotas/:id/pagar', verificarToken, (req, res) => {
   const fecha = fecha_pagada || hoyArgentina();
   db.prepare(`UPDATE servicios_cuotas SET estado='pagado', fecha_pagada=? WHERE id=?`).run(fecha, req.params.id);
   res.json(db.prepare('SELECT * FROM servicios_cuotas WHERE id=?').get(req.params.id));
+});
+
+// ── Pólizas de seguro ─────────────────────────────────────────────────────────
+// Catálogo separado de Servicios (número de póliza, aseguradora, vigencia),
+// pero cada póliza tiene un "servicio" espejo (tipo='seguro') para que sus
+// cuotas sigan viendo en la lista general de Servicios. Cada vez que llega
+// la póliza (renovación) trae un plan de pago de varias cuotas mensuales —
+// se cargan todas juntas de una vez, no una sola de monto estimado.
+router.get('/polizas', verificarToken, leerFinanzasOAdministracion, (req, res) => {
+  const { soloActivas = '1' } = req.query;
+  const filtro = soloActivas === '1' ? 'WHERE p.activa=1' : '';
+  const rows = db.prepare(`
+    SELECT p.*,
+      (SELECT COUNT(*) FROM servicios_cuotas c WHERE c.servicio_id=p.servicio_id AND c.estado='pendiente') AS cuotas_pendientes,
+      (SELECT c.vencimiento FROM servicios_cuotas c WHERE c.servicio_id=p.servicio_id AND c.estado='pendiente' ORDER BY c.vencimiento ASC LIMIT 1) AS proxima_cuota_vencimiento
+    FROM polizas p ${filtro} ORDER BY p.fecha_renovacion ASC, p.descripcion
+  `).all();
+  res.json(rows);
+});
+
+router.post('/polizas', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const { numero_poliza, aseguradora, descripcion, tipo_cobertura, fecha_inicio, fecha_renovacion, periodicidad, observaciones } = req.body;
+  if (!descripcion?.trim()) return res.status(400).json({ error: 'Descripción (bien asegurado) requerida' });
+  const periodicidadFinal = periodicidad || 'anual';
+  const poliza = db.transaction(() => {
+    const rs = db.prepare(`INSERT INTO servicios (descripcion, periodicidad, tipo) VALUES (?,?,'seguro')`)
+      .run(`Póliza${numero_poliza ? ' ' + numero_poliza.trim() : ''} — ${descripcion.trim()}${aseguradora ? ' (' + aseguradora.trim() + ')' : ''}`, periodicidadFinal);
+    const rp = db.prepare(`
+      INSERT INTO polizas (numero_poliza, aseguradora, descripcion, tipo_cobertura, fecha_inicio, fecha_renovacion, periodicidad, observaciones, servicio_id)
+      VALUES (?,?,?,?,?,?,?,?,?)
+    `).run(numero_poliza||'', aseguradora||'', descripcion.trim(), tipo_cobertura||'', fecha_inicio||'', fecha_renovacion||'',
+           periodicidadFinal, observaciones||'', rs.lastInsertRowid);
+    return db.prepare('SELECT * FROM polizas WHERE id=?').get(rp.lastInsertRowid);
+  })();
+  res.status(201).json(poliza);
+});
+
+router.put('/polizas/:id', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const p = db.prepare('SELECT * FROM polizas WHERE id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Póliza no encontrada' });
+  const { numero_poliza, aseguradora, descripcion, tipo_cobertura, fecha_inicio, fecha_renovacion, periodicidad, observaciones, activa } = req.body;
+  const numeroFinal = numero_poliza ?? p.numero_poliza;
+  const aseguradoraFinal = aseguradora ?? p.aseguradora;
+  const descripcionFinal = (descripcion ?? p.descripcion) || p.descripcion;
+  const activaFinal = activa != null ? (activa ? 1 : 0) : p.activa;
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE polizas SET numero_poliza=?, aseguradora=?, descripcion=?, tipo_cobertura=?, fecha_inicio=?, fecha_renovacion=?,
+        periodicidad=?, observaciones=?, activa=? WHERE id=?
+    `).run(numeroFinal||'', aseguradoraFinal||'', descripcionFinal, tipo_cobertura??p.tipo_cobertura, fecha_inicio??p.fecha_inicio,
+           fecha_renovacion??p.fecha_renovacion, periodicidad||p.periodicidad, observaciones??p.observaciones, activaFinal, p.id);
+    // El servicio espejo tiene que seguir describiendo lo mismo (y activarse/
+    // desactivarse junto con la póliza) para que la lista de Servicios no
+    // quede desincronizada de su ficha en Pólizas.
+    if (p.servicio_id) {
+      db.prepare(`UPDATE servicios SET descripcion=?, periodicidad=?, activo=? WHERE id=?`)
+        .run(`Póliza${numeroFinal ? ' ' + numeroFinal.trim() : ''} — ${descripcionFinal}${aseguradoraFinal ? ' (' + aseguradoraFinal.trim() + ')' : ''}`,
+             periodicidad || p.periodicidad, activaFinal, p.servicio_id);
+    }
+  })();
+  res.json(db.prepare('SELECT * FROM polizas WHERE id=?').get(p.id));
+});
+
+router.delete('/polizas/:id', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const p = db.prepare('SELECT * FROM polizas WHERE id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Póliza no encontrada' });
+  db.transaction(() => {
+    db.prepare('UPDATE polizas SET activa=0 WHERE id=?').run(p.id);
+    if (p.servicio_id) db.prepare('UPDATE servicios SET activo=0 WHERE id=?').run(p.servicio_id);
+  })();
+  res.json({ ok: true });
+});
+
+// Carga de una sola vez el plan de cuotas que trae la renovación (varios
+// meses, cada uno con su propio monto) en el servicio espejo de la póliza —
+// cada cuota queda "pendiente" y se va marcando pagada desde Servicios a
+// medida que vence, igual que cualquier otro pago recurrente. Adelanta la
+// próxima renovación de la póliza según su periodicidad, una sola vez por
+// carga (no una vez por cuota).
+router.post('/polizas/:id/cargar-cuotas', verificarToken, (req, res) => {
+  if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
+  const p = db.prepare('SELECT * FROM polizas WHERE id=?').get(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Póliza no encontrada' });
+  if (!p.servicio_id) return res.status(400).json({ error: 'Esta póliza no tiene un servicio asociado' });
+  const { cuotas } = req.body;
+  if (!Array.isArray(cuotas) || cuotas.length === 0) return res.status(400).json({ error: 'Agregá al menos una cuota' });
+  for (const c of cuotas) {
+    if (c.monto == null || c.monto === '' || isNaN(parseFloat(c.monto))) return res.status(400).json({ error: 'Falta el monto de alguna cuota' });
+    if (!c.vencimiento) return res.status(400).json({ error: 'Falta el vencimiento de alguna cuota' });
+  }
+  const insertadas = db.transaction(() => {
+    const ins = db.prepare(`INSERT INTO servicios_cuotas (servicio_id, monto, vencimiento, estado) VALUES (?,?,?,'pendiente')`);
+    const filas = cuotas.map(c => db.prepare('SELECT * FROM servicios_cuotas WHERE id=?').get(ins.run(p.servicio_id, parseFloat(c.monto), c.vencimiento).lastInsertRowid));
+    const intervalo = MESES_POR_PERIODICIDAD[p.periodicidad] || 12;
+    const anchor = p.fecha_renovacion || hoyArgentina();
+    db.prepare('UPDATE polizas SET fecha_renovacion=? WHERE id=?').run(sumarMeses(anchor, intervalo), p.id);
+    return filas;
+  })();
+  res.status(201).json(insertadas);
 });
 
 // ── Control: facturas vs OC (valores netos sin impuestos, agrupado por OC) ────
@@ -1688,12 +2005,21 @@ router.get('/seguimiento-oc-compras', verificarToken, leerFinanzas, (req, res) =
   `).all(...params);
 
   const hoy = hoyArgentina();
+  // Los datos de antes del 01/07/2026 vienen de planillas viejas importadas
+  // al migrar (ver CLAUDE.md) — se siguen listando acá (es un panorama
+  // general, no hay que ocultarlas), pero no se les calcula un estado de
+  // facturación/pago por comparación: esa cuenta puede dar "parcial" o
+  // "pendiente" en falso contra datos de origen que no son confiables.
+  const FECHA_DATOS_CONFIABLES = '2026-07-01';
   // Misma tolerancia que Control OC (3% del neto de la OC, no un monto fijo) — si
   // no, la misma OC podía figurar "completa" acá y con diferencia en Control OC.
   const datos = filas.map(r => {
-    const estadoFacturacion = r.cant_facturas === 0 ? 'sin_facturar'
+    const datosConfiables = r.fecha >= FECHA_DATOS_CONFIABLES;
+    const estadoFacturacion = !datosConfiables ? 'dato_legado'
+      : r.cant_facturas === 0 ? 'sin_facturar'
       : (r.facturas_neto_total >= r.oc_neto_pesos * 0.97) ? 'completo' : 'parcial';
-    const estadoPago = r.cant_facturas === 0 ? 'sin_facturar'
+    const estadoPago = !datosConfiables ? 'dato_legado'
+      : r.cant_facturas === 0 ? 'sin_facturar'
       : r.facturas_pagadas === 0 ? 'pendiente'
       : r.facturas_pagadas === r.cant_facturas ? 'pagado' : 'parcial';
     const atrasada = !!r.fecha_entrega_est && r.fecha_entrega_est < hoy && !['Recibida','Cancelada'].includes(r.estado);
@@ -1976,3 +2302,5 @@ router.patch('/oc-clientes/:ocId/cuotas/:cuotaId/cobro', verificarToken, (req, r
 module.exports = router;
 module.exports.recalcPagoFC = recalcPagoFC;
 module.exports.recalcPagoFV = recalcPagoFV;
+module.exports.calcularDashboardFinanzas = calcularDashboardFinanzas;
+module.exports.obtenerDashboardDiario = obtenerDashboardDiario;

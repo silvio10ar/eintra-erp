@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import api from '../../api/client'
+import logo from '../../assets/logo.avif'
 
 const fmtF = s => s ? s.slice(0, 10).split('-').reverse().join('/') : ''
 
@@ -54,7 +55,12 @@ export default function ImprimirOfertaTecnica() {
           body { font-size: 9.5pt; }
           .page-break { page-break-before: always; }
         }
-        .page { max-width: 800px; margin: 0 auto; padding: 20px; }
+        /* Tapa el fondo de marca del sistema (se filtra porque esta pantalla
+           no pasa por el layout principal) con un blanco casi total — SIN
+           forzar una altura mínima de hoja completa, que corría el
+           contenido a una segunda hoja extra solo para mostrar el fondo. */
+        .page { max-width: 800px; margin: 0 auto; padding: 20px; background: rgba(255,255,255,.94); }
+        .pie-logo { display: block; margin: 16px auto 0; width: 260px; opacity: .9; }
 
         /* Encabezado */
         .header { background: #1a3c6e; color: #fff; padding: 14px 20px;
@@ -181,6 +187,8 @@ export default function ImprimirOfertaTecnica() {
             {ot.ref_codigo && <div>REF: {ot.ref_codigo}</div>}
           </div>
         </div>
+
+        <img src={logo} alt="" className="pie-logo" />
       </div>
     </>
   )

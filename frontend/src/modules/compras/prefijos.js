@@ -38,6 +38,7 @@ export const PREFIJOS = [
   { p: '408', d: 'Válvula termofusión' },
   { p: '409', d: 'Válvula polietileno' },
   { p: '411', d: 'Válvula metálica' },
+  { p: '4VR', d: 'Accesorios varios válvulas' },
   // 6 — PVC (presión y cloacal unificados)
   { p: '6CO', d: 'Codo/Curva PVC' },
   { p: '6CV', d: 'Curva PVC' },

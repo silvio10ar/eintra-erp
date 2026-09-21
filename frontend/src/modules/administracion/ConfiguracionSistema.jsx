@@ -36,14 +36,18 @@ function TabDirectivas() {
   }
 
   const toggle = async d => {
-    const r = await api.patch(`/configuracion/directivas/${d.id}/toggle`)
-    setLista(p => p.map(x => x.id === d.id ? r.data : x))
+    try {
+      const r = await api.patch(`/configuracion/directivas/${d.id}/toggle`)
+      setLista(p => p.map(x => x.id === d.id ? r.data : x))
+    } catch (e) { alert(e.response?.data?.error || 'Error al cambiar el estado') }
   }
 
   const eliminar = async d => {
     if (!confirm(`¿Eliminar directiva "${d.titulo}"?`)) return
-    await api.delete(`/configuracion/directivas/${d.id}`)
-    setLista(p => p.filter(x => x.id !== d.id))
+    try {
+      await api.delete(`/configuracion/directivas/${d.id}`)
+      setLista(p => p.filter(x => x.id !== d.id))
+    } catch (e) { alert(e.response?.data?.error || 'Error al eliminar') }
   }
 
   if (loading) return <div className="d-flex justify-content-center py-4"><span className="spinner-border text-primary" /></div>
@@ -128,7 +132,8 @@ const CAMPOS_SMTP = [
   { k: 'backup_to',   l: 'Destinatario del backup',tipo: 'email',    ph: 'admin@empresa.com', col: 'col-md-6' },
 ]
 
-const VACIO = { smtp_host:'', smtp_port:'587', smtp_user:'', smtp_pass:'', smtp_from:'', smtp_secure:'false', backup_to:'' }
+const VACIO = { smtp_host:'', smtp_port:'587', smtp_user:'', smtp_pass:'', smtp_from:'', smtp_secure:'false', backup_to:'', pago_umbral_autorizacion_usd:'1000',
+  dashboard_finanzas_activo:'false', dashboard_finanzas_hora:'08:00', dashboard_finanzas_email:'' }
 
 export default function ConfiguracionSistema() {
   const [tab, setTab]           = useState('sistema')
@@ -137,6 +142,7 @@ export default function ConfiguracionSistema() {
   const [saving, setSaving]     = useState(false)
   const [testing, setTesting]   = useState(false)
   const [backing, setBacking]   = useState(false)
+  const [envDash, setEnvDash]   = useState(false)
   const [msg, setMsg]           = useState(null)   // { tipo: 'ok'|'err', texto }
   const [showPass, setShowPass] = useState(false)
   const [descargando, setDescargando] = useState(null)  // 'backup' | 'instalador' | null
@@ -167,6 +173,24 @@ export default function ConfiguracionSistema() {
     } catch(err) {
       setMsg({ tipo: 'err', texto: err.response?.data?.error ?? 'Error al enviar backup' })
     } finally { setBacking(false) }
+  }
+
+  const enviarDashboardAhora = async () => {
+    setEnvDash(true); setMsg(null)
+    try {
+      const r = await api.post('/configuracion/dashboard-finanzas-ahora', {
+        smtp_host:   form.smtp_host,
+        smtp_port:   form.smtp_port,
+        smtp_user:   form.smtp_user,
+        smtp_pass:   form.smtp_pass !== '***' ? form.smtp_pass : undefined,
+        smtp_from:   form.smtp_from,
+        smtp_secure: form.smtp_secure,
+        dashboard_finanzas_email: form.dashboard_finanzas_email,
+      })
+      setMsg({ tipo: 'ok', texto: r.data.mensaje })
+    } catch(err) {
+      setMsg({ tipo: 'err', texto: err.response?.data?.error ?? 'Error al enviar el reporte' })
+    } finally { setEnvDash(false) }
   }
 
   const descargar = async (endpoint, tipo) => {
@@ -297,6 +321,75 @@ export default function ConfiguracionSistema() {
                   : <><i className="bi bi-send me-1"/>Enviar email de prueba</>}
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* ── Reporte diario de Finanzas ───────────────────────── */}
+        <div className="card mb-3">
+          <div className="card-header py-2 d-flex align-items-center gap-2">
+            <i className="bi bi-graph-up-arrow text-primary"/>
+            <strong className="small">Reporte diario de Finanzas</strong>
+          </div>
+          <div className="card-body pb-2">
+            <div className="form-check mb-3">
+              <input className="form-check-input" type="checkbox" id="dashboard_finanzas_activo"
+                checked={form.dashboard_finanzas_activo === 'true'}
+                onChange={e => set('dashboard_finanzas_activo', e.target.checked ? 'true' : 'false')}/>
+              <label className="form-check-label small" htmlFor="dashboard_finanzas_activo">
+                Enviar todos los días una imagen con el resumen del Dashboard de Finanzas
+              </label>
+            </div>
+            <div className="row g-3">
+              <div className="col-md-3">
+                <label className="form-label small fw-medium mb-1">Hora de envío</label>
+                <input className="form-control form-control-sm" type="time"
+                  value={form.dashboard_finanzas_hora}
+                  onChange={e => set('dashboard_finanzas_hora', e.target.value)} />
+              </div>
+              <div className="col-md-6">
+                <label className="form-label small fw-medium mb-1">Email destinatario</label>
+                <input className="form-control form-control-sm" type="email" placeholder="ceo@empresa.com"
+                  value={form.dashboard_finanzas_email}
+                  onChange={e => set('dashboard_finanzas_email', e.target.value)} />
+              </div>
+            </div>
+            <div className="mt-3 pt-2 border-top d-flex align-items-center gap-2 flex-wrap">
+              <small className="text-muted flex-grow-1">
+                <i className="bi bi-info-circle me-1"/>
+                Hora de Argentina. Es una imagen resumen generada por el sistema (no una captura de pantalla),
+                con los mismos números que se ven hoy en Finanzas &gt; Dashboard &gt; Estado Hoy.
+              </small>
+              <button type="button" className="btn btn-sm btn-outline-primary"
+                onClick={enviarDashboardAhora} disabled={envDash}>
+                {envDash
+                  ? <><span className="spinner-border spinner-border-sm me-1"/>Enviando...</>
+                  : <><i className="bi bi-send me-1"/>Enviar ahora (prueba)</>}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Control interno ──────────────────────────────────── */}
+        <div className="card mb-3">
+          <div className="card-header py-2 d-flex align-items-center gap-2">
+            <i className="bi bi-shield-check text-primary"/>
+            <strong className="small">Control interno</strong>
+          </div>
+          <div className="card-body pb-2">
+            <div className="row g-3">
+              <div className="col-md-4">
+                <label className="form-label small fw-medium mb-1">Umbral de autorización de pagos (USD)</label>
+                <input className="form-control form-control-sm" type="number" min="0" step="1"
+                  value={form.pago_umbral_autorizacion_usd}
+                  onChange={e => set('pago_umbral_autorizacion_usd', e.target.value)} />
+              </div>
+            </div>
+            <p className="text-muted small mt-2 mb-0">
+              <i className="bi bi-info-circle me-1"/>
+              A partir de este monto (equivalente en USD a la última cotización BNA cargada), confirmar un pago
+              a proveedor o un cobro de cliente exige elegir un gerente que lo autorice — igual que ya pasa con
+              un retiro de stock. Se le avisa por mensaje interno al autorizante elegido.
+            </p>
           </div>
         </div>
 

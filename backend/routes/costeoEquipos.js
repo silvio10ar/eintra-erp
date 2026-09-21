@@ -5,6 +5,7 @@ const { verificarToken, puede } = require('../middleware/auth')
 const { tasaCambioSistema } = require('../helpers/tipoCambio')
 const { buscarCondicion } = require('../helpers/buscar')
 const { hoyArgentina } = require('../helpers/fecha')
+const { SENTINEL: MONTO_OCULTO } = require('../helpers/masking')
 
 const router = express.Router()
 router.use(verificarToken)
@@ -121,6 +122,14 @@ router.put('/:id', soloEscritura, (req, res) => {
   if (!costeo) return res.status(404).json({ error: 'Costeo no encontrado' })
   const { nombre, cliente, fecha, utilidad_material, utilidad_mano_obra, utilidad_extra, tipo_cambio, observaciones, modulos } = req.body
   if (!nombre?.trim()) return res.status(400).json({ error: 'Falta el nombre del costeo' })
+  // Un usuario con "oculta_montos" recibe precio_unitario ya enmascarado
+  // (backend/helpers/masking.js) — si guardara sin darse cuenta, el
+  // precio real de ese ítem se pisaría con 0 para siempre (el guardado acá
+  // es reemplazo total, no hay forma de "dejar como estaba" un campo que
+  // nunca llegó de verdad). Mejor rechazar el guardado con un error claro
+  // que perder el dato en silencio.
+  if ((modulos || []).some(m => (m.items || []).some(it => it.precio_unitario === MONTO_OCULTO)))
+    return res.status(403).json({ error: 'No podés guardar cambios en un costeo con montos ocultos.' })
   try {
     db.transaction(() => {
       db.prepare(`

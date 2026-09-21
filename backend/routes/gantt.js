@@ -10,6 +10,12 @@ router.use(puede.leer('proyectos'))
 
 const puedeE = req => !!req.permisos?.proyectos?.escribir
 
+// `duracion_dias || 1` no alcanza para validar: solo reemplaza valores
+// falsy (0, '', null) — una duración negativa es truthy y pasaba tal cual,
+// produciendo un fecha_fin_calc anterior al fecha_inicio_calc (addDias con
+// un delta negativo). Fuerza siempre un entero >= 1.
+const duracionValida = v => Math.max(1, parseInt(v) || 1)
+
 // ── Algoritmo: calcular fechas de todas las tareas de un proyecto ─────────────
 function recalcularFechas(proyectoId) {
   const proyecto = db.prepare('SELECT fecha_inicio FROM proyectos WHERE id=?').get(proyectoId)
@@ -35,6 +41,16 @@ function recalcularFechas(proyectoId) {
   preds.forEach(p => {
     inDegree[p.tarea_id] = (inDegree[p.tarea_id] || 0) + 1
     if (adjList[p.predecesora_id]) adjList[p.predecesora_id].push(p.tarea_id)
+  })
+  // Una tarea general "termina con" otra tarea puntual: para calcularla hace
+  // falta que esa otra tarea ya tenga su fin calculado, así que también entra
+  // al grafo como si fuera una predecesora más (solo para el orden — el fin
+  // en sí se toma directo de finCalc[termina_con_tarea_id], no de sumar días).
+  tareas.forEach(t => {
+    if (t.termina_con_tarea_id && adjList[t.termina_con_tarea_id]) {
+      inDegree[t.id] = (inDegree[t.id] || 0) + 1
+      adjList[t.termina_con_tarea_id].push(t.id)
+    }
   })
 
   const queue = tareas.filter(t => inDegree[t.id] === 0).map(t => t.id)
@@ -67,25 +83,51 @@ function recalcularFechas(proyectoId) {
     const t = tareaMap[id]
     const pList = depsMap[id] || []
     let inicio
-    if (pList.length === 0) {
+    if (t.fecha_inicio_manual) {
+      // Fecha fijada a mano: gana por sobre el cálculo automático — para
+      // corregir el plan con lo que realmente pasó en una tarea puntual. Las
+      // tareas que dependen de esta se siguen encadenando desde acá igual.
+      inicio = new Date(t.fecha_inicio_manual + 'T00:00:00')
+    } else if (pList.length === 0) {
       inicio = new Date(startProyecto)
     } else {
-      const maxFin = pList.reduce((mx, pid) => {
-        const f = finCalc[pid]
-        return f && f > mx ? f : mx
-      }, startProyecto)
+      // OJO: el punto de partida del reduce NO puede ser startProyecto — una
+      // predecesora con fecha_inicio_manual puede terminar antes del inicio
+      // del proyecto (corrección histórica), y usar startProyecto como piso
+      // ahí ignoraría esa fecha y recalcularía mal la cadena hacia adelante.
+      const finesPred = pList.map(pid => finCalc[pid]).filter(Boolean)
+      const maxFin = finesPred.length
+        ? finesPred.reduce((mx, f) => f > mx ? f : mx)
+        : startProyecto
       inicio = addDias(maxFin, 1)
     }
-    const fin = addDias(inicio, (t.duracion_dias || 1) - 1)
+    // Tarea general atada a otra tarea: su fin es el fin calculado de esa
+    // otra tarea, no inicio+duración — así sigue el corrimiento de la tarea
+    // referenciada sin tener que ajustar la duración a mano cada vez. El
+    // inicio de ESTA tarea se sigue calculando aparte (por sus propias
+    // predecesoras), así que si la tarea referenciada termina antes de que
+    // esta empiece, el fin se achica hasta el inicio en vez de quedar
+    // invertido (fin antes que inicio).
+    const finRef = t.termina_con_tarea_id ? finCalc[t.termina_con_tarea_id] : null
+    const fin = finRef
+      ? (finRef >= inicio ? new Date(finRef) : new Date(inicio))
+      : addDias(inicio, duracionValida(t.duracion_dias) - 1)
     iniCalc[id] = inicio
     finCalc[id] = fin
   }
 
+  // Todas las tareas del proyecto se actualizan juntas o ninguna — sin
+  // transacción, un crash a mitad del loop dejaba algunas tareas con fechas
+  // recién calculadas y otras con las viejas, una mezcla inconsistente que
+  // ningún llamador de recalcularFechas podía distinguir de un cálculo
+  // completo y correcto.
   const upd = db.prepare('UPDATE proyecto_tarea SET fecha_inicio_calc=?, fecha_fin_calc=? WHERE id=?')
   const toISO = d => d.toISOString().slice(0, 10)
-  for (const id of order) {
-    upd.run(toISO(iniCalc[id]), toISO(finCalc[id]), id)
-  }
+  db.transaction(() => {
+    for (const id of order) {
+      upd.run(toISO(iniCalc[id]), toISO(finCalc[id]), id)
+    }
+  })()
 }
 
 // ── GET todas las tareas de un proyecto ───────────────────────────────────────
@@ -113,14 +155,14 @@ router.get('/plan-general', (req, res) => {
   const proyectos = db.prepare(`
     SELECT id, codigo, nombre, cliente_nombre, estado, fecha_inicio, fecha_fin_est
     FROM proyectos
-    WHERE codigo NOT LIKE 'HIST-%' AND estado IN ('Activo','En espera')
+    WHERE codigo NOT LIKE 'HIST-%' AND codigo NOT LIKE 'PROV-%' AND estado IN ('Activo','En espera')
       AND id IN (SELECT DISTINCT proyecto_id FROM proyecto_tarea)
     ORDER BY fecha_inicio, id
   `).all()
 
   const tareas = db.prepare(`
     SELECT * FROM proyecto_tarea
-    WHERE proyecto_id IN (SELECT id FROM proyectos WHERE codigo NOT LIKE 'HIST-%' AND estado IN ('Activo','En espera'))
+    WHERE proyecto_id IN (SELECT id FROM proyectos WHERE codigo NOT LIKE 'HIST-%' AND codigo NOT LIKE 'PROV-%' AND estado IN ('Activo','En espera'))
     ORDER BY proyecto_id, orden, id
   `).all()
 
@@ -130,39 +172,63 @@ router.get('/plan-general', (req, res) => {
   res.json(proyectos.map(p => ({ ...p, tareas: porProyecto[p.id] || [] })))
 })
 
+// ¿La tarea `tareaId` pertenece al proyecto `proyectoId`? — usado para que una
+// predecesora o un "termina con" no puedan apuntar a una tarea de OTRO
+// proyecto. Antes de este chequeo, ese cross-project link quedaba guardado
+// sin error, y recalcularFechas (que solo lee tareas del proyecto actual)
+// simplemente no encontraba el finCalc de esa referencia — la tarea quedaba
+// con una fecha silenciosamente mal calculada, sin ningún diagnóstico visible.
+function perteneceAlProyecto(tareaId, proyectoId) {
+  return !!db.prepare('SELECT 1 FROM proyecto_tarea WHERE id=? AND proyecto_id=?').get(tareaId, proyectoId)
+}
+
 // ── POST nueva tarea ──────────────────────────────────────────────────────────
 router.post('/proyecto/:proyectoId/tareas', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { proyectoId } = req.params
-  const { nombre, duracion_dias, responsable, area_responsable, estado, avance, color, observaciones, predecesoras = [], insertarEnPosicion } = req.body
+  const { nombre, duracion_dias, responsable, area_responsable, modulo, estado, avance, color, observaciones, predecesoras = [], insertarEnPosicion, fecha_inicio_manual, es_general, termina_con_tarea_id } = req.body
 
-  let orden
-  if (insertarEnPosicion !== undefined && insertarEnPosicion !== null) {
-    db.prepare('UPDATE proyecto_tarea SET orden = orden + 1 WHERE proyecto_id=? AND orden >= ?')
-      .run(proyectoId, insertarEnPosicion)
-    orden = insertarEnPosicion
-  } else {
-    const maxOrden = db.prepare('SELECT MAX(orden) as m FROM proyecto_tarea WHERE proyecto_id=?').get(proyectoId)
-    orden = (maxOrden?.m || 0) + 1
-  }
+  let terminaConId = termina_con_tarea_id || null
+  if (terminaConId && !perteneceAlProyecto(terminaConId, proyectoId)) terminaConId = null
 
-  const r = db.prepare(`
-    INSERT INTO proyecto_tarea (proyecto_id, orden, nombre, duracion_dias, responsable, area_responsable, estado, avance, color, observaciones)
-    VALUES (?,?,?,?,?,?,?,?,?,?)
-  `).run(proyectoId, orden, nombre || 'Nueva tarea', duracion_dias || 1, responsable || '', area_responsable || '', estado || 'Pendiente', avance || 0, color || '', observaciones || '')
+  const { id, orden, predecesorasDescartadas } = db.transaction(() => {
+    let orden
+    if (insertarEnPosicion !== undefined && insertarEnPosicion !== null) {
+      db.prepare('UPDATE proyecto_tarea SET orden = orden + 1 WHERE proyecto_id=? AND orden >= ?')
+        .run(proyectoId, insertarEnPosicion)
+      orden = insertarEnPosicion
+    } else {
+      const maxOrden = db.prepare('SELECT MAX(orden) as m FROM proyecto_tarea WHERE proyecto_id=?').get(proyectoId)
+      orden = (maxOrden?.m || 0) + 1
+    }
 
-  const id = r.lastInsertRowid
-  const insPred = db.prepare('INSERT OR IGNORE INTO proyecto_tarea_predecesora (tarea_id, predecesora_id) VALUES (?,?)')
-  // Comparación tolerante a tipo (igual que en el PUT): pid suele llegar como
-  // string desde un <select> del frontend, y id es siempre un número.
-  predecesoras.forEach(pid => { if (String(pid) !== String(id)) insPred.run(id, pid) })
+    const r = db.prepare(`
+      INSERT INTO proyecto_tarea (proyecto_id, orden, nombre, duracion_dias, responsable, area_responsable, modulo, estado, avance, color, observaciones, fecha_inicio_manual, es_general, termina_con_tarea_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(proyectoId, orden, nombre || 'Nueva tarea', duracionValida(duracion_dias), responsable || '', area_responsable || '', parseInt(modulo) || 0, estado || 'Pendiente', avance || 0, color || '', observaciones || '', fecha_inicio_manual || '', es_general ? 1 : 0, terminaConId)
+
+    const id = r.lastInsertRowid
+    const insPred = db.prepare('INSERT OR IGNORE INTO proyecto_tarea_predecesora (tarea_id, predecesora_id) VALUES (?,?)')
+    let predecesorasDescartadas = 0
+    // Comparación tolerante a tipo (igual que en el PUT): pid suele llegar como
+    // string desde un <select> del frontend, y id es siempre un número.
+    predecesoras.forEach(pid => {
+      if (String(pid) === String(id)) return
+      if (!perteneceAlProyecto(pid, proyectoId)) { predecesorasDescartadas++; return }
+      insPred.run(id, pid)
+    })
+    return { id, orden, predecesorasDescartadas }
+  })()
 
   recalcularFechas(proyectoId)
-  res.status(201).json({ id, orden })
+  res.status(201).json({ id, orden, predecesorasDescartadas })
 })
 
 // ── Detecta si agregar "tareaId depende de candidatoPid" cerraría un ciclo ────
 // (es decir, si candidatoPid ya depende, directa o transitivamente, de tareaId)
+// Camina hacia atrás tanto por predecesoras como por "termina_con_tarea_id" —
+// las dos son, para el orden de cálculo, el mismo tipo de dependencia
+// ("hace falta la fecha de la otra tarea primero").
 function creariaCiclo(tareaId, candidatoPid) {
   const visitado = new Set()
   const queue = [candidatoPid]
@@ -173,6 +239,8 @@ function creariaCiclo(tareaId, candidatoPid) {
     visitado.add(String(actual))
     const preds = db.prepare('SELECT predecesora_id FROM proyecto_tarea_predecesora WHERE tarea_id=?').all(actual)
     preds.forEach(p => queue.push(p.predecesora_id))
+    const t = db.prepare('SELECT termina_con_tarea_id FROM proyecto_tarea WHERE id=?').get(actual)
+    if (t?.termina_con_tarea_id) queue.push(t.termina_con_tarea_id)
   }
   return false
 }
@@ -181,26 +249,40 @@ function creariaCiclo(tareaId, candidatoPid) {
 router.put('/proyecto/:proyectoId/tareas/:tareaId', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { proyectoId, tareaId } = req.params
-  const { nombre, duracion_dias, responsable, area_responsable, estado, avance, color, observaciones, predecesoras } = req.body
+  const { nombre, duracion_dias, responsable, area_responsable, modulo, estado, avance, color, observaciones, predecesoras, fecha_inicio_manual, es_general, termina_con_tarea_id } = req.body
 
-  db.prepare(`
-    UPDATE proyecto_tarea SET nombre=?, duracion_dias=?, responsable=?, area_responsable=?, estado=?, avance=?, color=?, observaciones=?
-    WHERE id=? AND proyecto_id=?
-  `).run(nombre || '', duracion_dias || 1, responsable || '', area_responsable || '', estado || 'Pendiente', avance ?? 0, color || '', observaciones || '', tareaId, proyectoId)
-
-  let ciclosEvitados = 0
-  if (Array.isArray(predecesoras)) {
-    db.prepare('DELETE FROM proyecto_tarea_predecesora WHERE tarea_id=?').run(tareaId)
-    const ins = db.prepare('INSERT OR IGNORE INTO proyecto_tarea_predecesora (tarea_id, predecesora_id) VALUES (?,?)')
-    predecesoras.forEach(pid => {
-      if (String(pid) === String(tareaId)) return
-      if (creariaCiclo(tareaId, pid)) { ciclosEvitados++; return }
-      ins.run(tareaId, pid)
-    })
+  // Si el valor elegido para "termina con" cerraría un ciclo, es la propia
+  // tarea, o pertenece a OTRO proyecto, se descarta en silencio — mismo
+  // criterio que ya se usa con las predecesoras normales.
+  let terminaConId = termina_con_tarea_id || null
+  let terminaConDescartado = false
+  if (terminaConId && (String(terminaConId) === String(tareaId) || !perteneceAlProyecto(terminaConId, proyectoId) || creariaCiclo(tareaId, terminaConId))) {
+    terminaConId = null
+    terminaConDescartado = true
   }
 
+  let ciclosEvitados = 0
+  let predecesorasDescartadas = 0
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE proyecto_tarea SET nombre=?, duracion_dias=?, responsable=?, area_responsable=?, modulo=?, estado=?, avance=?, color=?, observaciones=?, fecha_inicio_manual=?, es_general=?, termina_con_tarea_id=?
+      WHERE id=? AND proyecto_id=?
+    `).run(nombre || '', duracionValida(duracion_dias), responsable || '', area_responsable || '', parseInt(modulo) || 0, estado || 'Pendiente', avance ?? 0, color || '', observaciones || '', fecha_inicio_manual || '', es_general ? 1 : 0, terminaConId, tareaId, proyectoId)
+
+    if (Array.isArray(predecesoras)) {
+      db.prepare('DELETE FROM proyecto_tarea_predecesora WHERE tarea_id=?').run(tareaId)
+      const ins = db.prepare('INSERT OR IGNORE INTO proyecto_tarea_predecesora (tarea_id, predecesora_id) VALUES (?,?)')
+      predecesoras.forEach(pid => {
+        if (String(pid) === String(tareaId)) return
+        if (!perteneceAlProyecto(pid, proyectoId)) { predecesorasDescartadas++; return }
+        if (creariaCiclo(tareaId, pid)) { ciclosEvitados++; return }
+        ins.run(tareaId, pid)
+      })
+    }
+  })()
+
   recalcularFechas(proyectoId)
-  res.json({ ok: true, ciclosEvitados })
+  res.json({ ok: true, ciclosEvitados, terminaConDescartado, predecesorasDescartadas })
 })
 
 // ── PUT reordenar tareas ──────────────────────────────────────────────────────
@@ -222,13 +304,6 @@ router.delete('/proyecto/:proyectoId/tareas/:tareaId', (req, res) => {
   const { proyectoId, tareaId } = req.params
   db.prepare('DELETE FROM proyecto_tarea WHERE id=? AND proyecto_id=?').run(tareaId, proyectoId)
   recalcularFechas(proyectoId)
-  res.json({ ok: true })
-})
-
-// ── POST recalcular ───────────────────────────────────────────────────────────
-router.post('/proyecto/:proyectoId/recalcular', (req, res) => {
-  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
-  recalcularFechas(req.params.proyectoId)
   res.json({ ok: true })
 })
 
@@ -316,7 +391,7 @@ router.post('/plantilla', (req, res) => {
   const orden = (maxOrden?.m || 0) + 1
   const r = db.prepare(
     'INSERT INTO gantt_plantilla_tarea (nombre, duracion_dias, es_grupo, origen, color, grupo, orden, plantilla_set_id) VALUES (?,?,?,?,?,?,?,?)'
-  ).run(nombre || 'Nueva tarea', duracion_dias || 1, es_grupo ? 1 : 0, origen || 'custom', color || '', grupo || '', orden, sid)
+  ).run(nombre || 'Nueva tarea', duracionValida(duracion_dias), es_grupo ? 1 : 0, origen || 'custom', color || '', grupo || '', orden, sid)
   res.status(201).json({ id: r.lastInsertRowid, orden })
 })
 
@@ -336,7 +411,7 @@ router.put('/plantilla/:id', (req, res) => {
   const { nombre, duracion_dias, es_grupo, origen, color, grupo } = req.body
   db.prepare(
     'UPDATE gantt_plantilla_tarea SET nombre=?, duracion_dias=?, es_grupo=?, origen=?, color=?, grupo=? WHERE id=?'
-  ).run(nombre || '', duracion_dias || 1, es_grupo ? 1 : 0, origen || 'custom', color || '', grupo || '', req.params.id)
+  ).run(nombre || '', duracionValida(duracion_dias), es_grupo ? 1 : 0, origen || 'custom', color || '', grupo || '', req.params.id)
   res.json({ ok: true })
 })
 
@@ -414,7 +489,7 @@ router.post('/proyecto/:proyectoId/guardar-plantilla', (req, res) => {
   )
   for (const t of tareas) {
     const esGrupo = (!t.duracion_dias || t.duracion_dias === 0) ? 1 : 0
-    ins.run(t.nombre, t.duracion_dias || 1, esGrupo, 'proyecto', t.color || '', grupo, nextOrden++, setId)
+    ins.run(t.nombre, esGrupo ? 1 : duracionValida(t.duracion_dias), esGrupo, 'proyecto', t.color || '', grupo, nextOrden++, setId)
   }
 
   res.json({ ok: true, insertadas: tareas.length, set_id: setId })

@@ -15,7 +15,12 @@ function notificarPorMail(para, de_nombre, asunto) {
     port:   parseInt(getConfig('smtp_port', '587')),
     secure: getConfig('smtp_secure', 'false') === 'true',
     auth:   { user, pass: getConfig('smtp_pass') },
-    tls:    { rejectUnauthorized: false },
+    // Valida el certificado TLS del servidor SMTP por default (evita un
+    // MITM interceptando el correo) — si el proveedor de correo usado en
+    // producción tiene un certificado que no valida (relay interno con
+    // certificado propio, etc.), se puede desactivar cargando la clave de
+    // configuración 'smtp_tls_reject_unauthorized' en 'false'.
+    tls:    { rejectUnauthorized: getConfig('smtp_tls_reject_unauthorized', 'true') !== 'false' },
   })
   transport.sendMail({
     from:    getConfig('smtp_from') || user,
@@ -27,18 +32,28 @@ function notificarPorMail(para, de_nombre, asunto) {
   })
 }
 
-// Manda un mensaje interno de sistema a un usuario puntual (ej. el gerente
-// que autorizó un retiro de stock) — mismo mecanismo que un mensaje mandado
-// a mano desde la bandeja de Mensajes, incluyendo el aviso por mail si el
-// destinatario tiene uno cargado.
+// Manda un mensaje interno de sistema a uno o varios usuarios (ej. el
+// gerente que autorizó un retiro de stock) — mismo mecanismo que un mensaje
+// mandado a mano desde la bandeja de Mensajes, incluyendo el aviso por mail
+// a cada destinatario que tenga uno cargado. `para_id` acepta un solo id
+// (los call sites existentes, que siempre notifican a un único autorizante)
+// o un array — un mensaje, varios destinatarios, cada uno con su propio
+// estado de lectura en mensaje_destinatarios.
 function enviarMensajeSistema({ de_id, de_nombre, para_id, asunto, cuerpo }) {
-  const para = db.prepare('SELECT id, nombre, email FROM usuarios WHERE id=? AND activo=1').get(para_id)
-  if (!para) return false
-  db.prepare(`
-    INSERT INTO mensajes (de_id, de_nombre, para_id, para_nombre, asunto, cuerpo)
-    VALUES (?,?,?,?,?,?)
-  `).run(de_id, de_nombre, para.id, para.nombre, asunto, cuerpo)
-  notificarPorMail(para, de_nombre, asunto)
+  const ids = [...new Set((Array.isArray(para_id) ? para_id : [para_id]).map(id => parseInt(id)).filter(Boolean))]
+  const destinatarios = ids
+    .map(id => db.prepare('SELECT id, nombre, email FROM usuarios WHERE id=? AND activo=1').get(id))
+    .filter(Boolean)
+  if (!destinatarios.length) return false
+  const r = db.prepare(`INSERT INTO mensajes (de_id, de_nombre, asunto, cuerpo) VALUES (?,?,?,?)`)
+    .run(de_id, de_nombre, asunto, cuerpo)
+  const insDestinatario = db.prepare(`
+    INSERT INTO mensaje_destinatarios (mensaje_id, usuario_id, usuario_nombre) VALUES (?,?,?)
+  `)
+  for (const para of destinatarios) {
+    insDestinatario.run(r.lastInsertRowid, para.id, para.nombre)
+    notificarPorMail(para, de_nombre, asunto)
+  }
   return true
 }
 

@@ -3,6 +3,7 @@ import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
 import DateInput from '../../components/DateInput'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
+import SubstockPanel from '../../components/SubstockPanel'
 import { fmtHorasDecimal } from '../../utils/horas'
 import { manejarPegadoNumero } from '../../utils/numero'
 
@@ -24,6 +25,10 @@ const PARTE_VACIA = { fecha: hoy(), operario: '', horas: '', descripcion: '', ob
 export default function Produccion() {
   const canWrite = puedeEscribir('produccion')
   const limit = 50
+  // "ot" (Órdenes de Trabajo) todavía no se usa — arranca en Substock. No se
+  // borra la solapa/pantalla, solo se saca del selector (ver más abajo) para
+  // reactivarla el día que se retome.
+  const [tab, setTab] = useState('substock')
 
   const [ots, setOts]         = useState([])
   const [total, setTotal]     = useState(0)
@@ -178,75 +183,99 @@ export default function Produccion() {
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
           <h5 className="mb-0 fw-bold">Producción</h5>
-          <small className="text-muted">Órdenes de trabajo</small>
         </div>
-        {canWrite && (
-          <button className="btn btn-primary btn-sm" onClick={() => { setFormNueva(FORM_VACIO); setErrNueva(''); setModalNueva(true) }}>
-            <i className="bi bi-plus-lg me-2" />Nueva OT
-          </button>
-        )}
-      </div>
-
-      <div className="d-flex flex-wrap gap-2 mb-3">
-        <select className="form-select form-select-sm" style={{ width: 160 }} value={fEstado} onChange={e => { setFEstado(e.target.value); setPage(1) }}>
-          <option value="">Todos los estados</option>
-          {ESTADOS.map(e => <option key={e} value={e}>{e}</option>)}
-        </select>
-        <select className="form-select form-select-sm" style={{ width: 140 }} value={fPrioridad} onChange={e => { setFPrioridad(e.target.value); setPage(1) }}>
-          <option value="">Toda prioridad</option>
-          {PRIORIDADES.map(p => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <select className="form-select form-select-sm" style={{ width: 200 }} value={fProyecto} onChange={e => { setFProyecto(e.target.value); setPage(1) }}>
-          <option value="">Todos los proyectos</option>
-          {proyectos.map(p => <option key={p.id} value={p.id}>{p.codigo} — {p.nombre}</option>)}
-        </select>
-        <input className="form-control form-control-sm" style={{ width: 220 }} placeholder="Buscar por número o descripción…"
-          value={buscar} onChange={e => { setBuscar(e.target.value); setPage(1) }} />
+        {/* "Nueva OT" oculto junto con la solapa de Órdenes de Trabajo — ver abajo */}
       </div>
 
       <div className="card border-0 shadow-sm">
-        <div className="table-responsive">
-          <table className="table table-hover align-middle mb-0">
-            <thead className="table-light">
-              <tr>
-                <th>N°</th><th>Descripción</th><th>Proyecto</th><th>Responsable</th>
-                <th>Estado</th><th>Prioridad</th><th>Tareas</th><th>Horas</th><th>Vence</th>
-                <th className="text-end">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ots.length === 0 ? (
-                <tr><td colSpan={10} className="text-center text-muted py-4">Sin órdenes de trabajo</td></tr>
-              ) : ots.map(ot => (
-                <tr key={ot.id} style={{ cursor: 'pointer' }} onClick={() => abrirDetalle(ot)}>
-                  <td className="fw-semibold">{ot.numero}</td>
-                  <td>{ot.descripcion}</td>
-                  <td className="text-muted small">{ot.proyecto_nombre || '—'}</td>
-                  <td className="text-muted small">{ot.responsable || '—'}</td>
-                  <td><span className={`badge bg-${badgeEstado(ot.estado)}`}>{ot.estado}</span></td>
-                  <td><span className={`badge bg-${badgePrioridad(ot.prioridad)}`}>{ot.prioridad}</span></td>
-                  <td className="text-muted small">{ot.tareas_ok || 0} / {ot.total_tareas || 0}</td>
-                  <td className="text-muted small">{fmtHorasDecimal(ot.total_horas)}</td>
-                  <td className="text-muted small">{fmtF(ot.fecha_fin_est)}</td>
-                  <td className="text-end" onClick={e => e.stopPropagation()}>
-                    {canWrite && (
-                      <button className="btn btn-sm btn-outline-danger" title="Eliminar" onClick={() => eliminarOT(ot)}>
-                        <i className="bi bi-trash" />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="card-header bg-white border-bottom px-3 pt-3 pb-0">
+          <ul className="nav nav-tabs card-header-tabs">
+            {[
+              // { key: 'ot',       icon: 'clipboard-data', label: 'Órdenes de Trabajo' }, — todavía no se implementa
+              { key: 'substock', icon: 'box-seam',       label: 'Mi Substock'        },
+            ].map(t => (
+              <li key={t.key} className="nav-item">
+                <button className={`nav-link${tab === t.key ? ' active' : ''}`} onClick={() => setTab(t.key)}>
+                  <i className={`bi bi-${t.icon} me-1`} />{t.label}
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
-        {totalPags > 1 && (
-          <div className="d-flex justify-content-center gap-2 py-2 border-top">
-            <button className="btn btn-sm btn-outline-secondary" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</button>
-            <span className="text-muted small align-self-center">{page} / {totalPags}</span>
-            <button className="btn btn-sm btn-outline-secondary" disabled={page >= totalPags} onClick={() => setPage(p => p + 1)}>›</button>
-          </div>
-        )}
+
+        <div className="card-body p-0">
+
+          {tab === 'ot' && (
+            <div className="p-3">
+              <div className="d-flex flex-wrap gap-2 mb-3">
+                <select className="form-select form-select-sm" style={{ width: 160 }} value={fEstado} onChange={e => { setFEstado(e.target.value); setPage(1) }}>
+                  <option value="">Todos los estados</option>
+                  {ESTADOS.map(e => <option key={e} value={e}>{e}</option>)}
+                </select>
+                <select className="form-select form-select-sm" style={{ width: 140 }} value={fPrioridad} onChange={e => { setFPrioridad(e.target.value); setPage(1) }}>
+                  <option value="">Toda prioridad</option>
+                  {PRIORIDADES.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <select className="form-select form-select-sm" style={{ width: 200 }} value={fProyecto} onChange={e => { setFProyecto(e.target.value); setPage(1) }}>
+                  <option value="">Todos los proyectos</option>
+                  {proyectos.map(p => <option key={p.id} value={p.id}>{p.codigo} — {p.nombre}</option>)}
+                </select>
+                <input className="form-control form-control-sm" style={{ width: 220 }} placeholder="Buscar por número o descripción…"
+                  value={buscar} onChange={e => { setBuscar(e.target.value); setPage(1) }} />
+              </div>
+
+              <div className="table-responsive">
+                <table className="table table-hover align-middle mb-0">
+                  <thead className="table-light">
+                    <tr>
+                      <th>N°</th><th>Descripción</th><th>Proyecto</th><th>Responsable</th>
+                      <th>Estado</th><th>Prioridad</th><th>Tareas</th><th>Horas</th><th>Vence</th>
+                      <th className="text-end">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ots.length === 0 ? (
+                      <tr><td colSpan={10} className="text-center text-muted py-4">Sin órdenes de trabajo</td></tr>
+                    ) : ots.map(ot => (
+                      <tr key={ot.id} style={{ cursor: 'pointer' }} onClick={() => abrirDetalle(ot)}>
+                        <td className="fw-semibold">{ot.numero}</td>
+                        <td>{ot.descripcion}</td>
+                        <td className="text-muted small">{ot.proyecto_nombre || '—'}</td>
+                        <td className="text-muted small">{ot.responsable || '—'}</td>
+                        <td><span className={`badge bg-${badgeEstado(ot.estado)}`}>{ot.estado}</span></td>
+                        <td><span className={`badge bg-${badgePrioridad(ot.prioridad)}`}>{ot.prioridad}</span></td>
+                        <td className="text-muted small">{ot.tareas_ok || 0} / {ot.total_tareas || 0}</td>
+                        <td className="text-muted small">{fmtHorasDecimal(ot.total_horas)}</td>
+                        <td className="text-muted small">{fmtF(ot.fecha_fin_est)}</td>
+                        <td className="text-end" onClick={e => e.stopPropagation()}>
+                          {canWrite && (
+                            <button className="btn btn-sm btn-outline-danger" title="Eliminar" onClick={() => eliminarOT(ot)}>
+                              <i className="bi bi-trash" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {totalPags > 1 && (
+                <div className="d-flex justify-content-center gap-2 py-2 border-top">
+                  <button className="btn btn-sm btn-outline-secondary" disabled={page === 1} onClick={() => setPage(p => p - 1)}>‹</button>
+                  <span className="text-muted small align-self-center">{page} / {totalPags}</span>
+                  <button className="btn btn-sm btn-outline-secondary" disabled={page >= totalPags} onClick={() => setPage(p => p + 1)}>›</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'substock' && (
+            <div className="p-3">
+              <SubstockPanel substock="produccion" canWrite={canWrite} />
+            </div>
+          )}
+
+        </div>
       </div>
 
       {/* ── Modal: Nueva OT ─────────────────────────────────────────────── */}

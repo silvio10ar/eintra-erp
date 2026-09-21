@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '../../api/client'
+import { getUser } from '../../store/authStore'
 import { PREFIJOS, FAM_NOMBRES } from './prefijos'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { hoyLocal } from '../../utils/fecha'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 
 const FORM_VACIO = {
-  codigo:'', descripcion:'', categoria:'', unidad:'UND.',
+  codigo:'', descripcion:'', categoria:'', unidad:'UND.', unidad_compra:'',
   stock_minimo:0, ubicacion:'', precio_costo:0, precio_moneda:'PESOS', precio_venta:0, proveedor:'',
-  codigo_generado: 0, precio_critico: 0, precio_frecuencia_dias: 0,
+  codigo_generado: 0, precio_critico: 0, precio_frecuencia_dias: 0, trazabilidad_stock: 'ninguna',
 }
 
 const FRECUENCIAS_PRECIO = [
@@ -17,9 +20,9 @@ const FRECUENCIAS_PRECIO = [
   { v: 365, l: 'Anual' },
 ]
 
-const fmtPesos   = n => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n ?? 0)
-const fmtDolares = n => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(n ?? 0)
-const fmtEuros   = n => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n ?? 0)
+const fmtPesos   = n => esMontoOculto(n) ? MONTO_OCULTO : new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n ?? 0)
+const fmtDolares = n => esMontoOculto(n) ? MONTO_OCULTO : new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(n ?? 0)
+const fmtEuros   = n => esMontoOculto(n) ? MONTO_OCULTO : new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }).format(n ?? 0)
 // La moneda en la que se cargó el precio se muestra en negrita — las otras
 // dos son la conversión (vía tipo de cambio del sistema) hecha por el backend.
 const esPesos = m => !m || m === 'PESO' || m === 'PESOS'
@@ -65,6 +68,36 @@ export default function Materiales() {
   const [pedidosPrecio,  setPedidosPrecio]  = useState(new Map())
   const [pidiendoPrecio, setPidiendoPrecio] = useState(null)
   const [cancelandoPrecio, setCancelandoPrecio] = useState(null)
+  // Exportar a Excel — mismo criterio "admin ∪ gerentes" que ya usa Stock
+  // para exportar, contra la misma lista de autorizantes.
+  const [autorizantes, setAutorizantes] = useState([])
+  const esGerente = autorizantes.some(u => u.id === getUser()?.id)
+  const [exportando, setExportando] = useState(false)
+
+  useEffect(() => {
+    api.get('/stock/autorizantes').then(r => setAutorizantes(r.data)).catch(e => console.error(e))
+  }, [])
+
+  const exportarExcel = async () => {
+    setExportando(true)
+    try {
+      const r = await api.get('/materiales/exportar', {
+        params: {
+          buscar: buscar.trim() || undefined,
+          familia: filFam || undefined,
+          alerta: filAlerta || undefined,
+          soloVencidos: soloVencidos ? '1' : undefined,
+        },
+        responseType: 'blob',
+      })
+      const url = URL.createObjectURL(new Blob([r.data]))
+      const a = document.createElement('a')
+      a.href = url; a.download = `materiales_${hoyLocal()}.xlsx`; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert('No se pudo exportar')
+    } finally { setExportando(false) }
+  }
 
   // Con miles de materiales en el catálogo real, traer todo de entrada es lo
   // que hacía sentir lenta la pantalla — ahora no se pide nada hasta que haya
@@ -150,6 +183,23 @@ export default function Materiales() {
   }
   const cerrar = () => { setModal(null); resetSelector() }
 
+  // Tildar "Requiere partida" / "Requiere N° de serie" directo desde la
+  // lista, sin entrar a editar cada material — un solo tilde a la vez
+  // (partida/serie/ninguna son excluyentes entre sí).
+  const [guardandoTraza, setGuardandoTraza] = useState(null)
+  const toggleTrazabilidad = async (item, valor) => {
+    const nuevo = item.trazabilidad_stock === valor ? 'ninguna' : valor
+    setGuardandoTraza(item.id)
+    try {
+      await api.put(`/materiales/${item.id}`, { codigo: item.codigo, descripcion: item.descripcion, trazabilidad_stock: nuevo })
+      setItems(prev => prev.map(m => m.id === item.id ? { ...m, trazabilidad_stock: nuevo } : m))
+    } catch (e) {
+      alert(e.response?.data?.error || 'Error al actualizar')
+    } finally {
+      setGuardandoTraza(null)
+    }
+  }
+
   const usarCodigo = (codigo, descripcion) => {
     setForm(p => ({ ...p, codigo, descripcion: descripcion || p.descripcion, codigo_generado: 0 }))
     resetSelector(); setPaso('datos')
@@ -163,6 +213,9 @@ export default function Materiales() {
   const guardar = async e => {
     e.preventDefault()
     setSaving(true); setErr('')
+    if (modal === 'nuevo' && !form.proveedor?.trim()) {
+      setErr('Elegí el proveedor de este material'); setSaving(false); return
+    }
     try {
       if (modal === 'nuevo') {
         const { data } = await api.post('/materiales', form)
@@ -279,6 +332,12 @@ export default function Materiales() {
           onClick={() => setSoloVencidos(v => !v)}>
           <i className="bi bi-exclamation-triangle-fill me-1"/>Precios vencidos
         </button>
+        {esGerente && (
+          <button className="btn btn-sm btn-outline-success ms-auto" disabled={exportando || !hayFiltro} onClick={exportarExcel}>
+            {exportando ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-file-excel me-1" />}
+            Exportar a Excel
+          </button>
+        )}
       </div>
 
       {/* Tabla */}
@@ -312,6 +371,12 @@ export default function Materiales() {
                     <th style={{width:60}}>S.Mín</th>
                     <th className="text-end" style={{width:135}}>Precio costo</th>
                     <th>Proveedor</th>
+                    <th className="text-center" style={{width:60}} title="Requiere partida — trazabilidad por lote">
+                      <i className="bi bi-upc-scan"/>
+                    </th>
+                    <th className="text-center" style={{width:60}} title="Requiere número de serie — unidad única">
+                      <i className="bi bi-qr-code"/>
+                    </th>
                     <th style={{width:95}}></th>
                   </tr>
                 </thead>
@@ -332,6 +397,12 @@ export default function Materiales() {
                       <td>
                         <div>
                           {item.descripcion}
+                          {item.trazabilidad_stock === 'partida' && (
+                            <i className="bi bi-upc-scan ms-1 text-muted" title="Requiere partida — trazabilidad por lote"/>
+                          )}
+                          {item.trazabilidad_stock === 'serie' && (
+                            <i className="bi bi-qr-code ms-1 text-muted" title="Requiere número de serie — unidad única"/>
+                          )}
                         </div>
                       </td>
                       <td>
@@ -352,7 +423,9 @@ export default function Materiales() {
                       </td>
                       <td className="text-muted small text-center">{item.stock_minimo || '—'}</td>
                       <td className="text-end small">
-                        {item.precio_costo > 0 ? (
+                        {esMontoOculto(item.precio_costo) ? (
+                          <span className="fw-bold text-dark">{MONTO_OCULTO}</span>
+                        ) : item.precio_costo > 0 ? (
                           <div className="d-flex flex-column align-items-end" style={{ fontSize: '0.78rem', lineHeight: 1.3 }}>
                             <span className={esMonedaCargada(item, 'PESOS') ? 'fw-bold text-dark' : 'text-muted'}>
                               {item.precio_pesos != null ? fmtPesos(item.precio_pesos) : '—'}
@@ -400,6 +473,16 @@ export default function Materiales() {
                         <span className="text-muted small text-truncate d-block" style={{maxWidth:180}}>
                           {item.proveedor || '—'}
                         </span>
+                      </td>
+                      <td className="text-center">
+                        <input type="checkbox" className="form-check-input" disabled={guardandoTraza === item.id}
+                          checked={item.trazabilidad_stock === 'partida'}
+                          onChange={() => toggleTrazabilidad(item, 'partida')}/>
+                      </td>
+                      <td className="text-center">
+                        <input type="checkbox" className="form-check-input" disabled={guardandoTraza === item.id}
+                          checked={item.trazabilidad_stock === 'serie'}
+                          onChange={() => toggleTrazabilidad(item, 'serie')}/>
                       </td>
                       <td>
                         <div className="d-flex gap-1 justify-content-end pe-1">
@@ -511,15 +594,22 @@ export default function Materiales() {
                       Clasificación y stock
                     </p>
                     <div className="row g-2 mb-3">
-                      <div className="col-md-5">
+                      <div className="col-md-4">
                         <label className="form-label small fw-medium">Categoría</label>
                         <input className="form-control" value={form.categoria}
                           onChange={e => setForm(p => ({...p, categoria: e.target.value}))}/>
                       </div>
-                      <div className="col-md-3">
+                      <div className="col-md-2">
                         <label className="form-label small fw-medium">Unidad</label>
                         <input className="form-control" value={form.unidad}
                           onChange={e => setForm(p => ({...p, unidad: e.target.value}))}/>
+                      </div>
+                      <div className="col-md-2">
+                        <label className="form-label small fw-medium" title="Solo si se compra en una unidad distinta a la de stock — ej. chapas: se compran por kg, pero acá se cuentan por unidad. Vacío = misma unidad.">
+                          Unidad de compra
+                        </label>
+                        <input className="form-control" placeholder={form.unidad || 'UND.'} value={form.unidad_compra||''}
+                          onChange={e => setForm(p => ({...p, unidad_compra: e.target.value}))}/>
                       </div>
                       <div className="col-md-2">
                         <label className="form-label small fw-medium">Stock mínimo</label>
@@ -533,12 +623,18 @@ export default function Materiales() {
                           onChange={e => setForm(p => ({...p, ubicacion: e.target.value}))}/>
                       </div>
                     </div>
+                    {!!form.unidad_compra?.trim() && form.unidad_compra.trim() !== (form.unidad||'').trim() && (
+                      <p className="text-muted mb-3 mt-n2" style={{ fontSize: '0.72rem' }}>
+                        Se compra en <strong>{form.unidad_compra}</strong> pero el stock se maneja en <strong>{form.unidad||'UND.'}</strong> —
+                        no hay conversión automática: al confirmar cada ingreso se va a pedir cuánto entró realmente al depósito.
+                      </p>
+                    )}
 
                     <p className="text-uppercase text-muted fw-semibold mb-2" style={{fontSize:'0.72rem', letterSpacing:'0.5px'}}>
                       Precio y proveedor
                     </p>
                     <div className="row g-2 mb-3">
-                      <div className="col-md-3">
+                      <div className="col-md-4">
                         <label className="form-label small fw-medium">Precio costo</label>
                         <div className="input-group input-group-sm">
                           <span className="input-group-text">$</span>
@@ -547,7 +643,7 @@ export default function Materiales() {
                             onChange={e => setForm(p => ({...p, precio_costo: +e.target.value}))}/>
                         </div>
                       </div>
-                      <div className="col-md-2">
+                      <div className="col-md-3">
                         <label className="form-label small fw-medium">Moneda</label>
                         <select className="form-select form-select-sm" value={form.precio_moneda || 'PESOS'}
                           onChange={e => setForm(p => ({...p, precio_moneda: e.target.value}))}>
@@ -556,23 +652,33 @@ export default function Materiales() {
                           <option value="EURO">Euros</option>
                         </select>
                       </div>
-                      <div className="col-md-3">
-                        <label className="form-label small fw-medium">Precio venta</label>
-                        <div className="input-group input-group-sm">
-                          <span className="input-group-text">$</span>
-                          <input className="form-control" type="number" onPaste={manejarPegadoNumero} min="0" step="0.01"
-                            value={form.precio_venta}
-                            onChange={e => setForm(p => ({...p, precio_venta: +e.target.value}))}/>
-                        </div>
-                      </div>
-                      <div className="col-md-4">
-                        <label className="form-label small fw-medium">Proveedor</label>
+                      {/* Precio venta: sacado por ahora — sin definir todavía de dónde debería salir. */}
+                      <div className="col-md-5">
+                        <label className="form-label small fw-medium">Proveedor{modal === 'nuevo' ? ' *' : ''}</label>
                         <select className="form-select" value={form.proveedor}
                           onChange={e => setForm(p => ({...p, proveedor: e.target.value}))}>
-                          <option value="">— Sin proveedor —</option>
+                          <option value="">{modal === 'nuevo' ? '— Elegí un proveedor —' : '— Sin proveedor —'}</option>
                           {provsList.map(p => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
                         </select>
                       </div>
+                    </div>
+
+                    <div className="border rounded p-3 bg-light bg-opacity-50 mb-3">
+                      <label className="form-label small fw-semibold mb-1">
+                        <i className="bi bi-upc-scan me-1"/>Trazabilidad de stock
+                      </label>
+                      <select className="form-select form-select-sm" style={{ maxWidth: 320 }}
+                        value={form.trazabilidad_stock || 'ninguna'}
+                        onChange={e => setForm(p => ({...p, trazabilidad_stock: e.target.value}))}>
+                        <option value="ninguna">Ninguna</option>
+                        <option value="partida">Por partida (lote) — ej. chapas</option>
+                        <option value="serie">Por número de serie (unidad única) — ej. motores, bombas</option>
+                      </select>
+                      <p className="text-muted mb-0 mt-1" style={{ fontSize: '0.72rem' }}>
+                        Por partida: al ingresar o retirar pide un lote (varias unidades comparten uno). Por
+                        número de serie: cada ingreso es una sola unidad con su propia serie, sin repetirse.
+                        Ninguna: sigue funcionando como hoy, sin pedir nada.
+                      </p>
                     </div>
 
                     <div className="border rounded p-3 bg-light bg-opacity-50">

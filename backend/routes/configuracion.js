@@ -8,7 +8,8 @@ const router = express.Router()
 router.use(verificarToken)
 
 const esAdmin = req => req.usuario?.rol === 'admin'
-const CLAVES  = ['smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from','smtp_secure','backup_to']
+const CLAVES  = ['smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from','smtp_secure','backup_to','pago_umbral_autorizacion_usd',
+  'dashboard_finanzas_activo','dashboard_finanzas_hora','dashboard_finanzas_email']
 
 const get = clave => {
   const row = db.prepare('SELECT valor FROM configuracion WHERE clave=?').get(clave)
@@ -18,9 +19,15 @@ const get = clave => {
 // GET / — todas las claves (contraseña enmascarada)
 router.get('/', (req, res) => {
   if (!esAdmin(req)) return res.status(403).json({ error: 'Sin permisos' })
-  const cfg = Object.fromEntries(CLAVES.map(k => [k, '']))
-  const rows = db.prepare(`SELECT clave, valor FROM configuracion WHERE clave IN (${CLAVES.map(() => '?').join(',')})`).all(...CLAVES)
-  for (const r of rows) cfg[r.clave] = (r.clave === 'smtp_pass' && r.valor) ? '***' : r.valor
+  // Antes armaba la respuesta solo con lo que hay en la tabla `configuracion`,
+  // sin pasar por get() (que sí hace fallback a la variable de entorno) — si
+  // el SMTP se configuró únicamente por .env (sin nunca guardar desde esta
+  // pantalla), esta pantalla lo mostraba todo en blanco aunque el sistema ya
+  // estuviera mandando mail con esos valores.
+  const DEFAULTS = { pago_umbral_autorizacion_usd: '1000', dashboard_finanzas_activo: 'false', dashboard_finanzas_hora: '08:00' }
+  const cfg = {}
+  for (const k of CLAVES) cfg[k] = get(k) || DEFAULTS[k] || ''
+  if (cfg.smtp_pass) cfg.smtp_pass = '***'
   res.json(cfg)
 })
 
@@ -58,7 +65,7 @@ router.post('/test-email', async (req, res) => {
       host, port: parseInt(port),
       secure,
       auth: { user, pass },
-      tls: { rejectUnauthorized: false },
+      tls: { rejectUnauthorized: get('smtp_tls_reject_unauthorized', 'true') !== 'false' },
     })
     await transport.sendMail({
       from: from || user,
@@ -94,7 +101,7 @@ router.post('/backup-ahora', async (req, res) => {
       host, port: parseInt(get('smtp_port') || '587'),
       secure: get('smtp_secure') === 'true',
       auth: { user, pass },
-      tls: { rejectUnauthorized: false },
+      tls: { rejectUnauthorized: get('smtp_tls_reject_unauthorized', 'true') !== 'false' },
     })
     await transport.sendMail({
       from:        get('smtp_from') || user,
@@ -106,6 +113,29 @@ router.post('/backup-ahora', async (req, res) => {
     res.json({ ok: true, mensaje: `Backup enviado a ${to} (${kb} KB)` })
   } catch(err) {
     res.status(500).json({ error: `Error SMTP: ${err.message}` })
+  }
+})
+
+// POST /dashboard-finanzas-ahora — manda el reporte diario ya mismo, sin
+// esperar a la hora configurada (para probar antes de activarlo, o si un
+// día se quiere mandar fuera de horario). No marca "ya enviado hoy" —
+// mandar una prueba manual no debe pisar el envío automático de ese día.
+router.post('/dashboard-finanzas-ahora', async (req, res) => {
+  if (!esAdmin(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const { enviarReporteDashboardFinanzas } = require('../helpers/reporteDashboardFinanzas')
+  // Mismo criterio que /test-email: usa lo tipeado en el formulario (SMTP y
+  // el email destinatario), aunque todavía no se haya guardado.
+  const b = req.body || {}
+  const overrides = {}
+  ;['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from', 'smtp_secure', 'dashboard_finanzas_email'].forEach(k => {
+    if (b[k] !== undefined) overrides[k] = b[k]
+  })
+  try {
+    const r = await enviarReporteDashboardFinanzas({ forzar: true, overrides })
+    if (!r.enviado) return res.status(400).json({ error: r.motivo })
+    res.json({ ok: true, mensaje: r.mensaje })
+  } catch (err) {
+    res.status(500).json({ error: `Error al generar/enviar el reporte: ${err.message}` })
   }
 })
 

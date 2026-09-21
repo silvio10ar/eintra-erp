@@ -11,6 +11,8 @@ const router = express.Router();
 
 const puedeEscribirAdmin = (req) => req.usuario?.rol === 'admin' || req.permisos?.ventas?.escribir || req.permisos?.administracion?.escribir;
 const leerVentas = puede.leer('ventas');
+// Exportar exige escribir — leer solo alcanza para ver en pantalla.
+const puedeExportarVentas = puede.escribir('ventas');
 // Clientes: la secretaría los gestiona desde Administración (mismo caso que
 // facturas/saldos en finanzas.js) — el alta/edición ya aceptaba administracion
 // vía puedeEscribirAdmin, pero la lectura exigía únicamente "ventas".
@@ -124,7 +126,13 @@ function nextNumeroPpto() {
 }
 
 router.get('/presupuestos', verificarToken, leerVentas, (req, res) => {
-  const { estado, cliente_id, desde, hasta, buscar, page=1, limit=50 } = req.query;
+  const { estado, cliente_id, desde, hasta, buscar, page: pageQ, limit: limitQ } = req.query;
+  // parseInt de un query param con basura (ej. ?limit=abc) da NaN, que
+  // better-sqlite3 rechaza al bindearlo ("datatype mismatch") — un default
+  // en la desestructuración no alcanza porque solo aplica cuando el valor
+  // falta del todo, no cuando llega un string no numérico.
+  const page  = Math.max(1, parseInt(pageQ) || 1);
+  const limit = Math.max(1, parseInt(limitQ) || 50);
   const conds=[], params=[];
   if (estado)     { conds.push('p.estado=?');         params.push(estado); }
   if (cliente_id) { conds.push('p.cliente_id=?');     params.push(cliente_id); }
@@ -132,13 +140,13 @@ router.get('/presupuestos', verificarToken, leerVentas, (req, res) => {
   if (hasta)      { conds.push('p.fecha<=?');          params.push(hasta); }
   if (buscar)     { const b = buscarCondicion(buscar, ['p.numero','p.cli_nombre']); conds.push(b.cond); params.push(...b.params); }
   const where  = conds.length ? 'WHERE '+conds.join(' AND ') : '';
-  const offset = (parseInt(page)-1)*parseInt(limit);
+  const offset = (page-1)*limit;
   const total  = db.prepare(`SELECT COUNT(*) as c FROM presupuestos p ${where}`).get(...params).c;
   const datos  = db.prepare(`
     SELECT p.*, COUNT(i.id) as n_items, SUM(i.cantidad*i.precio_final) as total_usd
     FROM presupuestos p LEFT JOIN presupuesto_items i ON p.id=i.presupuesto_id
     ${where} GROUP BY p.id ORDER BY p.id DESC LIMIT ? OFFSET ?
-  `).all(...params, parseInt(limit), offset);
+  `).all(...params, limit, offset);
   res.json({ total, datos });
 });
 
@@ -274,7 +282,7 @@ router.put('/ofertas-tecnicas/:presupuesto_id', verificarToken, (req, res) => {
   res.json(db.prepare('SELECT * FROM ofertas_tecnicas WHERE presupuesto_id=?').get(req.params.presupuesto_id));
 });
 
-router.get('/exportar/presupuestos', verificarToken, leerVentas, (req, res) => {
+router.get('/exportar/presupuestos', verificarToken, leerVentas, puedeExportarVentas, (req, res) => {
   const { estado } = req.query;
   const where = estado ? 'WHERE estado=?' : '';
   const pptos = db.prepare(`SELECT * FROM presupuestos ${where} ORDER BY id DESC`).all(...(estado?[estado]:[]));

@@ -5,10 +5,9 @@ import { getUser } from '../../store/authStore'
 const fmtFecha = iso => {
   if (!iso) return ''
   const d = new Date(iso)
-  const hoy = new Date()
-  const esHoy = d.toDateString() === hoy.toDateString()
-  if (esHoy) return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
-  return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+  const fecha = d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+  const hora = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+  return `${fecha} ${hora}`
 }
 
 const ROL_LABELS = { admin:'Admin', gerencia:'Gerencia', compras:'Compras', ventas:'Ventas', deposito:'Depósito', produccion:'Producción', finanzas:'Finanzas', solo_lectura:'Lectura' }
@@ -18,15 +17,21 @@ export default function Mensajes({ onCambioNoLeidos }) {
   const [tab,       setTab]       = useState('inbox')   // 'inbox' | 'sent'
   const [msgs,      setMsgs]      = useState([])
   const [loading,   setLoading]   = useState(true)
+  const [buscar,    setBuscar]    = useState('')
   const [selMsg,    setSelMsg]     = useState(null)      // mensaje abierto
   const [composing, setComposing] = useState(false)
   const [usuarios,  setUsuarios]  = useState([])
 
   // Formulario nuevo mensaje
-  const [fPara,     setFPara]     = useState('')
+  const [fParaIds,  setFParaIds]  = useState([])
   const [fAsunto,   setFAsunto]   = useState('')
   const [fCuerpo,   setFCuerpo]   = useState('')
   const [sending,   setSending]   = useState(false)
+  const [marcando,  setMarcando]  = useState(false)
+
+  // Selección múltiple en la bandeja de Recibidos, para marcar leído/no leído en bloque.
+  const [seleccionados, setSeleccionados] = useState(new Set())
+  const [marcandoMasivo, setMarcandoMasivo] = useState(false)
 
   const cargar = useCallback(() => {
     setLoading(true)
@@ -38,6 +43,7 @@ export default function Mensajes({ onCambioNoLeidos }) {
   }, [tab])
 
   useEffect(() => { cargar() }, [cargar])
+  useEffect(() => { setSeleccionados(new Set()) }, [tab])
 
   useEffect(() => {
     api.get('/mensajes/usuarios/lista').then(r => setUsuarios(r.data)).catch(e => console.error(e))
@@ -64,28 +70,85 @@ export default function Mensajes({ onCambioNoLeidos }) {
     e.preventDefault()
     setSending(true)
     try {
-      await api.post('/mensajes', { para_id: fPara, asunto: fAsunto, cuerpo: fCuerpo })
-      setComposing(false); setFPara(''); setFAsunto(''); setFCuerpo('')
+      await api.post('/mensajes', { para_ids: fParaIds, asunto: fAsunto, cuerpo: fCuerpo })
+      setComposing(false); setFParaIds([]); setFAsunto(''); setFCuerpo('')
       if (tab === 'sent') cargar()
     } catch(err) { alert(err.response?.data?.error || 'Error al enviar') }
     finally { setSending(false) }
   }
 
   const responder = () => {
-    setFPara(String(selMsg.de_id))
+    setFParaIds([selMsg.de_id])
     setFAsunto(selMsg.asunto.startsWith('Re:') ? selMsg.asunto : `Re: ${selMsg.asunto}`)
     setFCuerpo('')
     setSelMsg(null)
     setComposing(true)
   }
 
+  const toggleDestinatario = id => setFParaIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+
+  // Marcar como leído/no leído a mano (además del marcado automático al abrir).
+  const toggleLeido = async () => {
+    const nuevoLeido = !selMsg.destinatarios?.find(d => d.usuario_id === me.id)?.leido
+    setMarcando(true)
+    try {
+      await api.patch(`/mensajes/${selMsg.id}/leido`, { leido: nuevoLeido })
+      setSelMsg(prev => ({
+        ...prev,
+        destinatarios: prev.destinatarios.map(d => d.usuario_id === me.id ? { ...d, leido: nuevoLeido } : d),
+      }))
+      setMsgs(prev => prev.map(x => x.id === selMsg.id ? { ...x, leido: nuevoLeido ? 1 : 0 } : x))
+      onCambioNoLeidos?.()
+    } catch (err) { alert(err.response?.data?.error || 'Error al actualizar') }
+    finally { setMarcando(false) }
+  }
+
+  const toggleSeleccion = (id, e) => {
+    e.stopPropagation()
+    setSeleccionados(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const toggleSeleccionTodos = () => {
+    setSeleccionados(prev => prev.size === msgsFiltrados.length ? new Set() : new Set(msgsFiltrados.map(m => m.id)))
+  }
+
+  // Marcar leído/no leído en bloque — reusa el mismo PATCH que el toggle
+  // individual, uno por mensaje seleccionado.
+  const marcarSeleccionados = async leido => {
+    setMarcandoMasivo(true)
+    try {
+      await Promise.all([...seleccionados].map(id => api.patch(`/mensajes/${id}/leido`, { leido })))
+      setMsgs(prev => prev.map(m => seleccionados.has(m.id) ? { ...m, leido: leido ? 1 : 0 } : m))
+      setSeleccionados(new Set())
+      onCambioNoLeidos?.()
+    } catch (err) {
+      alert('No se pudieron actualizar todos los mensajes seleccionados')
+      cargar()
+    } finally { setMarcandoMasivo(false) }
+  }
+
   const noLeidos = msgs.filter(m => !m.leido).length
+
+  // Filtro de búsqueda — por asunto, cuerpo y remitente/destinatario. El
+  // contador de no leídos de arriba usa siempre el total, no lo filtrado.
+  const msgsFiltrados = msgs.filter(m => {
+    const q = buscar.trim().toLowerCase()
+    if (!q) return true
+    const nombres = tab === 'inbox' ? (m.de_nombre || '') : (m.destinatarios || []).map(d => d.usuario_nombre).join(' ')
+    return (m.asunto || '').toLowerCase().includes(q)
+      || (m.cuerpo || '').toLowerCase().includes(q)
+      || nombres.toLowerCase().includes(q)
+  })
 
   return (
     <div className="container-fluid py-3" style={{ maxWidth: 900 }}>
       <div className="d-flex align-items-center justify-content-between mb-3">
         <h5 className="fw-bold mb-0"><i className="bi bi-envelope me-2"/>Mensajes</h5>
-        <button className="btn btn-primary btn-sm" onClick={() => { setComposing(true); setFPara(''); setFAsunto(''); setFCuerpo('') }}>
+        <button className="btn btn-primary btn-sm" onClick={() => { setComposing(true); setFParaIds([]); setFAsunto(''); setFCuerpo('') }}>
           <i className="bi bi-pencil-square me-1"/>Nuevo mensaje
         </button>
       </div>
@@ -107,6 +170,49 @@ export default function Mensajes({ onCambioNoLeidos }) {
         </li>
       </ul>
 
+      {/* Buscador */}
+      {msgs.length > 0 && (
+        <div className="mb-2 position-relative" style={{ maxWidth: 340 }}>
+          <i className="bi bi-search position-absolute text-muted" style={{ left: 10, top: 8, fontSize: '0.85rem' }} />
+          <input className="form-control form-control-sm ps-4" placeholder="Buscar por asunto, contenido o persona..."
+            value={buscar} onChange={e => setBuscar(e.target.value)} />
+          {buscar && (
+            <button className="btn btn-sm position-absolute" style={{ right: 2, top: 1, padding: '2px 6px' }}
+              onClick={() => setBuscar('')} title="Limpiar búsqueda">
+              <i className="bi bi-x" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Barra de selección múltiple (solo Recibidos) */}
+      {tab === 'inbox' && !loading && msgsFiltrados.length > 0 && (
+        <div className="d-flex align-items-center gap-2 mb-2">
+          <div className="form-check mb-0">
+            <input type="checkbox" className="form-check-input" id="chk-todos"
+              checked={seleccionados.size > 0 && seleccionados.size === msgsFiltrados.length}
+              ref={el => { if (el) el.indeterminate = seleccionados.size > 0 && seleccionados.size < msgsFiltrados.length }}
+              onChange={toggleSeleccionTodos} />
+            <label className="form-check-label small text-muted" htmlFor="chk-todos">
+              {seleccionados.size > 0 ? `${seleccionados.size} seleccionado${seleccionados.size !== 1 ? 's' : ''}` : 'Seleccionar todos'}
+            </label>
+          </div>
+          {seleccionados.size > 0 && (
+            <div className="d-flex gap-1 ms-2">
+              <button className="btn btn-sm btn-outline-primary py-0" style={{fontSize:'0.78rem'}}
+                disabled={marcandoMasivo} onClick={() => marcarSeleccionados(true)}>
+                <i className="bi bi-envelope-open me-1"/>Marcar leídos
+              </button>
+              <button className="btn btn-sm btn-outline-secondary py-0" style={{fontSize:'0.78rem'}}
+                disabled={marcandoMasivo} onClick={() => marcarSeleccionados(false)}>
+                <i className="bi bi-envelope me-1"/>Marcar no leídos
+              </button>
+              {marcandoMasivo && <span className="spinner-border spinner-border-sm text-secondary"/>}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Lista */}
       {loading
         ? <div className="text-center py-5"><span className="spinner-border text-secondary"/></div>
@@ -115,29 +221,42 @@ export default function Mensajes({ onCambioNoLeidos }) {
               <i className="bi bi-envelope-open" style={{fontSize:'2.5rem', opacity:0.3}}/>
               <div className="mt-2">No hay mensajes</div>
             </div>
-          : <div className="card border-0 shadow-sm">
-              {msgs.map((m, i) => {
+          : msgsFiltrados.length === 0
+            ? <div className="text-center text-muted py-5">
+                <i className="bi bi-search" style={{fontSize:'2.5rem', opacity:0.3}}/>
+                <div className="mt-2">Ningún mensaje coincide con "{buscar}"</div>
+              </div>
+            : <div className="card border-0 shadow-sm">
+              {msgsFiltrados.map((m, i) => {
                 const noLeido = tab === 'inbox' && !m.leido
+                const nombresPara = tab === 'sent' ? (m.destinatarios || []).map(d => d.usuario_nombre).join(', ') : ''
+                const leidosPara = tab === 'sent' ? (m.destinatarios || []).filter(d => d.leido).length : 0
                 return (
                   <div key={m.id}
                     className={`d-flex align-items-center gap-3 px-3 py-2 ${i > 0 ? 'border-top' : ''}`}
                     style={{ cursor:'pointer', background: noLeido ? '#f0f7ff' : '#fff' }}
                     onClick={() => abrirMensaje(m)}>
+                    {tab === 'inbox' && (
+                      <input type="checkbox" className="form-check-input flex-shrink-0" style={{ marginTop: 0 }}
+                        checked={seleccionados.has(m.id)}
+                        onClick={e => toggleSeleccion(m.id, e)}
+                        onChange={() => {}} />
+                    )}
                     <div className="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center flex-shrink-0"
                       style={{width:36, height:36, fontSize:'0.85rem', fontWeight:700}}>
-                      {((tab==='inbox' ? m.de_nombre : m.para_nombre) || '?').charAt(0).toUpperCase()}
+                      {((tab==='inbox' ? m.de_nombre : nombresPara) || '?').charAt(0).toUpperCase()}
                     </div>
                     <div className="flex-grow-1 overflow-hidden">
                       <div className="d-flex justify-content-between align-items-center">
-                        <span className={`${noLeido ? 'fw-bold' : 'fw-semibold'}`} style={{fontSize:'0.87rem'}}>
-                          {tab==='inbox' ? m.de_nombre : m.para_nombre}
+                        <span className={`text-truncate ${noLeido ? 'fw-bold' : 'fw-semibold'}`} style={{fontSize:'0.87rem', maxWidth: 400}}>
+                          {tab==='inbox' ? m.de_nombre : nombresPara}
                         </span>
                         <div className="d-flex align-items-center gap-2" style={{flexShrink:0}}>
                           {tab === 'sent' && (
-                            m.leido
-                              ? <span title={`Leído el ${fmtFecha(m.leido_at)}`}
+                            leidosPara > 0
+                              ? <span title={`Leído por ${leidosPara} de ${m.destinatarios.length}`}
                                   style={{color:'#0d6efd', fontSize:'0.78rem', fontWeight:600}}>
-                                  ✓✓ Leído
+                                  ✓✓ Leído por {leidosPara}/{m.destinatarios.length}
                                 </span>
                               : <span title="Aún no fue leído"
                                   style={{color:'#adb5bd', fontSize:'0.78rem'}}>
@@ -171,16 +290,20 @@ export default function Mensajes({ onCambioNoLeidos }) {
                   <small className="text-muted">
                     {tab==='inbox'
                       ? `De: ${selMsg.de_nombre}`
-                      : `Para: ${selMsg.para_nombre}`
+                      : `Para: ${(selMsg.destinatarios || []).map(d => d.usuario_nombre).join(', ')}`
                     } · {fmtFecha(selMsg.created_at)}
-                    {tab === 'sent' && (
-                      selMsg.leido
-                        ? <span className="ms-2" style={{color:'#0d6efd', fontWeight:600}}>
-                            ✓✓ Leído el {fmtFecha(selMsg.leido_at)}
-                          </span>
-                        : <span className="ms-2 text-secondary">✓ No leído aún</span>
-                    )}
                   </small>
+                  {tab === 'sent' && (
+                    <div className="mt-1 d-flex flex-wrap gap-2">
+                      {(selMsg.destinatarios || []).map(d => (
+                        <span key={d.usuario_id} className="badge bg-light text-dark border" style={{ fontSize: '0.72rem', fontWeight: 500 }}>
+                          {d.usuario_nombre}: {d.leido
+                            ? <span style={{ color: '#0d6efd' }}>✓✓ Leído el {fmtFecha(d.leido_at)}</span>
+                            : <span className="text-secondary">✓ No leído aún</span>}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <button className="btn-close" onClick={() => setSelMsg(null)}/>
               </div>
@@ -192,6 +315,14 @@ export default function Mensajes({ onCambioNoLeidos }) {
                   onClick={() => { if (confirm('¿Eliminar este mensaje?')) eliminar(selMsg.id) }}>
                   <i className="bi bi-trash me-1"/>Eliminar
                 </button>
+                {tab === 'inbox' && (
+                  <button className="btn btn-outline-secondary btn-sm" disabled={marcando} onClick={toggleLeido}>
+                    {marcando && <span className="spinner-border spinner-border-sm me-1"/>}
+                    {selMsg.destinatarios?.find(d => d.usuario_id === me.id)?.leido
+                      ? <><i className="bi bi-envelope me-1"/>Marcar como no leído</>
+                      : <><i className="bi bi-envelope-open me-1"/>Marcar como leído</>}
+                  </button>
+                )}
                 {tab === 'inbox' && (
                   <button className="btn btn-primary btn-sm" onClick={responder}>
                     <i className="bi bi-reply me-1"/>Responder
@@ -215,13 +346,20 @@ export default function Mensajes({ onCambioNoLeidos }) {
               </div>
               <div className="modal-body">
                 <div className="mb-2">
-                  <label className="form-label small fw-semibold mb-1">Para</label>
-                  <select className="form-select form-select-sm" required value={fPara} onChange={e => setFPara(e.target.value)}>
-                    <option value="">— seleccioná un destinatario —</option>
+                  <label className="form-label small fw-semibold mb-1">
+                    Para {fParaIds.length > 0 && <span className="text-muted fw-normal">({fParaIds.length} elegido{fParaIds.length !== 1 ? 's' : ''})</span>}
+                  </label>
+                  <div className="border rounded" style={{ maxHeight: 180, overflowY: 'auto' }}>
                     {usuarios.map(u => (
-                      <option key={u.id} value={u.id}>{u.nombre} ({ROL_LABELS[u.rol] || u.rol})</option>
+                      <label key={u.id} className="d-flex align-items-center gap-2 px-2 py-1 mb-0"
+                        style={{ fontSize: '0.85rem', cursor: 'pointer' }}>
+                        <input type="checkbox" className="form-check-input mt-0"
+                          checked={fParaIds.includes(u.id)}
+                          onChange={() => toggleDestinatario(u.id)} />
+                        {u.nombre} <span className="text-muted">({ROL_LABELS[u.rol] || u.rol})</span>
+                      </label>
                     ))}
-                  </select>
+                  </div>
                 </div>
                 <div className="mb-2">
                   <label className="form-label small fw-semibold mb-1">Asunto</label>
@@ -237,7 +375,7 @@ export default function Mensajes({ onCambioNoLeidos }) {
               </div>
               <div className="modal-footer py-2">
                 <button type="button" className="btn btn-secondary btn-sm" onClick={() => setComposing(false)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary btn-sm" disabled={sending || !fPara || !fCuerpo.trim()}>
+                <button type="submit" className="btn btn-primary btn-sm" disabled={sending || fParaIds.length === 0 || !fCuerpo.trim()}>
                   {sending && <span className="spinner-border spinner-border-sm me-1"/>}
                   <i className="bi bi-send me-1"/>Enviar
                 </button>

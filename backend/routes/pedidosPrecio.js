@@ -1,5 +1,6 @@
 'use strict'
 const express = require('express')
+const XLSX = require('xlsx')
 const { db } = require('../db/database')
 const { verificarToken, puede } = require('../middleware/auth')
 const { hoyArgentina } = require('../helpers/fecha')
@@ -95,6 +96,33 @@ router.get('/', puede.leer('administracion'), (req, res) => {
     ORDER BY pp.created_at ASC
   `).all()
   res.json(rows)
+})
+
+// Excel de lo pendiente (filtrado por proveedor si se pide) con solo
+// Proveedor + Material — pensado para reenviarle a un proveedor puntual la
+// lista de lo que le falta cotizar, sin exponer nada más del catálogo.
+router.get('/exportar', puede.escribir('administracion'), (req, res) => {
+  generarPedidosVencidos()
+  const { proveedor } = req.query
+  const conds = [`pp.estado = 'Pendiente'`]
+  const params = []
+  if (proveedor) { conds.push('p.proveedor = ?'); params.push(proveedor) }
+  const rows = db.prepare(`
+    SELECT p.proveedor, p.codigo, p.descripcion
+    FROM materiales_pedidos_precio pp
+    JOIN productos p ON p.id = pp.producto_id
+    WHERE ${conds.join(' AND ')}
+    ORDER BY p.proveedor, p.descripcion
+  `).all(...params)
+  // Sin el código interno de E-INTRA: el archivo se manda tal cual al
+  // proveedor, y ese código no le dice nada (o peor, es info interna de más).
+  const datos = rows.map(r => ({ Proveedor: r.proveedor || '— Sin proveedor —', Material: r.descripcion }))
+  const ws = XLSX.utils.json_to_sheet(datos)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Pedidos de precio')
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', `attachment; filename=pedidos_precio_${hoyArgentina()}.xlsx`)
+  res.send(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }))
 })
 
 // Cargar el precio de costo (y, si hace falta, el proveedor) y resolver el pedido en un solo paso.

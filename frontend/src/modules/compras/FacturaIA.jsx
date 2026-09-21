@@ -3,9 +3,10 @@ import api from '../../api/client'
 import DateInput from '../../components/DateInput'
 import { formatCuit } from '../../utils/cuit'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 const hoy   = () => new Date().toISOString().slice(0, 10)
-const fmtN  = n => new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(n ?? 0)
+const fmtN  = n => esMontoOculto(n) ? MONTO_OCULTO : new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n ?? 0)
 const MONEDAS = ['PESOS', 'DÓLAR', 'EURO']
 const DESTINOS = [{ v: 'stock', l: 'Al stock' }, { v: 'uso_inmediato', l: 'Uso inm.' }]
 
@@ -162,30 +163,21 @@ export default function FacturaIA({ tipo = 'compra', onClose, onGuardado }) {
             {/* ── PASO 1: UPLOAD ── */}
             {paso === 'upload' && (
               <div className="text-center py-4">
-                <div
-                  className={`border-2 border-dashed rounded p-5 mb-3 ${drag ? 'border-primary bg-primary bg-opacity-10' : 'border-secondary'}`}
-                  style={{ borderStyle: 'dashed', cursor: 'pointer' }}
-                  onDragOver={e => { e.preventDefault(); setDrag(true) }}
-                  onDragLeave={() => setDrag(false)}
-                  onDrop={onDrop}
-                  onClick={() => inputRef.current?.click()}>
-                  <i className="bi bi-file-earmark-arrow-up display-4 text-secondary" />
-                  <p className="mt-2 mb-1 fw-semibold">
-                    {file ? file.name : 'Arrastrá la factura acá o hacé click para seleccionar'}
-                  </p>
-                  <p className="text-muted small mb-0">JPG · PNG · PDF — máx. 15 MB</p>
-                  <input ref={inputRef} type="file" className="d-none"
-                    accept="image/jpeg,image/png,image/webp,application/pdf"
-                    onChange={onFileChange} />
+                <div className="alert alert-warning py-2 small mb-3">
+                  <i className="bi bi-clock-history me-1" />
+                  Próximamente — la integración con IA todavía no está disponible en esta versión.
                 </div>
-                {file && (
-                  <div className="d-flex align-items-center justify-content-center gap-3">
-                    <span className="badge bg-secondary">{(file.size / 1024).toFixed(0)} KB — {file.type}</span>
-                    <button className="btn btn-primary" onClick={procesar}>
-                      <i className="bi bi-robot me-1" />Procesar con IA
-                    </button>
-                  </div>
-                )}
+                <div
+                  className="border-2 border-dashed rounded p-5 mb-3 border-secondary"
+                  style={{ borderStyle: 'dashed', cursor: 'not-allowed', opacity: 0.6 }}
+                  title="Próximamente">
+                  <i className="bi bi-file-earmark-arrow-up display-4 text-secondary" />
+                  <p className="mt-2 mb-1 fw-semibold">Arrastrá la factura acá o hacé click para seleccionar</p>
+                  <p className="text-muted small mb-0">JPG · PNG · PDF — máx. 15 MB</p>
+                </div>
+                <button className="btn btn-primary" disabled>
+                  <i className="bi bi-robot me-1" />Procesar con IA
+                </button>
               </div>
             )}
 
@@ -373,7 +365,7 @@ export default function FacturaIA({ tipo = 'compra', onClose, onGuardado }) {
                               onChange={e => setItem(idx, 'precio_final', parseFloat(e.target.value) || 0)} />
                           </td>
                           <td className="text-end align-middle pe-2 text-muted">
-                            {fmtN((parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_final) || 0))}
+                            {esMontoOculto(it.precio_final) ? MONTO_OCULTO : fmtN((parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_final) || 0))}
                           </td>
                           {tipo === 'compra' && (
                             <td>

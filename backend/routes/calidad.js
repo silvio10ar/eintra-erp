@@ -42,12 +42,21 @@ const uploadDoc = multer({
   },
 })
 
+// La excepción de leer sin permiso de calidad es SOLO para la categoría
+// "Política" (la Política de Calidad, que cualquier empleado tiene que poder
+// consultar) — cualquier otro documento (procedimientos, instructivos,
+// registros) exige calidad.leer como el resto del módulo. Antes estas 3
+// rutas estaban abiertas a cualquier autenticado para TODOS los documentos,
+// no solo la Política.
+const tieneCalidadLeer = req => !!req.permisos?.calidad?.leer
+
 router.get('/documentos', (req, res) => {
+  const soloPolitica = !tieneCalidadLeer(req)
   const rows = db.prepare(`
     SELECT d.*,
       (SELECT COUNT(*) FROM documentos_calidad h WHERE h.codigo = d.codigo) - 1 AS revisiones_anteriores
     FROM documentos_calidad d
-    WHERE d.estado = 'Vigente'
+    WHERE d.estado = 'Vigente' ${soloPolitica ? "AND d.categoria = 'Política'" : ''}
     ORDER BY d.categoria, d.codigo
   `).all()
   res.json(rows)
@@ -57,12 +66,16 @@ router.get('/documentos/:codigo/historial', (req, res) => {
   const rows = db.prepare(`
     SELECT * FROM documentos_calidad WHERE codigo = ? ORDER BY revision DESC
   `).all(req.params.codigo)
+  if (rows.length && rows[0].categoria !== 'Política' && !tieneCalidadLeer(req))
+    return res.status(403).json({ error: 'Sin permisos de lectura' })
   res.json(rows)
 })
 
 router.get('/documentos/:id/archivo', (req, res) => {
   const doc = db.prepare('SELECT * FROM documentos_calidad WHERE id=?').get(req.params.id)
   if (!doc) return res.status(404).json({ error: 'No encontrado' })
+  if (doc.categoria !== 'Política' && !tieneCalidadLeer(req))
+    return res.status(403).json({ error: 'Sin permisos de lectura' })
   const full = path.join(DOCS_DIR, path.basename(doc.archivo_path))
   if (!fs.existsSync(full)) return res.status(404).json({ error: 'Archivo no encontrado en el servidor' })
   res.download(full, doc.archivo_nombre_original || path.basename(full))
@@ -107,6 +120,13 @@ router.put('/documentos/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
   const doc = db.prepare('SELECT * FROM documentos_calidad WHERE id=?').get(req.params.id)
   if (!doc) return res.status(404).json({ error: 'No encontrado' })
+  // Una revisión ya superada (Obsoleto) es historial — permitir editarla acá
+  // rompe la trazabilidad de control de documentos (ISO 9001 cláusula 7.5):
+  // alguien podría cambiar quién la aprobó o cuándo después de los hechos,
+  // sin que quede ningún rastro de que se tocó. Solo la vigente se edita; una
+  // corrección a una revisión vieja se hace subiendo una revisión nueva.
+  if (doc.estado !== 'Vigente')
+    return res.status(400).json({ error: 'Esta es una revisión histórica (Obsoleto) — no se puede editar, solo la revisión vigente' })
   const { titulo, categoria, aprobado_por, fecha_aprobacion, observaciones } = req.body
   db.prepare(`
     UPDATE documentos_calidad SET titulo=?,categoria=?,aprobado_por=?,fecha_aprobacion=?,observaciones=? WHERE id=?
@@ -383,6 +403,9 @@ router.post('/hojas-ruta', (req, res) => {
       VALUES (?,?,?,?,?,?,?,?)
     `).run(numero, proyecto_id || null, descripcion.trim(), cliente_nombre || '', responsable || '', fecha_inicio || '', fecha_fin_est || '', observaciones || '')
     const hrId = r.lastInsertRowid
+    // Toda Hoja de Ruta arranca con las etapas estándar de producción, en
+    // orden — sin esto queda "Sin etapas registradas" y no hay dónde ir
+    // marcando el avance ni cargando criterios/mediciones por etapa.
     const insEtapa = db.prepare('INSERT INTO hoja_ruta_etapa (hoja_ruta_id, nombre, orden) VALUES (?,?,?)')
     ETAPAS_DEFAULT.forEach((nombre, i) => insEtapa.run(hrId, nombre, i + 1))
     return { hrId, numero }
@@ -392,24 +415,35 @@ router.post('/hojas-ruta', (req, res) => {
 
 router.put('/hojas-ruta/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
-  const { descripcion, cliente_nombre, responsable, fecha_inicio, fecha_fin_est, fecha_despacho, estado, observaciones, proyecto_id } = req.body
+  const { descripcion, cliente_nombre, responsable, fecha_inicio, fecha_fin_est, fecha_despacho, estado, observaciones, proyecto_id, numero_serie } = req.body
   db.prepare(`
     UPDATE hoja_ruta SET
       descripcion=?, cliente_nombre=?, responsable=?, fecha_inicio=?,
-      fecha_fin_est=?, fecha_despacho=?, estado=?, observaciones=?, proyecto_id=?,
+      fecha_fin_est=?, fecha_despacho=?, estado=?, observaciones=?, proyecto_id=?, numero_serie=?,
       updated_at=datetime('now','localtime')
     WHERE id=?
   `).run(
     descripcion || '', cliente_nombre || '', responsable || '', fecha_inicio || '',
     fecha_fin_est || '', fecha_despacho || '', estado || 'En proceso', observaciones || '',
-    proyecto_id || null, req.params.id
+    proyecto_id || null, numero_serie || '', req.params.id
   )
   res.json({ ok: true })
 })
 
 router.delete('/hojas-ruta/:id', (req, res) => {
   if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
-  db.prepare('DELETE FROM hoja_ruta WHERE id=?').run(req.params.id)
+  // Las etapas/NC/inspecciones/formularios vinculados ya tienen ON DELETE
+  // CASCADE/SET NULL en el esquema — se van solos. `movimientos_stock`, en
+  // cambio, no tiene una acción configurada (default NO ACTION de SQLite):
+  // si algún movimiento de salida quedó vinculado a esta hoja de ruta, el
+  // DELETE tira una violación de FK cruda en vez de un mensaje claro.
+  try {
+    db.prepare('DELETE FROM hoja_ruta WHERE id=?').run(req.params.id)
+  } catch (e) {
+    if (e.code === 'SQLITE_CONSTRAINT_FOREIGNKEY')
+      return res.status(409).json({ error: 'No se puede eliminar: tiene movimientos de stock vinculados' })
+    throw e
+  }
   res.json({ ok: true })
 })
 

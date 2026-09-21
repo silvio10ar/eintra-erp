@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
-import { puedeEscribir, getToken } from '../../store/authStore'
+import { puedeEscribir } from '../../store/authStore'
 import DateInput from '../../components/DateInput'
 import SelectorColumnas from '../../components/SelectorColumnas'
 import { useColumnasOcultas } from '../../hooks/useColumnasOcultas'
@@ -11,6 +11,7 @@ import { estadoFila, ESTADO_LABEL, pctFacturado, pctCobrado, diasAtrasoOC } from
 import { hoyLocal } from '../../utils/fecha'
 import { formatCuit } from '../../utils/cuit'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 // Columnas ocultables de las tablas más anchas — en pantallas chicas obligaban
 // a scrollear mucho para llegar a las últimas. El usuario elige cuáles ver;
@@ -33,7 +34,7 @@ const COLS_FACT_VENTA = [
   { key: 'oc', label: 'OC' }, { key: 'neto', label: 'Neto Grav.' },
   { key: 'iva', label: 'IVA' }, { key: 'total', label: 'Total Fact.' },
   { key: 'total_cobrado', label: 'Total Cobrado' }, { key: 'f_pago', label: 'F. Pago' },
-  { key: 'cobro', label: 'Cobro' },
+  { key: 'demora', label: 'Días' }, { key: 'cobro', label: 'Cobro' },
 ]
 
 const COLS_SEG_COMPRAS = [
@@ -51,7 +52,18 @@ const fmtF = s => {
   return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+// Días de demora de pago: si ya está cobrada, desde la fecha de factura hasta
+// la fecha en que se cobró; si sigue pendiente, desde la fecha de factura
+// hasta hoy (crece día a día mientras no se cobre). Una NC no es una factura
+// pendiente de cobro, no corresponde mostrarle demora.
+const diasDemora = (desdeISO, hastaISO) => {
+  if (!desdeISO || !hastaISO) return null
+  return Math.floor((new Date(hastaISO + 'T00:00:00') - new Date(desdeISO + 'T00:00:00')) / 86400000)
+}
+const diasDemoraFactura = f => esNC(f.tipo_factura) ? null : diasDemora(f.fecha, f.pago_confirmado ? f.fecha_pago : hoyLocal())
+
 const fmtM = (n, mon) => {
+  if (esMontoOculto(n)) return MONTO_OCULTO
   const v = parseFloat(n)
   if (!v || isNaN(v)) return '—'
   const sym = mon === 'DÓLAR' ? 'USD ' : mon === 'EURO' ? '€ ' : '$ '
@@ -64,6 +76,7 @@ const fmtM = (n, mon) => {
 // por esa tasa duplica la conversión. Solo corresponde convertir cuando la
 // factura está realmente en moneda extranjera.
 const totalEnPesos = f => {
+  if (esMontoOculto(f.importe)) return MONTO_OCULTO
   const esPeso = f.moneda === 'PESO' || f.moneda === 'PESOS' || !f.moneda
   return esPeso ? (parseFloat(f.importe) || 0) : (parseFloat(f.importe) || 0) * (parseFloat(f.tasa_cambio) || 1)
 }
@@ -76,10 +89,24 @@ const totalEnPesos = f => {
 // tasa_cambio=0 y sin ese fallback no había forma de convertirlas.
 const ocTcValido    = oc => oc.moneda === 'PESO' || oc.moneda === 'PESOS' || !oc.moneda || (parseFloat(oc.tc_resuelto) || 0) > 0
 const ocTotalPesos  = oc => {
+  if (esMontoOculto(oc.total_usd)) return MONTO_OCULTO
   const esPeso = oc.moneda === 'PESO' || oc.moneda === 'PESOS' || !oc.moneda
   const total = parseFloat(oc.total_usd) || 0
   return esPeso ? total : total * (parseFloat(oc.tc_resuelto) || 0)
 }
+
+// Suma el total en pesos de los pagos "que ya cuentan" (confirmados o
+// e-cheq) de una lista — si alguno viene enmascarado, sumarlo con los demás
+// daría basura (string + number) o NaN, así que todo el total queda oculto
+// en vez de sumar a medias.
+const sumaPagosConfirmados = (lista, fn) => {
+  const confirmados = lista.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq')
+  return confirmados.some(p => esMontoOculto(p.importe)) ? MONTO_OCULTO : confirmados.reduce((s, p) => s + fn(p), 0)
+}
+// Resta un total menos lo pagado para sacar el saldo — si cualquiera de los
+// dos operandos está oculto, el saldo también queda oculto (nunca se resta
+// un sentinel de un número, ni al revés).
+const saldoOMasked = (total, pagado) => (esMontoOculto(total) || esMontoOculto(pagado)) ? MONTO_OCULTO : Math.max(0, total - pagado)
 
 const MONEDAS = ['PESO', 'DÓLAR', 'EURO']
 // Renderizar miles de filas de una sola vez en el DOM es lo que hacía lenta
@@ -90,7 +117,7 @@ const PAGE_SIZE = 50
 
 const esNC = tipo => typeof tipo === 'string' && tipo.startsWith('NC')
 
-const FORM_PAGO = { tipo: 'parcial', forma_pago: 'transferencia', entidad: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha: hoyLocal(), fecha_acreditacion: '', observaciones: '', ret_iibb: '', ret_iva: '', ret_gcia: '', ret_contratista: '', ret_ss: '' }
+const FORM_PAGO = { tipo: 'parcial', forma_pago: 'transferencia', entidad: '', importe: '', moneda: 'PESO', tasa_cambio: 1, fecha: hoyLocal(), fecha_acreditacion: '', observaciones: '', ret_iibb: '', ret_iva: '', ret_gcia: '', ret_contratista: '', ret_ss: '', autorizado_por_id: '' }
 
 const FORMAS_PAGO = ['transferencia','cheque','cheque_diferido','e-cheq','efectivo','deposito']
 const TIPOS_PAGO  = ['anticipo','parcial','final']
@@ -166,6 +193,12 @@ function ProyectoSelector({ value, onChange }) {
 }
 
 const OC_PENDIENTE = { id: null, numero_oc: 'PENDIENTE' }
+// Venta puntual o servicio facturado sin que exista una OC de cliente detrás
+// (a diferencia de "PENDIENTE", que sí espera una OC real, solo que todavía
+// no se cargó) — quedan igual habilitados a completar el resto de la
+// factura, solo que "OC / Referencia" queda con esa leyenda fija.
+const OC_VENTA_SIN_OC    = { id: null, numero_oc: 'Venta sin OC' }
+const OC_SERVICIO_SIN_OC = { id: null, numero_oc: 'Servicio sin OC' }
 
 function OcClienteSelector({ value, onChange }) {
   const [query,   setQuery]   = useState(value || '')
@@ -213,6 +246,16 @@ function OcClienteSelector({ value, onChange }) {
             <i className="bi bi-exclamation-circle me-1 text-warning" />
             <span className="fw-semibold">PENDIENTE</span>
             <span className="text-muted ms-2" style={{ fontSize: '0.72rem' }}>— completar después</span>
+          </div>
+          <div className="px-2 py-1 border-bottom" style={{ cursor: 'pointer', fontSize: '0.83rem' }}
+            onMouseDown={() => seleccionar(OC_VENTA_SIN_OC)}>
+            <i className="bi bi-tag me-1 text-secondary" />
+            <span className="fw-semibold">Venta sin OC</span>
+          </div>
+          <div className="px-2 py-1 border-bottom" style={{ cursor: 'pointer', fontSize: '0.83rem' }}
+            onMouseDown={() => seleccionar(OC_SERVICIO_SIN_OC)}>
+            <i className="bi bi-tools me-1 text-secondary" />
+            <span className="fw-semibold">Servicio sin OC</span>
           </div>
           {opciones.length === 0 ? (
             <div className="text-muted text-center py-2" style={{ fontSize: '0.75rem' }}>Sin OC abiertas que coincidan</div>
@@ -491,6 +534,24 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
   const [mostrarFormC, setMostrarFormC] = useState(false)
   const [editandoPagoC, setEditandoPagoC] = useState(null)
 
+  // Pagos por encima del umbral configurado piden elegir quién autoriza
+  // (mismo criterio que el retiro de stock) — lista compartida entre venta y compra.
+  const [autorizantesPago, setAutorizantesPago] = useState(null)
+  const cargarAutorizantesPago = async () => {
+    if (autorizantesPago) return autorizantesPago
+    const r = await api.get('/finanzas/pagos-autorizantes')
+    setAutorizantesPago(r.data)
+    return r.data
+  }
+  const [pendienteAutorizarC, setPendienteAutorizarC] = useState(null) // { pagoId, autorizado_por_id }
+  const [pendienteAutorizar,  setPendienteAutorizar]  = useState(null)
+  // Un pago nuevo puede nacer ya "confirmado" (transferencia/efectivo) y superar
+  // el umbral igual que uno que se confirma después — acá no hay pagoId todavía,
+  // así que se guarda aparte y se resuelve con el autorizado_por_id ya cargado
+  // en el form antes de reintentar el guardado.
+  const [requiereAutorizanteC, setRequiereAutorizanteC] = useState(null) // { montoUsd }
+  const [requiereAutorizante,  setRequiereAutorizante]  = useState(null)
+
   const [factV, setFactV] = useState([])
   const [filtV, setFiltV] = useState({ buscar: '', desde: '', hasta: '', moneda: '', pago: '', conOc: '' })
   const [loadV, setLoadV] = useState(false)
@@ -542,8 +603,10 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
 
   const eliminarSaldo = async s => {
     if (!confirm('¿Eliminar este registro?')) return
-    await api.delete(`/finanzas/saldo-bancario/${s.id}`)
-    setSaldos(prev => prev.filter(x => x.id !== s.id))
+    try {
+      await api.delete(`/finanzas/saldo-bancario/${s.id}`)
+      setSaldos(prev => prev.filter(x => x.id !== s.id))
+    } catch (e) { alert(e.response?.data?.error || 'Error al eliminar') }
   }
 
   const guardarTC = async () => {
@@ -559,8 +622,10 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
 
   const eliminarTC = async t => {
     if (!confirm('¿Eliminar este registro?')) return
-    await api.delete(`/finanzas/tipo-cambio/${t.id}`)
-    setTcBNA(prev => prev.filter(x => x.id !== t.id))
+    try {
+      await api.delete(`/finanzas/tipo-cambio/${t.id}`)
+      setTcBNA(prev => prev.filter(x => x.id !== t.id))
+    } catch (e) { alert(e.response?.data?.error || 'Error al eliminar') }
   }
 
   // Trae del BNA (cotización Divisas) dólar y euro de hoy en un solo clic —
@@ -581,7 +646,14 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
   // fila es un pago pendiente o pagado que alguien cargó a mano) — nunca hay
   // filas fabricadas en blanco, así que no hace falta grisar nada.
   const PERIODICIDADES = ['mensual','bimestral','trimestral','semestral','anual']
-  const FORM_SERV = { descripcion: '', usuario: '', info_pago: '', periodicidad: 'mensual' }
+  const TIPOS_SERVICIO = [
+    { v: 'publico',  l: 'Servicios públicos' },
+    { v: 'impuesto', l: 'Impuestos' },
+    { v: 'seguro',   l: 'Seguros' },
+    { v: 'otro',     l: 'Otros' },
+  ]
+  const tipoLabel = v => TIPOS_SERVICIO.find(t => t.v === v)?.l || 'Otros'
+  const FORM_SERV = { descripcion: '', usuario: '', info_pago: '', periodicidad: 'mensual', tipo: 'otro' }
   const FORM_PAGO_SERVICIO = { servicio_id: '', monto: '', vencimiento: '', pagado: false, fecha_pagada: '' }
   const [servicios,     setServicios]     = useState([])   // catálogo
   const [servCuotas,    setServCuotas]    = useState([])   // pagos reales (pendientes + pagados)
@@ -596,9 +668,106 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
   const [nuevoServForm, setNuevoServForm] = useState(FORM_SERV)
   const [pagandoId,     setPagandoId]     = useState(null)
   const [filtServ,      setFiltServ]      = useState({ estado: 'todos', periodicidad: '', buscar: '' })
+  const [tabTipoServ,   setTabTipoServ]   = useState('') // '' = todos — solapa por tipo de servicio
   const [modalCuota,    setModalCuota]    = useState(null)  // null | cuota — editar monto/vencimiento de ESE pago puntual (el precio puede variar de un período a otro)
   const [formCuota,     setFormCuota]     = useState({ monto: '', vencimiento: '' })
   const [savCuota,      setSavCuota]      = useState(false)
+
+  // ── Pólizas de seguro — catálogo separado de Servicios, con su propia
+  // ficha (número, aseguradora, vigencia); cada pago de renovación cargado
+  // acá termina viéndose en Servicios > Seguros con la fecha real de vencimiento.
+  const FORM_POLIZA = { numero_poliza: '', aseguradora: '', descripcion: '', tipo_cobertura: '', fecha_inicio: '', fecha_renovacion: '', periodicidad: 'anual', observaciones: '' }
+  const [polizas,        setPolizas]        = useState([])
+  const [loadPolizas,    setLoadPolizas]    = useState(false)
+  const [modalPoliza,    setModalPoliza]    = useState(null)  // null | 'new' | poliza — alta/edición de la ficha
+  const [formPoliza,     setFormPoliza]     = useState(FORM_POLIZA)
+  const [savPoliza,      setSavPoliza]      = useState(false)
+  // Cargar cuotas: cada vez que llega la renovación trae un plan de pago de
+  // varios meses (no un solo importe) — se cargan todas las cuotas juntas,
+  // cada una con su propio monto y vencimiento.
+  const [modalCuotasPoliza, setModalCuotasPoliza] = useState(null)  // null | poliza
+  const [filasCuotasPoliza, setFilasCuotasPoliza] = useState([])    // [{monto, vencimiento}]
+  const [genCuotas,         setGenCuotas]         = useState({ cantidad: 1, monto: '', desde: '' })
+  const [savCuotasPoliza,   setSavCuotasPoliza]   = useState(false)
+
+  const cargarPolizas = useCallback(async () => {
+    setLoadPolizas(true)
+    try { const r = await api.get('/finanzas/polizas'); setPolizas(r.data) }
+    catch (e) { console.error(e) }
+    finally { setLoadPolizas(false) }
+  }, [])
+
+  useEffect(() => { if (tab === 'polizas') cargarPolizas() }, [tab, cargarPolizas])
+
+  const abrirNuevaPoliza = () => { setFormPoliza(FORM_POLIZA); setModalPoliza('new') }
+  const abrirEditarPoliza = p => {
+    setFormPoliza({
+      numero_poliza: p.numero_poliza || '', aseguradora: p.aseguradora || '', descripcion: p.descripcion,
+      tipo_cobertura: p.tipo_cobertura || '', fecha_inicio: p.fecha_inicio || '', fecha_renovacion: p.fecha_renovacion || '',
+      periodicidad: p.periodicidad, observaciones: p.observaciones || '',
+    })
+    setModalPoliza(p)
+  }
+
+  const guardarPoliza = async () => {
+    if (!formPoliza.descripcion.trim()) return alert('Falta el bien asegurado / descripción')
+    setSavPoliza(true)
+    try {
+      if (modalPoliza === 'new') await api.post('/finanzas/polizas', formPoliza)
+      else await api.put(`/finanzas/polizas/${modalPoliza.id}`, formPoliza)
+      setModalPoliza(null)
+      cargarPolizas()
+    } catch (e) { alert(e.response?.data?.error || 'Error al guardar') }
+    finally { setSavPoliza(false) }
+  }
+
+  const desactivarPoliza = async p => {
+    if (!confirm(`¿Desactivar la póliza "${p.descripcion}"? Los pagos ya cargados se mantienen en Servicios.`)) return
+    try {
+      await api.delete(`/finanzas/polizas/${p.id}`)
+      cargarPolizas()
+    } catch (e) { alert(e.response?.data?.error || 'Error al desactivar') }
+  }
+
+  const abrirCuotasPoliza = p => {
+    setFilasCuotasPoliza([{ monto: '', vencimiento: p.fecha_renovacion || '' }])
+    setGenCuotas({ cantidad: 1, monto: '', desde: p.fecha_renovacion || '' })
+    setModalCuotasPoliza(p)
+  }
+
+  const agregarFilaCuota = () => setFilasCuotasPoliza(f => [...f, { monto: '', vencimiento: '' }])
+  const quitarFilaCuota  = i  => setFilasCuotasPoliza(f => f.length > 1 ? f.filter((_, idx) => idx !== i) : f)
+  const cambiarFilaCuota = (i, campo, valor) => setFilasCuotasPoliza(f => f.map((row, idx) => idx === i ? { ...row, [campo]: valor } : row))
+
+  // Generar N cuotas mensuales iguales a partir de una fecha — para no tener
+  // que tipear una por una cuando el plan de pago viene parejo (lo más común).
+  // Reemplaza las filas actuales; cada una sigue siendo editable después.
+  const generarFilasCuotas = () => {
+    const cant = parseInt(genCuotas.cantidad) || 0
+    if (cant < 1 || !genCuotas.desde) return
+    const filas = []
+    for (let i = 0; i < cant; i++) {
+      const d = new Date(genCuotas.desde + 'T00:00:00')
+      d.setMonth(d.getMonth() + i)
+      filas.push({ monto: genCuotas.monto || '', vencimiento: d.toISOString().slice(0, 10) })
+    }
+    setFilasCuotasPoliza(filas)
+  }
+
+  const guardarCuotasPoliza = async () => {
+    for (const f of filasCuotasPoliza) {
+      if (!f.monto || isNaN(parseFloat(f.monto))) return alert('Falta el monto de alguna cuota')
+      if (!f.vencimiento) return alert('Falta el vencimiento de alguna cuota')
+    }
+    setSavCuotasPoliza(true)
+    try {
+      await api.post(`/finanzas/polizas/${modalCuotasPoliza.id}/cargar-cuotas`, { cuotas: filasCuotasPoliza })
+      setModalCuotasPoliza(null)
+      cargarPolizas()
+      cargarServCuotas()
+    } catch (e) { alert(e.response?.data?.error || 'Error al guardar') }
+    finally { setSavCuotasPoliza(false) }
+  }
 
   const [ctrlOC,    setCtrlOC]    = useState([])
   const [loadCtrlOC, setLoadCtrlOC] = useState(false)
@@ -719,6 +888,23 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
     cargarServCuotas()
   }, [tab, cargarServiciosCatalogo, cargarServCuotas])
 
+  // Cambio rápido del tipo desde la lista, sin abrir el modal de edición —
+  // reusa el mismo PUT (reemplaza todo el servicio) con el resto de los
+  // datos tal cual están en la fila.
+  const [cambiandoTipoId, setCambiandoTipoId] = useState(null)
+  const cambiarTipoRapido = async (c, tipo) => {
+    setCambiandoTipoId(c.servicio_id)
+    try {
+      await api.put(`/finanzas/servicios/${c.servicio_id}`, {
+        descripcion: c.descripcion, usuario: c.usuario, info_pago: c.info_pago,
+        periodicidad: c.periodicidad, tipo, activo: c.servicio_activo,
+      })
+      cargarServiciosCatalogo()
+      cargarServCuotas()
+    } catch(e) { alert(e.response?.data?.error || 'Error al cambiar el tipo') }
+    finally { setCambiandoTipoId(null) }
+  }
+
   // Editar los datos del servicio en el catálogo (descripción, periodicidad,
   // usuario, datos de pago) — ya no crea ni toca ninguna cuota.
   const guardarServ = async () => {
@@ -735,8 +921,10 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
 
   const desactivarServ = async s => {
     if (!confirm(`¿Desactivar "${s.descripcion}"? Ya no va a aparecer para elegir en "Cargar pago" (los pagos ya cargados se mantienen).`)) return
-    await api.delete(`/finanzas/servicios/${s.id}`)
-    cargarServiciosCatalogo()
+    try {
+      await api.delete(`/finanzas/servicios/${s.id}`)
+      cargarServiciosCatalogo()
+    } catch (e) { alert(e.response?.data?.error || 'Error al desactivar') }
   }
 
   const pagarCuota = async c => {
@@ -751,8 +939,10 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
 
   const eliminarCuota = async c => {
     if (!confirm(`¿Eliminar este pago de "${c.descripcion}"?`)) return
-    await api.delete(`/finanzas/servicios-cuotas/${c.id}`)
-    cargarServCuotas()
+    try {
+      await api.delete(`/finanzas/servicios-cuotas/${c.id}`)
+      cargarServCuotas()
+    } catch (e) { alert(e.response?.data?.error || 'Error al eliminar') }
   }
 
   // Editar monto/vencimiento de ESTE pago puntual — a diferencia de "Editar
@@ -867,11 +1057,11 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
   }
 
   // ── Compras ────────────────────────────────────────────────────────────────
-  const calcTotalC = fc => (
-    (parseFloat(fc.neto_gravado)||0) + (parseFloat(fc.no_grav_exento)||0) +
-    (parseFloat(fc.iva_21)||0) + (parseFloat(fc.iva_10_5)||0) + (parseFloat(fc.iva_27)||0) +
-    (parseFloat(fc.otros_imp)||0) + (parseFloat(fc.perc_iva)||0) + (parseFloat(fc.perc_iibb)||0)
-  )
+  const calcTotalC = fc => {
+    const campos = [fc.neto_gravado, fc.no_grav_exento, fc.iva_21, fc.iva_10_5, fc.iva_27, fc.otros_imp, fc.perc_iva, fc.perc_iibb]
+    if (campos.some(esMontoOculto)) return MONTO_OCULTO
+    return campos.reduce((s, v) => s + (parseFloat(v) || 0), 0)
+  }
 
   const calcIvaC = (neto, rate) => Math.round((parseFloat(neto) || 0) * rate * 100) / 100
 
@@ -894,16 +1084,17 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
     const hasta = `${mesExportarC}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`
     setExportandoC(true)
     try {
-      const resp = await fetch(`/api/v1/finanzas/facturas-compra/exportar?desde=${desde}&hasta=${hasta}`,
-        { headers: { Authorization: `Bearer ${getToken()}` } })
-      if (!resp.ok) throw new Error('No se pudo generar el Excel')
-      const blob = await resp.blob()
-      const url = URL.createObjectURL(blob)
+      // Vía el cliente de axios compartido (no fetch crudo) — así una sesión
+      // vencida pasa por el mismo interceptor que ya maneja el 401/403 del
+      // resto de la app, en vez de quedar en un alert genérico "no se pudo
+      // generar el Excel" que parece un error del servidor.
+      const resp = await api.get(`/finanzas/facturas-compra/exportar`, { params: { desde, hasta }, responseType: 'blob' })
+      const url = URL.createObjectURL(resp.data)
       const a = document.createElement('a')
       a.href = url; a.download = `facturas_compra_${mesExportarC}.xlsx`; a.click()
       URL.revokeObjectURL(url)
     } catch (e) {
-      alert(e.message || 'Error al exportar')
+      alert(e.response?.data?.error || e.message || 'Error al exportar')
     } finally { setExportandoC(false) }
   }
 
@@ -978,21 +1169,25 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
 
   const eliminarC = async f => {
     if (!confirm(`¿Eliminar factura ${f.numero}?`)) return
-    await api.delete(`/finanzas/facturas-compra/${f.id}`)
-    cargarC()
+    try {
+      await api.delete(`/finanzas/facturas-compra/${f.id}`)
+      cargarC()
+    } catch (e) { alert(e.response?.data?.error || 'Error al eliminar') }
   }
 
-
-
   const togglePagoC = async f => {
-    await api.patch('/finanzas/facturas-compra/pago', { fuente: f.fuente, id: f.id, pago_confirmado: !f.pago_confirmado })
-    setFactC(prev => prev.map(x => (x.fuente === f.fuente && x.id === f.id) ? { ...x, pago_confirmado: x.pago_confirmado ? 0 : 1, anticipo: 0, fecha_anticipo: '' } : x))
+    try {
+      await api.patch('/finanzas/facturas-compra/pago', { fuente: f.fuente, id: f.id, pago_confirmado: !f.pago_confirmado })
+      setFactC(prev => prev.map(x => (x.fuente === f.fuente && x.id === f.id) ? { ...x, pago_confirmado: x.pago_confirmado ? 0 : 1, anticipo: 0, fecha_anticipo: '' } : x))
+    } catch (e) { alert(e.response?.data?.error || 'Error al confirmar el pago') }
   }
 
   const reabrirC = async f => {
     if (!confirm('¿Marcar esta factura como pendiente de pago? Podrás corregir los pagos desde el modal.')) return
-    await api.patch('/finanzas/facturas-compra/reabrir', { fuente: f.fuente, id: f.id })
-    setFactC(prev => prev.map(x => (x.fuente === f.fuente && x.id === f.id) ? { ...x, pago_confirmado: 0 } : x))
+    try {
+      await api.patch('/finanzas/facturas-compra/reabrir', { fuente: f.fuente, id: f.id })
+      setFactC(prev => prev.map(x => (x.fuente === f.fuente && x.id === f.id) ? { ...x, pago_confirmado: 0 } : x))
+    } catch (e) { alert(e.response?.data?.error || 'Error al reabrir') }
   }
 
   const abrirAnticipoC = f => { setAnticipoForm({ anticipo: f.anticipo || '', fecha_anticipo: f.fecha_anticipo || '' }); setAnticipoModal({ f, tipo: 'compra' }) }
@@ -1000,16 +1195,18 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
   const guardarAnticipo = async () => {
     const { f, tipo } = anticipoModal
     const url = tipo === 'compra' ? `/finanzas/facturas-compra/${f.id}/anticipo` : `/finanzas/facturas-venta/${f.id}/anticipo`
-    const r = await api.patch(url, anticipoForm)
-    if (tipo === 'compra') setFactC(prev => prev.map(x => x.id === f.id ? { ...x, ...r.data } : x))
-    else setFactV(prev => prev.map(x => x.id === f.id ? { ...x, ...r.data } : x))
-    setAnticipoModal(null)
+    try {
+      const r = await api.patch(url, anticipoForm)
+      if (tipo === 'compra') setFactC(prev => prev.map(x => x.id === f.id ? { ...x, ...r.data } : x))
+      else setFactV(prev => prev.map(x => x.id === f.id ? { ...x, ...r.data } : x))
+      setAnticipoModal(null)
+    } catch (e) { alert(e.response?.data?.error || 'Error al guardar el anticipo') }
   }
 
   // ── Pagos de compras ───────────────────────────────────────────────────────
   const abrirPagosC = async f => {
     const reqId = ++pagosReqIdC.current
-    setPagosModalC(f); setMostrarFormC(false); setEditandoPagoC(null)
+    setPagosModalC(f); setMostrarFormC(false); setEditandoPagoC(null); setRequiereAutorizanteC(null)
     setPagoFormC({ ...FORM_PAGO, moneda: f.moneda || 'PESO', tasa_cambio: f.tasa_cambio || 1 })
     setPagosLoadC(true)
     try {
@@ -1030,6 +1227,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
       ret_contratista: pago.ret_contratista || '', ret_ss: pago.ret_ss || '',
     })
     setEditandoPagoC(pago)
+    setRequiereAutorizanteC(null)
     setMostrarFormC(true)
   }
 
@@ -1050,43 +1248,60 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
       setPagoFormC({ ...FORM_PAGO, moneda: pagosModalC.moneda || 'PESO', tasa_cambio: pagosModalC.tasa_cambio || 1 })
       setMostrarFormC(false)
       setEditandoPagoC(null)
-      const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalEnPesos(p), 0)
-      const saldo = Math.max(0, totalEnPesos(pagosModalC) - totalPagado)
-      const cobrada = saldo <= 0.01 ? 1 : 0
+      setRequiereAutorizanteC(null)
+      const totalPagado = sumaPagosConfirmados(nuevos, totalEnPesos)
+      const saldo = saldoOMasked(totalEnPesos(pagosModalC), totalPagado)
+      const cobrada = esMontoOculto(saldo) ? 0 : (saldo <= 0.01 ? 1 : 0)
       setFactC(prev => prev.map(x => x.id === pagosModalC.id
         ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: cobrada }
         : x))
       setPagosModalC(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: cobrada }))
-    } catch(e) { alert(e.response?.data?.error || 'Error al guardar') }
+    } catch(e) {
+      if (e.response?.data?.requiereAutorizante) {
+        await cargarAutorizantesPago()
+        setRequiereAutorizanteC({ montoUsd: e.response.data.montoUsd })
+      } else {
+        alert(e.response?.data?.error || 'Error al guardar')
+      }
+    }
     finally { setPagoSavingC(false) }
   }
 
-  const confirmarPagoC = async pago => {
+  const confirmarPagoC = async (pago, autorizado_por_id) => {
     let r
     try {
-      r = await api.patch(`/finanzas/facturas-compra/${pagosModalC.id}/pagos/${pago.id}/confirmar`)
-    } catch (e) { return alert(e.response?.data?.error || 'Error al confirmar') }
+      r = await api.patch(`/finanzas/facturas-compra/${pagosModalC.id}/pagos/${pago.id}/confirmar`, autorizado_por_id ? { autorizado_por_id } : undefined)
+    } catch (e) {
+      if (e.response?.data?.requiereAutorizante) {
+        await cargarAutorizantesPago()
+        return setPendienteAutorizarC({ pagoId: pago.id, autorizado_por_id: '', montoUsd: e.response.data.montoUsd })
+      }
+      return alert(e.response?.data?.error || 'Error al confirmar')
+    }
+    setPendienteAutorizarC(null)
     const nuevos = pagosC.map(p => p.id === pago.id ? r.data : p)
     setPagosC(nuevos)
-    const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalEnPesos(p), 0)
-    const saldo = Math.max(0, totalEnPesos(pagosModalC) - totalPagado)
+    const totalPagado = sumaPagosConfirmados(nuevos, totalEnPesos)
+    const saldo = saldoOMasked(totalEnPesos(pagosModalC), totalPagado)
     setFactC(prev => prev.map(x => x.id === pagosModalC.id
-      ? { ...x, total_pagado: totalPagado, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }
+      ? { ...x, total_pagado: totalPagado, saldo_pendiente: saldo, pago_confirmado: (!esMontoOculto(saldo) && saldo <= 0.01) ? 1 : 0 }
       : x))
-    setPagosModalC(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }))
+    setPagosModalC(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: (!esMontoOculto(saldo) && saldo <= 0.01) ? 1 : 0 }))
   }
 
   const eliminarPagoC = async pago => {
     if (!confirm('¿Eliminar este pago?')) return
-    await api.delete(`/finanzas/facturas-compra/${pagosModalC.id}/pagos/${pago.id}`)
-    const nuevos = pagosC.filter(p => p.id !== pago.id)
-    setPagosC(nuevos)
-    const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalEnPesos(p), 0)
-    const saldo = Math.max(0, totalEnPesos(pagosModalC) - totalPagado)
-    setFactC(prev => prev.map(x => x.id === pagosModalC.id
-      ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }
-      : x))
-    setPagosModalC(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }))
+    try {
+      await api.delete(`/finanzas/facturas-compra/${pagosModalC.id}/pagos/${pago.id}`)
+      const nuevos = pagosC.filter(p => p.id !== pago.id)
+      setPagosC(nuevos)
+      const totalPagado = sumaPagosConfirmados(nuevos, totalEnPesos)
+      const saldo = saldoOMasked(totalEnPesos(pagosModalC), totalPagado)
+      setFactC(prev => prev.map(x => x.id === pagosModalC.id
+        ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: (!esMontoOculto(saldo) && saldo <= 0.01) ? 1 : 0 }
+        : x))
+      setPagosModalC(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: (!esMontoOculto(saldo) && saldo <= 0.01) ? 1 : 0 }))
+    } catch (e) { alert(e.response?.data?.error || 'Error al eliminar el pago') }
   }
 
   // ── Ventas ─────────────────────────────────────────────────────────────────
@@ -1172,27 +1387,33 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
 
   const eliminarV = async f => {
     if (!confirm(`¿Eliminar factura ${f.numero}?`)) return
-    await api.delete(`/finanzas/facturas-venta/${f.id}`)
-    cargarV()
+    try {
+      await api.delete(`/finanzas/facturas-venta/${f.id}`)
+      cargarV()
+    } catch (e) { alert(e.response?.data?.error || 'Error al eliminar') }
   }
 
   const togglePagoV = async f => {
     const nuevoPago = !f.pago_confirmado
     const fecha_pago = nuevoPago ? hoyLocal() : ''
-    await api.patch(`/finanzas/facturas-venta/${f.id}/pago`, { pago_confirmado: nuevoPago, fecha_pago })
-    setFactV(prev => prev.map(x => x.id === f.id ? { ...x, pago_confirmado: nuevoPago ? 1 : 0, anticipo: 0, fecha_anticipo: '', fecha_pago } : x))
+    try {
+      await api.patch(`/finanzas/facturas-venta/${f.id}/pago`, { pago_confirmado: nuevoPago, fecha_pago })
+      setFactV(prev => prev.map(x => x.id === f.id ? { ...x, pago_confirmado: nuevoPago ? 1 : 0, anticipo: 0, fecha_anticipo: '', fecha_pago } : x))
+    } catch (e) { alert(e.response?.data?.error || 'Error al confirmar el cobro') }
   }
 
   const reabrirV = async f => {
     if (!confirm('¿Marcar esta factura como pendiente de cobro? Podrás corregir los pagos desde el modal.')) return
-    await api.patch(`/finanzas/facturas-venta/${f.id}/reabrir`)
-    setFactV(prev => prev.map(x => x.id === f.id ? { ...x, pago_confirmado: 0, fecha_pago: '' } : x))
+    try {
+      await api.patch(`/finanzas/facturas-venta/${f.id}/reabrir`)
+      setFactV(prev => prev.map(x => x.id === f.id ? { ...x, pago_confirmado: 0, fecha_pago: '' } : x))
+    } catch (e) { alert(e.response?.data?.error || 'Error al reabrir') }
   }
 
   // ── Pagos de ventas ────────────────────────────────────────────────────────
   const abrirPagosV = async f => {
     const reqId = ++pagosReqIdV.current
-    setPagosModal(f); setMostrarForm(false); setEditandoPago(null)
+    setPagosModal(f); setMostrarForm(false); setEditandoPago(null); setRequiereAutorizante(null)
     setPagoForm({ ...FORM_PAGO, moneda: f.moneda || 'PESO', tasa_cambio: f.tasa_cambio || 1 })
     setPagosLoad(true)
     try {
@@ -1211,11 +1432,15 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
       ret_contratista: pago.ret_contratista || '', ret_ss: pago.ret_ss || '',
     })
     setEditandoPago(pago)
+    setRequiereAutorizante(null)
     setMostrarForm(true)
   }
 
   // Importe + retenciones que el cliente aplicó al pagar (cuentan como saldado)
-  const totalPago = p => totalEnPesos(p) + (p.ret_iibb||0) + (p.ret_iva||0) + (p.ret_gcia||0) + (p.ret_contratista||0) + (p.ret_ss||0)
+  const totalPago = p => {
+    if ([p.importe, p.ret_iibb, p.ret_iva, p.ret_gcia, p.ret_contratista, p.ret_ss].some(esMontoOculto)) return MONTO_OCULTO
+    return totalEnPesos(p) + (p.ret_iibb||0) + (p.ret_iva||0) + (p.ret_gcia||0) + (p.ret_contratista||0) + (p.ret_ss||0)
+  }
 
   const agregarPago = async () => {
     if (!pagoForm.importe || parseFloat(pagoForm.importe) <= 0) return alert('Importe requerido')
@@ -1234,28 +1459,43 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
       setPagoForm({ ...FORM_PAGO, moneda: pagosModal.moneda || 'PESO', tasa_cambio: pagosModal.tasa_cambio || 1 })
       setMostrarForm(false)
       setEditandoPago(null)
+      setRequiereAutorizante(null)
       // Actualizar saldo en la lista
-      const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalPago(p), 0)
-      const saldo = Math.max(0, totalEnPesos(pagosModal) - totalPagado)
-      const cobrada = saldo <= 0.01 ? 1 : 0
+      const totalPagado = sumaPagosConfirmados(nuevos, totalPago)
+      const saldo = saldoOMasked(totalEnPesos(pagosModal), totalPagado)
+      const cobrada = esMontoOculto(saldo) ? 0 : (saldo <= 0.01 ? 1 : 0)
       setFactV(prev => prev.map(x => x.id === pagosModal.id
         ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: cobrada }
         : x))
       setPagosModal(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: cobrada }))
-    } catch(e) { alert(e.response?.data?.error || 'Error al guardar') }
+    } catch(e) {
+      if (e.response?.data?.requiereAutorizante) {
+        await cargarAutorizantesPago()
+        setRequiereAutorizante({ montoUsd: e.response.data.montoUsd })
+      } else {
+        alert(e.response?.data?.error || 'Error al guardar')
+      }
+    }
     finally { setPagoSaving(false) }
   }
 
-  const confirmarPago = async pago => {
+  const confirmarPago = async (pago, autorizado_por_id) => {
     let r
     try {
-      r = await api.patch(`/finanzas/facturas-venta/${pagosModal.id}/pagos/${pago.id}/confirmar`)
-    } catch (e) { return alert(e.response?.data?.error || 'Error al confirmar') }
+      r = await api.patch(`/finanzas/facturas-venta/${pagosModal.id}/pagos/${pago.id}/confirmar`, autorizado_por_id ? { autorizado_por_id } : undefined)
+    } catch (e) {
+      if (e.response?.data?.requiereAutorizante) {
+        await cargarAutorizantesPago()
+        return setPendienteAutorizar({ pagoId: pago.id, autorizado_por_id: '', montoUsd: e.response.data.montoUsd })
+      }
+      return alert(e.response?.data?.error || 'Error al confirmar')
+    }
+    setPendienteAutorizar(null)
     const nuevos = pagos.map(p => p.id === pago.id ? r.data : p)
     setPagos(nuevos)
-    const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalPago(p), 0)
-    const saldo = Math.max(0, totalEnPesos(pagosModal) - totalPagado)
-    const cobrada = saldo <= 0.01 ? 1 : 0
+    const totalPagado = sumaPagosConfirmados(nuevos, totalPago)
+    const saldo = saldoOMasked(totalEnPesos(pagosModal), totalPagado)
+    const cobrada = esMontoOculto(saldo) ? 0 : (saldo <= 0.01 ? 1 : 0)
     setFactV(prev => prev.map(x => x.id === pagosModal.id
       ? { ...x, total_pagado: totalPagado, saldo_pendiente: saldo, pago_confirmado: cobrada }
       : x))
@@ -1264,15 +1504,17 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
 
   const eliminarPago = async pago => {
     if (!confirm('¿Eliminar este pago?')) return
-    await api.delete(`/finanzas/facturas-venta/${pagosModal.id}/pagos/${pago.id}`)
-    const nuevos = pagos.filter(p => p.id !== pago.id)
-    setPagos(nuevos)
-    const totalPagado = nuevos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq').reduce((s, p) => s + totalPago(p), 0)
-    const saldo = Math.max(0, totalEnPesos(pagosModal) - totalPagado)
-    setFactV(prev => prev.map(x => x.id === pagosModal.id
-      ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }
-      : x))
-    setPagosModal(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: saldo <= 0.01 ? 1 : 0 }))
+    try {
+      await api.delete(`/finanzas/facturas-venta/${pagosModal.id}/pagos/${pago.id}`)
+      const nuevos = pagos.filter(p => p.id !== pago.id)
+      setPagos(nuevos)
+      const totalPagado = sumaPagosConfirmados(nuevos, totalPago)
+      const saldo = saldoOMasked(totalEnPesos(pagosModal), totalPagado)
+      setFactV(prev => prev.map(x => x.id === pagosModal.id
+        ? { ...x, total_pagado: totalPagado, count_pagos: nuevos.length, saldo_pendiente: saldo, pago_confirmado: (!esMontoOculto(saldo) && saldo <= 0.01) ? 1 : 0 }
+        : x))
+      setPagosModal(p => ({ ...p, saldo_pendiente: saldo, pago_confirmado: (!esMontoOculto(saldo) && saldo <= 0.01) ? 1 : 0 }))
+    } catch (e) { alert(e.response?.data?.error || 'Error al eliminar el pago') }
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -1320,6 +1562,11 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
               </button>
             </li>
             <li className="nav-item">
+              <button className={`nav-link py-1 px-3 ${tab === 'polizas' ? 'active' : ''}`} onClick={() => setTab('polizas')}>
+                <i className="bi bi-shield-check me-1" />Pólizas
+              </button>
+            </li>
+            <li className="nav-item">
               <button className={`nav-link py-1 px-3 ${tab === 'control' ? 'active' : ''}`} onClick={() => setTab('control')}>
                 <i className="bi bi-exclamation-triangle me-1" />Control OC
                 {ctrlOC.length > 0 && (
@@ -1356,12 +1603,16 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
             <FiltroBarra filt={filtC} setFilt={setFiltC} />
             <div className="d-flex align-items-center gap-2 ms-3 flex-shrink-0">
               <SelectorColumnas columnas={COLS_FACT_COMPRA} visible={colsFactC.visible} onToggle={colsFactC.toggle} />
-              <input type="month" className="form-control form-control-sm" style={{ width: 145 }}
-                value={mesExportarC} onChange={e => setMesExportarC(e.target.value)} />
-              <button className="btn btn-sm btn-outline-success" onClick={() => exportarFacturasCompraMes()} disabled={exportandoC}>
-                {exportandoC ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-file-excel me-1" />}
-                Exportar mes
-              </button>
+              {canWrite && (
+                <>
+                  <input type="month" className="form-control form-control-sm" style={{ width: 145 }}
+                    value={mesExportarC} onChange={e => setMesExportarC(e.target.value)} />
+                  <button className="btn btn-sm btn-outline-success" onClick={() => exportarFacturasCompraMes()} disabled={exportandoC}>
+                    {exportandoC ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-file-excel me-1" />}
+                    Exportar mes
+                  </button>
+                </>
+              )}
               <button className="btn btn-sm btn-outline-secondary" onClick={abrirCompararArca}>
                 <i className="bi bi-file-earmark-diff me-1" />Comparar con ARCA
               </button>
@@ -1528,6 +1779,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                     {colsFactV.visible('total') && <th className="text-end">Total Fact.</th>}
                     {colsFactV.visible('total_cobrado') && <th className="text-end">Total Cobrado</th>}
                     {colsFactV.visible('f_pago') && <th>F. Pago</th>}
+                    {colsFactV.visible('demora') && <th className="text-end" style={{ width: 55 }}>Días</th>}
                     {colsFactV.visible('cobro') && <th>Cobro</th>}
                     {canWrite && <th style={{ width: 70 }} />}
                   </tr>
@@ -1557,6 +1809,11 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                           convertir hacía aparecer montos absurdos en facturas en moneda extranjera. */}
                       {colsFactV.visible('total_cobrado') && <td className="text-end fw-semibold text-success">{f.total_pagado > 0 ? fmtM(f.total_pagado, 'PESO') : '—'}</td>}
                       {colsFactV.visible('f_pago') && <td style={{ whiteSpace: 'nowrap' }}>{fmtF(f.fecha_pago)}</td>}
+                      {colsFactV.visible('demora') && (() => {
+                        const dias = diasDemoraFactura(f)
+                        const atrasada = dias != null && !f.pago_confirmado && dias > 30
+                        return <td className={`text-end ${atrasada ? 'text-danger fw-semibold' : 'text-muted'}`}>{dias ?? '—'}</td>
+                      })()}
                       {colsFactV.visible('cobro') && <td style={{ whiteSpace: 'nowrap' }}>
                         {esNC(f.tipo_factura) ? (
                           <span className="text-muted" style={{ fontSize: '0.72rem' }}>
@@ -1926,9 +2183,23 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                           <td>
                             {p.estado === 'confirmado'
                               ? <span className="badge bg-success">Confirmado</span>
-                              : canConfirmarPago
-                                ? <button className="btn btn-xs btn-warning py-0 px-1" style={{ fontSize: '0.72rem' }} onClick={() => confirmarPagoC(p)}>Confirmar</button>
-                                : <span className="badge bg-warning text-dark">Pendiente</span>}
+                              : pendienteAutorizarC?.pagoId === p.id
+                                ? <div className="d-flex align-items-center gap-1">
+                                    <select className="form-select form-select-sm" style={{ width: 130, fontSize: '0.72rem' }}
+                                      value={pendienteAutorizarC.autorizado_por_id}
+                                      onChange={e => setPendienteAutorizarC(s => ({ ...s, autorizado_por_id: e.target.value }))}>
+                                      <option value="">¿Quién autoriza?</option>
+                                      {(autorizantesPago || []).map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                                    </select>
+                                    <button className="btn btn-xs btn-warning py-0 px-1" style={{ fontSize: '0.72rem' }}
+                                      disabled={!pendienteAutorizarC.autorizado_por_id}
+                                      onClick={() => confirmarPagoC(p, pendienteAutorizarC.autorizado_por_id)}>OK</button>
+                                    <button className="btn btn-xs btn-outline-secondary py-0 px-1" style={{ fontSize: '0.72rem' }}
+                                      onClick={() => setPendienteAutorizarC(null)}>×</button>
+                                  </div>
+                                : canConfirmarPago
+                                  ? <button className="btn btn-xs btn-warning py-0 px-1" style={{ fontSize: '0.72rem' }} onClick={() => confirmarPagoC(p)}>Confirmar</button>
+                                  : <span className="badge bg-warning text-dark">Pendiente</span>}
                           </td>
                           {canWrite && (
                             <td>
@@ -1949,7 +2220,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                 )}
 
                 {canWrite && !mostrarFormC && (
-                  <button className="btn btn-sm btn-outline-primary" onClick={() => { setPagoFormC({ ...FORM_PAGO, moneda: pagosModalC.moneda || 'PESO', tasa_cambio: pagosModalC.tasa_cambio || 1 }); setEditandoPagoC(null); setMostrarFormC(true) }}>
+                  <button className="btn btn-sm btn-outline-primary" onClick={() => { setPagoFormC({ ...FORM_PAGO, moneda: pagosModalC.moneda || 'PESO', tasa_cambio: pagosModalC.tasa_cambio || 1 }); setEditandoPagoC(null); setRequiereAutorizanteC(null); setMostrarFormC(true) }}>
                     <i className="bi bi-plus-lg me-1" />Registrar pago
                   </button>
                 )}
@@ -2039,12 +2310,26 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                         La factura queda marcada como <strong>pagada</strong>. El E-CHEQ se sigue viendo aparte, como pendiente de débito, hasta que lo confirmes.
                       </p>
                     )}
+                    {requiereAutorizanteC && (
+                      <div className="alert alert-warning py-2 px-2 small mb-2">
+                        <div className="mb-1">
+                          <i className="bi bi-exclamation-triangle me-1" />
+                          Este pago es de USD {requiereAutorizanteC.montoUsd} y supera el umbral — elegí quién lo autoriza para poder guardarlo.
+                        </div>
+                        <select className="form-select form-select-sm" value={pagoFormC.autorizado_por_id}
+                          onChange={e => setPagoFormC(p => ({ ...p, autorizado_por_id: e.target.value }))}>
+                          <option value="">¿Quién autoriza?</option>
+                          {(autorizantesPago || []).map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                        </select>
+                      </div>
+                    )}
                     <div className="d-flex gap-2">
-                      <button className="btn btn-sm btn-primary" onClick={agregarPagoC} disabled={pagoSavingC}>
+                      <button className="btn btn-sm btn-primary" onClick={agregarPagoC}
+                        disabled={pagoSavingC || (requiereAutorizanteC && !pagoFormC.autorizado_por_id)}>
                         {pagoSavingC ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-check-lg me-1" />}
                         Guardar pago
                       </button>
-                      <button className="btn btn-sm btn-outline-secondary" onClick={() => { setMostrarFormC(false); setEditandoPagoC(null) }}>Cancelar</button>
+                      <button className="btn btn-sm btn-outline-secondary" onClick={() => { setMostrarFormC(false); setEditandoPagoC(null); setRequiereAutorizanteC(null) }}>Cancelar</button>
                     </div>
                   </div>
                 )}
@@ -2533,11 +2818,12 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                   // el cheque en sí se sigue rastreando aparte como pendiente de acreditación
                   // hasta confirmarlo, pero ya no resta del saldo de la factura.
                   const confirmados = pagos.filter(p => p.estado === 'confirmado' || p.forma_pago === 'e-cheq')
-                  const cobrado  = confirmados.reduce((s, p) => s + (p.importe||0), 0)
-                  const retenido = confirmados.reduce((s, p) => s + totalPago(p) - totalEnPesos(p), 0)
-                  const cheques  = pagos.filter(p => p.estado === 'pendiente' && p.forma_pago !== 'e-cheq').reduce((s, p) => s + totalEnPesos(p), 0)
+                  const pendientesCheque = pagos.filter(p => p.estado === 'pendiente' && p.forma_pago !== 'e-cheq')
+                  const cobrado  = confirmados.some(p => esMontoOculto(p.importe)) ? MONTO_OCULTO : confirmados.reduce((s, p) => s + (p.importe||0), 0)
+                  const retenido = confirmados.some(p => esMontoOculto(p.importe)) ? MONTO_OCULTO : confirmados.reduce((s, p) => s + totalPago(p) - totalEnPesos(p), 0)
+                  const cheques  = pendientesCheque.some(p => esMontoOculto(p.importe)) ? MONTO_OCULTO : pendientesCheque.reduce((s, p) => s + totalEnPesos(p), 0)
                   const total    = totalEnPesos(pagosModal)
-                  const saldo    = Math.max(0, total - cobrado - retenido)
+                  const saldo    = [total, cobrado, retenido].some(esMontoOculto) ? MONTO_OCULTO : Math.max(0, total - cobrado - retenido)
                   return (
                     <div className="d-flex gap-4 mb-3 p-2 rounded flex-wrap" style={{ background: '#f8f9fa' }}>
                       <div><div className="small text-muted">Total factura</div><div className="fw-bold">{fmtM(total,'PESO')}</div></div>
@@ -2571,7 +2857,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                     </thead>
                     <tbody>
                       {pagos.map(p => {
-                        const ret = totalPago(p) - totalEnPesos(p)
+                        const ret = esMontoOculto(p.importe) ? MONTO_OCULTO : totalPago(p) - totalEnPesos(p)
                         return (
                         <tr key={p.id} style={p.estado === 'pendiente' ? { background: '#fffbea' } : {}}>
                           <td><span className="badge bg-secondary" style={{ fontSize: '0.65rem' }}>{p.tipo}</span></td>
@@ -2579,7 +2865,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                           <td className="text-muted">{p.entidad || '—'}</td>
                           <td className="text-end fw-semibold">{fmtM(p.importe, p.moneda)}</td>
                           <td className="text-end text-info" title={`IIBB ${p.ret_iibb||0} · IVA ${p.ret_iva||0} · Gcía ${p.ret_gcia||0} · Contratista ${p.ret_contratista||0} · SS ${p.ret_ss||0}`}>
-                            {ret > 0 ? fmtM(ret, p.moneda) : '—'}
+                            {esMontoOculto(ret) ? MONTO_OCULTO : (ret > 0 ? fmtM(ret, p.moneda) : '—')}
                           </td>
                           <td style={{ whiteSpace: 'nowrap' }}>{fmtF(p.fecha)}</td>
                           <td style={{ whiteSpace: 'nowrap' }} className="text-muted">{p.fecha_acreditacion ? fmtF(p.fecha_acreditacion) : '—'}</td>
@@ -2590,8 +2876,21 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                           </td>
                           {canWrite && (
                             <td>
-                              <div className="d-flex gap-1">
-                                {p.estado === 'pendiente' && canConfirmarPago && (
+                              <div className="d-flex align-items-center gap-1">
+                                {pendienteAutorizar?.pagoId === p.id ? (
+                                  <>
+                                    <select className="form-select form-select-sm" style={{ width: 130, fontSize: '0.72rem' }}
+                                      value={pendienteAutorizar.autorizado_por_id}
+                                      onChange={e => setPendienteAutorizar(s => ({ ...s, autorizado_por_id: e.target.value }))}>
+                                      <option value="">¿Quién autoriza?</option>
+                                      {(autorizantesPago || []).map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                                    </select>
+                                    <button className="btn btn-sm btn-outline-success py-0 px-1"
+                                      disabled={!pendienteAutorizar.autorizado_por_id}
+                                      onClick={() => confirmarPago(p, pendienteAutorizar.autorizado_por_id)}>OK</button>
+                                    <button className="btn btn-sm btn-outline-secondary py-0 px-1" onClick={() => setPendienteAutorizar(null)}>×</button>
+                                  </>
+                                ) : p.estado === 'pendiente' && canConfirmarPago && (
                                   <button className="btn btn-sm btn-outline-success py-0 px-1" title="Confirmar acreditación" onClick={() => confirmarPago(p)}>
                                     <i className="bi bi-check-lg" />
                                   </button>
@@ -2613,7 +2912,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
 
                 {/* Formulario nuevo pago */}
                 {canWrite && !mostrarForm && (
-                  <button className="btn btn-sm btn-outline-primary" onClick={() => { setPagoForm({ ...FORM_PAGO, moneda: pagosModal.moneda || 'PESO', tasa_cambio: pagosModal.tasa_cambio || 1 }); setEditandoPago(null); setMostrarForm(true) }}>
+                  <button className="btn btn-sm btn-outline-primary" onClick={() => { setPagoForm({ ...FORM_PAGO, moneda: pagosModal.moneda || 'PESO', tasa_cambio: pagosModal.tasa_cambio || 1 }); setEditandoPago(null); setRequiereAutorizante(null); setMostrarForm(true) }}>
                     <i className="bi bi-plus-lg me-1" />Registrar pago
                   </button>
                 )}
@@ -2723,12 +3022,26 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                         La factura queda marcada como <strong>cobrada</strong>. El E-CHEQ se sigue viendo aparte, como pendiente de acreditación, hasta que lo confirmes.
                       </p>
                     )}
+                    {requiereAutorizante && (
+                      <div className="alert alert-warning py-2 px-2 small mb-2">
+                        <div className="mb-1">
+                          <i className="bi bi-exclamation-triangle me-1" />
+                          Este pago es de USD {requiereAutorizante.montoUsd} y supera el umbral — elegí quién lo autoriza para poder guardarlo.
+                        </div>
+                        <select className="form-select form-select-sm" value={pagoForm.autorizado_por_id}
+                          onChange={e => setPagoForm(p => ({ ...p, autorizado_por_id: e.target.value }))}>
+                          <option value="">¿Quién autoriza?</option>
+                          {(autorizantesPago || []).map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                        </select>
+                      </div>
+                    )}
                     <div className="d-flex gap-2">
-                      <button className="btn btn-sm btn-primary" onClick={agregarPago} disabled={pagoSaving}>
+                      <button className="btn btn-sm btn-primary" onClick={agregarPago}
+                        disabled={pagoSaving || (requiereAutorizante && !pagoForm.autorizado_por_id)}>
                         {pagoSaving ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-check-lg me-1" />}
                         Guardar pago
                       </button>
-                      <button className="btn btn-sm btn-outline-secondary" onClick={() => { setMostrarForm(false); setEditandoPago(null) }}>Cancelar</button>
+                      <button className="btn btn-sm btn-outline-secondary" onClick={() => { setMostrarForm(false); setEditandoPago(null); setRequiereAutorizante(null) }}>Cancelar</button>
                     </div>
                   </div>
                 )}
@@ -2929,6 +3242,23 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
             </div>
           </div>
 
+          {/* Solapas por tipo de servicio — misma lista de abajo, solo filtrada */}
+          <ul className="nav nav-pills mb-3" style={{ fontSize: '0.85rem' }}>
+            {[{ v: '', l: 'Todos' }, ...TIPOS_SERVICIO].map(t => {
+              const cant = servCuotas.filter(c => c.estado === 'pendiente' && (!t.v || c.tipo === t.v)).length
+              return (
+                <li className="nav-item" key={t.v || 'todos'}>
+                  <button type="button"
+                    className={`nav-link py-1 px-3 ${tabTipoServ === t.v ? 'active' : ''}`}
+                    onClick={() => setTabTipoServ(t.v)}>
+                    {t.l}
+                    {cant > 0 && <span className="badge bg-light text-dark border ms-2">{cant}</span>}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+
           {loadServ ? (
             <div className="text-center py-4 text-muted"><span className="spinner-border spinner-border-sm me-2" />Cargando...</div>
           ) : servCuotas.length === 0 ? (
@@ -2942,8 +3272,10 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                 <thead className="table-light sticky-top">
                   <tr>
                     <th>Descripción</th>
+                    <th>Tipo</th>
                     <th>Periodicidad</th>
                     <th>Usuario / Datos de pago</th>
+                    <th className="text-end">Pago anterior</th>
                     <th className="text-end">Monto</th>
                     <th>Vencimiento</th>
                     <th>Estado</th>
@@ -2955,6 +3287,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                     const hoy = hoyLocal()
                     const pendiente = c.estado === 'pendiente'
                     const vencido   = pendiente && c.vencimiento && c.vencimiento < hoy
+                    if (tabTipoServ && c.tipo !== tabTipoServ) return false
                     if (filtServ.estado === 'pendiente' && !pendiente) return false
                     if (filtServ.estado === 'vencido'   && !vencido)   return false
                     if (filtServ.estado === 'pagado'    && pendiente)  return false
@@ -2972,12 +3305,34 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                           {c.descripcion}
                           {!c.servicio_activo && <span className="badge bg-light text-muted border ms-2" style={{ fontSize: '0.65rem' }}>Inactivo</span>}
                         </td>
+                        <td>
+                          {canWrite ? (
+                            <select className="form-select form-select-sm py-0 border-0 bg-secondary-subtle text-secondary-emphasis"
+                              style={{ fontSize: '0.78rem', width: 'auto' }}
+                              disabled={cambiandoTipoId === c.servicio_id}
+                              value={c.tipo}
+                              onChange={e => cambiarTipoRapido(c, e.target.value)}>
+                              {TIPOS_SERVICIO.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}
+                            </select>
+                          ) : (
+                            <span className="badge bg-secondary-subtle text-secondary-emphasis">{tipoLabel(c.tipo)}</span>
+                          )}
+                        </td>
                         <td><span className="badge bg-light text-dark border">{c.periodicidad}</span></td>
                         <td>
                           <div>{c.usuario || '—'}</div>
                           {c.info_pago && <div className="text-muted" style={{ fontSize: '0.75rem' }}>{c.info_pago}</div>}
                         </td>
-                        <td className="text-end fw-semibold">{fmtM(c.monto, 'PESO')}</td>
+                        <td className="text-end text-muted">{c.monto_anterior != null ? fmtM(c.monto_anterior, 'PESO') : '—'}</td>
+                        <td className="text-end fw-semibold">
+                          {fmtM(c.monto, 'PESO')}
+                          {c.monto_anterior != null && parseFloat(c.monto) > parseFloat(c.monto_anterior) && (
+                            <i className="bi bi-arrow-up-short text-danger ms-1" title="Subió respecto al pago anterior" />
+                          )}
+                          {c.monto_anterior != null && parseFloat(c.monto) < parseFloat(c.monto_anterior) && (
+                            <i className="bi bi-arrow-down-short text-success ms-1" title="Bajó respecto al pago anterior" />
+                          )}
+                        </td>
                         <td className={vctoColor(c.vencimiento, !pendiente)}>{fmtF(c.vencimiento)}</td>
                         <td>
                           {!pendiente ? (
@@ -3008,7 +3363,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                                 <i className="bi bi-cash-coin" />
                               </button>
                               <button className="btn btn-sm btn-outline-primary py-0 px-1" title="Editar servicio"
-                                onClick={() => { setFormServ({ descripcion: c.descripcion, usuario: c.usuario||'', info_pago: c.info_pago||'', periodicidad: c.periodicidad }); setModalServ({ id: c.servicio_id, descripcion: c.descripcion }) }}>
+                                onClick={() => { setFormServ({ descripcion: c.descripcion, usuario: c.usuario||'', info_pago: c.info_pago||'', periodicidad: c.periodicidad, tipo: c.tipo||'otro' }); setModalServ({ id: c.servicio_id, descripcion: c.descripcion }) }}>
                                 <i className="bi bi-pencil" />
                               </button>
                               <button className="btn btn-sm btn-outline-danger py-0 px-1" title="Eliminar este pago"
@@ -3025,6 +3380,233 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── TAB PÓLIZAS ── */}
+      {tab === 'polizas' && (
+        <div className="flex-grow-1 d-flex flex-column overflow-hidden">
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <span className="text-muted small">Pólizas de seguro — número, aseguradora y próxima renovación</span>
+            {canWrite && (
+              <button className="btn btn-sm btn-primary" onClick={abrirNuevaPoliza}>
+                <i className="bi bi-plus-lg me-1" />Nueva póliza
+              </button>
+            )}
+          </div>
+
+          {loadPolizas ? (
+            <div className="text-center py-4 text-muted"><span className="spinner-border spinner-border-sm me-2" />Cargando...</div>
+          ) : polizas.length === 0 ? (
+            <div className="text-center py-5 text-muted">
+              <i className="bi bi-shield-check display-6 d-block mb-2" />
+              No hay pólizas cargadas todavía
+            </div>
+          ) : (
+            <div className="overflow-auto flex-grow-1">
+              <table className="table table-sm table-hover align-middle" style={{ fontSize: '0.85rem' }}>
+                <thead className="table-light sticky-top">
+                  <tr>
+                    <th>N° Póliza</th>
+                    <th>Aseguradora</th>
+                    <th>Bien asegurado</th>
+                    <th>Periodicidad</th>
+                    <th>Próxima renovación</th>
+                    <th>Cuotas pendientes</th>
+                    {canWrite && <th />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {polizas.map(p => (
+                    <tr key={p.id}>
+                      <td className="fw-semibold">{p.numero_poliza || '—'}</td>
+                      <td>{p.aseguradora || '—'}</td>
+                      <td>
+                        {p.descripcion}
+                        {p.tipo_cobertura && <div className="text-muted" style={{ fontSize: '0.75rem' }}>{p.tipo_cobertura}</div>}
+                      </td>
+                      <td><span className="badge bg-light text-dark border">{p.periodicidad}</span></td>
+                      <td className={vctoColor(p.fecha_renovacion, false)}>{fmtF(p.fecha_renovacion)}</td>
+                      <td>
+                        {p.cuotas_pendientes > 0 ? (
+                          <span className="badge bg-warning text-dark">
+                            <i className="bi bi-clock me-1" />{p.cuotas_pendientes} pendiente{p.cuotas_pendientes > 1 ? 's' : ''} · próxima {fmtF(p.proxima_cuota_vencimiento)}
+                          </span>
+                        ) : <span className="text-muted">Sin cuotas pendientes</span>}
+                      </td>
+                      {canWrite && (
+                        <td>
+                          <div className="d-flex gap-1 align-items-center">
+                            <button className="btn btn-sm btn-outline-success py-0 px-2" style={{ fontSize: '0.72rem' }}
+                              title="Cargar las cuotas del plan de pago de esta renovación"
+                              onClick={() => abrirCuotasPoliza(p)}>
+                              <i className="bi bi-cash-coin me-1" />Cargar cuotas
+                            </button>
+                            <button className="btn btn-sm btn-outline-secondary py-0 px-1" title="Editar póliza"
+                              onClick={() => abrirEditarPoliza(p)}>
+                              <i className="bi bi-pencil" />
+                            </button>
+                            <button className="btn btn-sm btn-outline-danger py-0 px-1" title="Desactivar póliza"
+                              onClick={() => desactivarPoliza(p)}>
+                              <i className="bi bi-trash" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── MODAL NUEVA/EDITAR PÓLIZA ── */}
+      {modalPoliza && (
+        <div className="modal d-block" style={{ background: 'rgba(0,0,0,.45)', zIndex: 1060 }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header py-2">
+                <h6 className="modal-title fw-bold">
+                  <i className="bi bi-shield-check me-2" />{modalPoliza === 'new' ? 'Nueva póliza' : 'Editar póliza'}
+                </h6>
+                <button className="btn-close btn-sm" onClick={() => setModalPoliza(null)} />
+              </div>
+              <div className="modal-body" style={{ fontSize: '0.87rem' }}>
+                <div className="row g-2 mb-2">
+                  <div className="col-md-5">
+                    <label className="form-label small fw-semibold">N° Póliza</label>
+                    <input className="form-control form-control-sm" value={formPoliza.numero_poliza}
+                      onChange={e => setFormPoliza(p => ({ ...p, numero_poliza: e.target.value }))} autoFocus />
+                  </div>
+                  <div className="col-md-7">
+                    <label className="form-label small fw-semibold">Aseguradora</label>
+                    <input className="form-control form-control-sm" value={formPoliza.aseguradora}
+                      onChange={e => setFormPoliza(p => ({ ...p, aseguradora: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="mb-2">
+                  <label className="form-label small fw-semibold">Bien asegurado / Descripción *</label>
+                  <input className="form-control form-control-sm" value={formPoliza.descripcion}
+                    onChange={e => setFormPoliza(p => ({ ...p, descripcion: e.target.value }))}
+                    placeholder="Ej: Edificio Central, Camioneta Ford Ranger..." />
+                </div>
+                <div className="mb-2">
+                  <label className="form-label small fw-semibold">Tipo de cobertura</label>
+                  <input className="form-control form-control-sm" value={formPoliza.tipo_cobertura}
+                    onChange={e => setFormPoliza(p => ({ ...p, tipo_cobertura: e.target.value }))}
+                    placeholder="Ej: Incendio, Responsabilidad civil..." />
+                </div>
+                <div className="row g-2 mb-2">
+                  <div className="col-md-4">
+                    <label className="form-label small fw-semibold">Fecha inicio</label>
+                    <DateInput value={formPoliza.fecha_inicio} onChange={v => setFormPoliza(p => ({ ...p, fecha_inicio: v }))} />
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label small fw-semibold">Próxima renovación</label>
+                    <DateInput value={formPoliza.fecha_renovacion} onChange={v => setFormPoliza(p => ({ ...p, fecha_renovacion: v }))} />
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label small fw-semibold">Periodicidad</label>
+                    <select className="form-select form-select-sm" value={formPoliza.periodicidad}
+                      onChange={e => setFormPoliza(p => ({ ...p, periodicidad: e.target.value }))}>
+                      {PERIODICIDADES.map(pe => <option key={pe} value={pe}>{pe.charAt(0).toUpperCase() + pe.slice(1)}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="mb-2">
+                  <label className="form-label small fw-semibold">Observaciones</label>
+                  <textarea className="form-control form-control-sm" rows={2} value={formPoliza.observaciones}
+                    onChange={e => setFormPoliza(p => ({ ...p, observaciones: e.target.value }))} />
+                </div>
+              </div>
+              <div className="modal-footer py-2">
+                <button className="btn btn-sm btn-secondary" onClick={() => setModalPoliza(null)}>Cancelar</button>
+                <button className="btn btn-sm btn-primary" onClick={guardarPoliza} disabled={savPoliza}>
+                  {savPoliza ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-check-lg me-1" />}
+                  Guardar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL CARGAR CUOTAS (plan de pago de la renovación de una póliza) ── */}
+      {modalCuotasPoliza && (
+        <div className="modal d-block" style={{ background: 'rgba(0,0,0,.45)', zIndex: 1060 }}>
+          <div className="modal-dialog modal-dialog-centered modal-lg">
+            <div className="modal-content">
+              <div className="modal-header py-2">
+                <h6 className="modal-title fw-bold"><i className="bi bi-cash-coin me-2" />Cargar cuotas — {modalCuotasPoliza.descripcion}</h6>
+                <button className="btn-close btn-sm" onClick={() => setModalCuotasPoliza(null)} />
+              </div>
+              <div className="modal-body" style={{ fontSize: '0.87rem' }}>
+                <div className="alert alert-info py-2 px-3 mb-3" style={{ fontSize: '0.78rem' }}>
+                  Cada cuota va a quedar pendiente en Servicios &gt; Seguros, con su propio vencimiento — se marca pagada
+                  desde ahí, a medida que vence cada una. Al guardar, se adelanta la próxima renovación de esta póliza
+                  según su periodicidad ({modalCuotasPoliza.periodicidad}).
+                </div>
+
+                <div className="border rounded p-2 mb-3" style={{ background: '#f8f9ff' }}>
+                  <div className="small fw-semibold text-muted mb-2">Generar varias cuotas mensuales iguales (opcional)</div>
+                  <div className="row g-2 align-items-end">
+                    <div className="col-3">
+                      <label className="form-label mb-0" style={{ fontSize: '0.72rem' }}>Cantidad</label>
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" min="1"
+                        value={genCuotas.cantidad}
+                        onChange={e => setGenCuotas(g => ({ ...g, cantidad: e.target.value }))} />
+                    </div>
+                    <div className="col-4">
+                      <label className="form-label mb-0" style={{ fontSize: '0.72rem' }}>Monto de cada una</label>
+                      <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" min="0" step="any"
+                        value={genCuotas.monto}
+                        onChange={e => setGenCuotas(g => ({ ...g, monto: e.target.value }))} />
+                    </div>
+                    <div className="col-3">
+                      <label className="form-label mb-0" style={{ fontSize: '0.72rem' }}>Primer vencimiento</label>
+                      <DateInput value={genCuotas.desde} onChange={v => setGenCuotas(g => ({ ...g, desde: v }))} />
+                    </div>
+                    <div className="col-2">
+                      <button type="button" className="btn btn-sm btn-outline-primary w-100" onClick={generarFilasCuotas}>Generar</button>
+                    </div>
+                  </div>
+                </div>
+
+                <label className="form-label small fw-semibold">Cuotas a cargar</label>
+                <div className="d-flex flex-column gap-2 mb-2">
+                  {filasCuotasPoliza.map((f, i) => (
+                    <div className="d-flex gap-2 align-items-center" key={i}>
+                      <span className="text-muted" style={{ width: 20, fontSize: '0.78rem' }}>{i + 1}</span>
+                      <div style={{ width: 150 }}>
+                        <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" min="0" step="any"
+                          placeholder="Monto" value={f.monto}
+                          onChange={e => cambiarFilaCuota(i, 'monto', e.target.value)} />
+                      </div>
+                      <div style={{ width: 160 }}>
+                        <DateInput value={f.vencimiento} onChange={v => cambiarFilaCuota(i, 'vencimiento', v)} />
+                      </div>
+                      <button type="button" className="btn btn-sm btn-outline-danger py-0 px-2" disabled={filasCuotasPoliza.length <= 1}
+                        onClick={() => quitarFilaCuota(i)}>
+                        <i className="bi bi-x" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" className="btn btn-sm btn-outline-success" onClick={agregarFilaCuota}>
+                  <i className="bi bi-plus-lg me-1" />Agregar cuota
+                </button>
+              </div>
+              <div className="modal-footer py-2">
+                <button className="btn btn-sm btn-secondary" onClick={() => setModalCuotasPoliza(null)}>Cancelar</button>
+                <button className="btn btn-sm btn-primary" onClick={guardarCuotasPoliza} disabled={savCuotasPoliza}>
+                  {savCuotasPoliza ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-check-lg me-1" />}
+                  Guardar {filasCuotasPoliza.length > 1 ? `(${filasCuotasPoliza.length} cuotas)` : ''}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -3064,13 +3646,19 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                           placeholder="Ej: EDENOR Burzaco 6363" autoFocus />
                       </div>
                       <div className="row g-2 mb-2">
-                        <div className="col-md-6">
+                        <div className="col-md-4">
+                          <select className="form-select form-select-sm" value={nuevoServForm.tipo}
+                            onChange={e => setNuevoServForm(p => ({ ...p, tipo: e.target.value }))}>
+                            {TIPOS_SERVICIO.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}
+                          </select>
+                        </div>
+                        <div className="col-md-4">
                           <select className="form-select form-select-sm" value={nuevoServForm.periodicidad}
                             onChange={e => setNuevoServForm(p => ({ ...p, periodicidad: e.target.value }))}>
                             {PERIODICIDADES.map(p => <option key={p} value={p}>{p}</option>)}
                           </select>
                         </div>
-                        <div className="col-md-6">
+                        <div className="col-md-4">
                           <input className="form-control form-control-sm" value={nuevoServForm.usuario}
                             onChange={e => setNuevoServForm(p => ({ ...p, usuario: e.target.value }))}
                             placeholder="Usuario / email" />
@@ -3141,14 +3729,21 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                     placeholder="Ej: EDENOR Burzaco 6363" autoFocus />
                 </div>
                 <div className="row g-2 mb-2">
-                  <div className="col-md-6">
+                  <div className="col-md-4">
+                    <label className="form-label small fw-semibold">Tipo</label>
+                    <select className="form-select form-select-sm" value={formServ.tipo}
+                      onChange={e => setFormServ(p => ({ ...p, tipo: e.target.value }))}>
+                      {TIPOS_SERVICIO.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-4">
                     <label className="form-label small fw-semibold">Periodicidad</label>
                     <select className="form-select form-select-sm" value={formServ.periodicidad}
                       onChange={e => setFormServ(p => ({ ...p, periodicidad: e.target.value }))}>
                       {PERIODICIDADES.map(p => <option key={p} value={p}>{p}</option>)}
                     </select>
                   </div>
-                  <div className="col-md-6">
+                  <div className="col-md-4">
                     <label className="form-label small fw-semibold">Usuario / Email</label>
                     <input className="form-control form-control-sm" value={formServ.usuario}
                       onChange={e => setFormServ(p => ({ ...p, usuario: e.target.value }))}
@@ -3249,13 +3844,17 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                 </thead>
                 <tbody>
                   {ctrlOC.map(r => {
-                    const diff = (r.facturas_neto_total || 0) - (r.oc_neto_pesos || 0)
+                    // Si la OC o sus facturas vienen enmascaradas, la diferencia y el %
+                    // no se pueden calcular — restar el sentinel de un número (o de sí
+                    // mismo) da NaN, no una diferencia real.
+                    const rMasked = esMontoOculto(r.facturas_neto_total) || esMontoOculto(r.oc_neto_pesos)
+                    const diff = rMasked ? MONTO_OCULTO : (r.facturas_neto_total || 0) - (r.oc_neto_pesos || 0)
                     const esPeso = r.oc_moneda === 'PESOS' || r.oc_moneda === 'PESO'
                     const tcValido = !!r.oc_tc_valido
                     const origenTC = r.oc_tc_manual ? 'manual'
                       : r.oc_tc_dia ? 'dia'
                       : r.oc_tc_original > 0 ? 'oc' : null
-                    const pctDiff = r.oc_neto_pesos > 0 ? Math.abs(diff) / r.oc_neto_pesos * 100 : null
+                    const pctDiff = rMasked ? null : (r.oc_neto_pesos > 0 ? Math.abs(diff) / r.oc_neto_pesos * 100 : null)
                     return (
                       <tr key={r.oc_id} className={!tcValido ? 'table-info' : pctDiff > 10 ? 'table-danger' : 'table-warning'}>
                         <td className="fw-semibold text-primary">{r.oc_numero}</td>
@@ -3314,20 +3913,32 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
                   })}
                 </tbody>
                 <tfoot className="table-light fw-semibold">
-                  <tr>
-                    <td colSpan={3}>
-                      {ctrlOC.filter(r => r.oc_tc_valido).length} OC{ctrlOC.filter(r => r.oc_tc_valido).length !== 1 ? 's' : ''} con diferencia
-                      {ctrlOC.some(r => !r.oc_tc_valido) && (
-                        <span className="text-muted fw-normal ms-2">
-                          ({ctrlOC.filter(r => !r.oc_tc_valido).length} sin TC cargado, excluida{ctrlOC.filter(r => !r.oc_tc_valido).length !== 1 ? 's' : ''} del total)
-                        </span>
-                      )}
-                    </td>
-                    <td className="text-end">{fmtM(ctrlOC.filter(r => r.oc_tc_valido).reduce((s, r) => s + (r.oc_neto_pesos || 0), 0), 'PESO')}</td>
-                    <td className="text-end">{fmtM(ctrlOC.filter(r => r.oc_tc_valido).reduce((s, r) => s + (r.facturas_neto_total || 0), 0), 'PESO')}</td>
-                    <td className="text-end">{fmtM(ctrlOC.filter(r => r.oc_tc_valido).reduce((s, r) => s + ((r.facturas_neto_total||0) - (r.oc_neto_pesos||0)), 0), 'PESO')}</td>
-                    <td />
-                  </tr>
+                  {(() => {
+                    const validas = ctrlOC.filter(r => r.oc_tc_valido)
+                    // Igual que el resto de los totales: si cualquiera de las OC con TC
+                    // válido viene enmascarada, sumar sus montos daría basura — el total
+                    // de la fila también queda oculto.
+                    const algunaOculta = validas.some(r => esMontoOculto(r.oc_neto_pesos) || esMontoOculto(r.facturas_neto_total))
+                    const totalNetoOC   = algunaOculta ? MONTO_OCULTO : validas.reduce((s, r) => s + (r.oc_neto_pesos || 0), 0)
+                    const totalFacturas = algunaOculta ? MONTO_OCULTO : validas.reduce((s, r) => s + (r.facturas_neto_total || 0), 0)
+                    const totalDiff     = algunaOculta ? MONTO_OCULTO : validas.reduce((s, r) => s + ((r.facturas_neto_total||0) - (r.oc_neto_pesos||0)), 0)
+                    return (
+                      <tr>
+                        <td colSpan={3}>
+                          {validas.length} OC{validas.length !== 1 ? 's' : ''} con diferencia
+                          {ctrlOC.some(r => !r.oc_tc_valido) && (
+                            <span className="text-muted fw-normal ms-2">
+                              ({ctrlOC.filter(r => !r.oc_tc_valido).length} sin TC cargado, excluida{ctrlOC.filter(r => !r.oc_tc_valido).length !== 1 ? 's' : ''} del total)
+                            </span>
+                          )}
+                        </td>
+                        <td className="text-end">{fmtM(totalNetoOC, 'PESO')}</td>
+                        <td className="text-end">{fmtM(totalFacturas, 'PESO')}</td>
+                        <td className="text-end">{fmtM(totalDiff, 'PESO')}</td>
+                        <td />
+                      </tr>
+                    )
+                  })()}
                 </tfoot>
               </table>
             )}
@@ -3366,13 +3977,25 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
 
       {/* ── TAB SEGUIMIENTO OC COMPRAS (solo lectura) ── */}
       {tab === 'seguimiento-compras' && (() => {
-        const abiertas = segCompras.filter(r => r.estado !== 'Cancelada' && !(r.estado_facturacion === 'completo' && r.estado_pago === 'pagado'))
-        const montoPendienteFacturar = abiertas.reduce((s, r) => s + Math.max(0, (r.oc_neto_pesos || 0) - (r.facturas_neto_total || 0)), 0)
-        const montoPendientePago = abiertas.filter(r => r.estado_pago === 'pendiente' || r.estado_pago === 'parcial')
-          .reduce((s, r) => s + (r.facturas_neto_total || 0), 0)
+        // "dato_legado" queda afuera de los totales/alertas de pendiente (ver
+        // nota en FACT_LABEL) — sigue apareciendo en la tabla completa de abajo.
+        const abiertas = segCompras.filter(r => r.estado !== 'Cancelada' && r.estado_facturacion !== 'dato_legado' && !(r.estado_facturacion === 'completo' && r.estado_pago === 'pagado'))
+        // Mismo criterio que el resto de los totales: una fila enmascarada no se
+        // puede sumar con las demás sin dar basura — el total entero queda oculto.
+        const montoPendienteFacturar = abiertas.some(r => esMontoOculto(r.oc_neto_pesos) || esMontoOculto(r.facturas_neto_total))
+          ? MONTO_OCULTO
+          : abiertas.reduce((s, r) => s + Math.max(0, (r.oc_neto_pesos || 0) - (r.facturas_neto_total || 0)), 0)
+        const pendientesPago = abiertas.filter(r => r.estado_pago === 'pendiente' || r.estado_pago === 'parcial')
+        const montoPendientePago = pendientesPago.some(r => esMontoOculto(r.facturas_neto_total))
+          ? MONTO_OCULTO
+          : pendientesPago.reduce((s, r) => s + (r.facturas_neto_total || 0), 0)
         const atrasadas = segCompras.filter(r => r.atrasada)
-        const FACT_LABEL = { sin_facturar: { txt: 'Sin facturar', cls: 'bg-secondary' }, parcial: { txt: 'Parcial', cls: 'bg-warning text-dark' }, completo: { txt: 'Completo', cls: 'bg-success' } }
-        const PAGO_LABEL = { sin_facturar: { txt: '—', cls: 'bg-secondary' }, pendiente: { txt: 'Pendiente', cls: 'bg-danger' }, parcial: { txt: 'Parcial', cls: 'bg-warning text-dark' }, pagado: { txt: 'Pagado', cls: 'bg-success' } }
+        // "dato_legado": OC de antes del 01/07/2026 (planillas viejas importadas
+        // al migrar) — no se le calcula un estado de facturación/pago real
+        // porque el dato de origen no es confiable para esa comparación (ver
+        // CLAUDE.md).
+        const FACT_LABEL = { sin_facturar: { txt: 'Sin facturar', cls: 'bg-secondary' }, parcial: { txt: 'Parcial', cls: 'bg-warning text-dark' }, completo: { txt: 'Completo', cls: 'bg-success' }, dato_legado: { txt: 'Dato legado', cls: 'bg-light text-muted border' } }
+        const PAGO_LABEL = { sin_facturar: { txt: '—', cls: 'bg-secondary' }, pendiente: { txt: 'Pendiente', cls: 'bg-danger' }, parcial: { txt: 'Parcial', cls: 'bg-warning text-dark' }, pagado: { txt: 'Pagado', cls: 'bg-success' }, dato_legado: { txt: 'Dato legado', cls: 'bg-light text-muted border' } }
         const RECEPCION_CLS = { Emitida: 'bg-secondary', Parcial: 'bg-warning text-dark', Recibida: 'bg-success', Cancelada: 'bg-dark' }
         return (
         <div className="flex-grow-1 d-flex flex-column overflow-hidden">
@@ -3415,6 +4038,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
               <option value="sin_facturar">Sin facturar</option>
               <option value="parcial">Parcial</option>
               <option value="completo">Completo</option>
+              <option value="dato_legado">Dato legado</option>
             </select>
             <select className="form-select form-select-sm" style={{ width: 150 }}
               value={filtSegCompras.estado_pago} onChange={e => setFiltSegCompras(p => ({ ...p, estado_pago: e.target.value }))}>
@@ -3422,6 +4046,7 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
               <option value="pendiente">Pendiente</option>
               <option value="parcial">Parcial</option>
               <option value="pagado">Pagado</option>
+              <option value="dato_legado">Dato legado</option>
             </select>
             {(filtSegCompras.buscar || filtSegCompras.estado || filtSegCompras.estado_facturacion || filtSegCompras.estado_pago) && (
               <button className="btn btn-sm btn-outline-secondary" onClick={() => setFiltSegCompras({ estado: '', estado_facturacion: '', estado_pago: '', buscar: '' })}>
@@ -3491,7 +4116,10 @@ export default function Finanzas({ canWrite: canWriteProp, noDashboard, embedded
         const hoyISO = hoyLocal()
         const resumen = Object.keys(ESTADO_LABEL).map(k => {
           const filas = segVentas.filter(r => estadoFila(r) === k)
-          return { estado: k, cantidad: filas.length, monto: filas.reduce((s, r) => s + (parseFloat(r.monto_oc) || 0), 0) }
+          const monto = filas.some(r => esMontoOculto(r.monto_oc))
+            ? MONTO_OCULTO
+            : filas.reduce((s, r) => s + (parseFloat(r.monto_oc) || 0), 0)
+          return { estado: k, cantidad: filas.length, monto }
         })
         return (
         <div className="flex-grow-1 d-flex flex-column overflow-hidden">

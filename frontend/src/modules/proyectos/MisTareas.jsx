@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import api from '../../api/client'
 
+const ESTADOS = ['Pendiente', 'En proceso', 'Completado', 'Cancelado', 'Bloqueado']
+
 const ESTADO_CLS = {
   Pendiente:   'bg-warning text-dark',
   'En proceso': 'bg-info text-dark',
@@ -28,6 +30,11 @@ export default function MisTareas() {
   const [filtroGerencia,    setFiltroGerencia]    = useState('')
   const [filtroResponsable, setFiltroResponsable] = useState('')
 
+  // Modal de edición: estado + observaciones de una tarea puntual.
+  const [modalTarea, setModalTarea] = useState(null)
+  const [formEstado, setFormEstado] = useState('Pendiente')
+  const [formObs,    setFormObs]    = useState('')
+
   const cargar = useCallback(() => {
     setLoading(true)
     api.get('/tareas-gerencia/mis-tareas')
@@ -38,11 +45,18 @@ export default function MisTareas() {
 
   useEffect(() => { cargar() }, [cargar])
 
-  const marcar = async (tarea, completada) => {
-    setGuardando(tarea.id)
+  const abrirModal = tarea => {
+    setModalTarea(tarea)
+    setFormEstado(tarea.estado || 'Pendiente')
+    setFormObs(tarea.observaciones || '')
+  }
+
+  const guardarModal = async () => {
+    setGuardando(modalTarea.id)
     try {
-      const { data } = await api.patch(`/tareas-gerencia/tareas/${tarea.id}/completar`, { completada })
-      setTareas(prev => prev.map(t => t.id === tarea.id ? { ...t, ...data } : t))
+      const { data } = await api.patch(`/tareas-gerencia/tareas/${modalTarea.id}`, { estado: formEstado, observaciones: formObs })
+      setTareas(prev => prev.map(t => t.id === modalTarea.id ? { ...t, ...data } : t))
+      setModalTarea(null)
     } catch (e) {
       alert(e.response?.data?.error || 'Error al guardar')
     } finally {
@@ -167,11 +181,18 @@ export default function MisTareas() {
                           {guardando === t.id ? (
                             <span className="spinner-border spinner-border-sm" />
                           ) : (
-                            <input type="checkbox" className="form-check-input" checked={t.estado === 'Completado'}
-                              onChange={e => marcar(t, e.target.checked)} />
+                            <button className="btn btn-sm btn-outline-secondary py-0 px-1" title="Editar estado / observaciones"
+                              onClick={() => abrirModal(t)}>
+                              <i className="bi bi-pencil" />
+                            </button>
                           )}
                         </td>
-                        <td style={t.estado === 'Completado' ? { textDecoration: 'line-through' } : {}}>{t.nombre}</td>
+                        <td style={t.estado === 'Completado' ? { textDecoration: 'line-through' } : {}}>
+                          {t.nombre}
+                          {t.observaciones && (
+                            <i className="bi bi-chat-left-text text-muted ms-2" title={t.observaciones} style={{ fontSize: '0.8rem' }} />
+                          )}
+                        </td>
                         <td className="text-muted small">{t.responsable || '—'}</td>
                         <td className="text-muted small">{t.area_responsable || '—'}</td>
                         <td className="text-muted small" style={{ whiteSpace: 'nowrap' }}>
@@ -185,6 +206,47 @@ export default function MisTareas() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ══ MODAL: ESTADO Y OBSERVACIONES DE LA TAREA ══════════════════════ */}
+      {modalTarea && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,.5)' }}>
+          <div className="modal-dialog">
+            <div className="modal-content">
+              <div className="modal-header py-2">
+                <h6 className="modal-title mb-0">{modalTarea.nombre}</h6>
+                <button className="btn-close" onClick={() => setModalTarea(null)} />
+              </div>
+              <div className="modal-body">
+                <p className="text-muted small mb-3">
+                  <span className="badge bg-dark me-1" style={{ fontFamily: 'monospace' }}>{modalTarea.proyecto_codigo}</span>
+                  {modalTarea.proyecto_nombre}
+                  <br />
+                  Responsable: {modalTarea.responsable || '—'} · {fmtF(modalTarea.fecha_inicio_calc)} → {fmtF(modalTarea.fecha_fin_calc)}
+                </p>
+                <div className="mb-2">
+                  <label className="form-label small fw-semibold mb-1">Estado</label>
+                  <select className="form-select form-select-sm" value={formEstado} onChange={e => setFormEstado(e.target.value)}>
+                    {ESTADOS.map(e => <option key={e} value={e}>{e}</option>)}
+                  </select>
+                </div>
+                <div className="mb-1">
+                  <label className="form-label small fw-semibold mb-1">Observaciones</label>
+                  <textarea className="form-control form-control-sm" rows={4}
+                    placeholder="Comentario sobre el avance, algún impedimento, etc."
+                    value={formObs} onChange={e => setFormObs(e.target.value)} />
+                </div>
+              </div>
+              <div className="modal-footer py-2">
+                <button className="btn btn-secondary btn-sm" onClick={() => setModalTarea(null)}>Cancelar</button>
+                <button className="btn btn-primary btn-sm" disabled={guardando === modalTarea.id} onClick={guardarModal}>
+                  {guardando === modalTarea.id && <span className="spinner-border spinner-border-sm me-1" />}
+                  Guardar
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

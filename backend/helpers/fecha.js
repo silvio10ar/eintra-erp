@@ -9,6 +9,14 @@ function hoyArgentina() {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' })
 }
 
+// Hora actual en Argentina, formato HH:MM — mismo criterio que hoyArgentina
+// (zona horaria explícita, no depende de cómo esté configurado el SO del
+// servidor), para comparar contra una hora de envío programada (ver
+// scripts/enviar-dashboard-finanzas.js).
+function horaArgentina() {
+  return new Date().toLocaleTimeString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit' })
+}
+
 // N días antes de hoy en Argentina. La resta se hace en UTC puro (Date.UTC +
 // setUTCDate) sobre los componentes Y-M-D ya resueltos en Argentina, así el
 // resultado no depende de la zona horaria del proceso que corre este código.
@@ -38,4 +46,4 @@ function sqlFechaIso(col) {
   return `(CASE WHEN ${col} LIKE '__/__/____' THEN substr(${col},7,4)||'-'||substr(${col},4,2)||'-'||substr(${col},1,2) ELSE ${col} END)`
 }
 
-module.exports = { hoyArgentina, fechaArgentinaHace, primerDiaMesArgentina, sqlFechaIso }
+module.exports = { hoyArgentina, horaArgentina, fechaArgentinaHace, primerDiaMesArgentina, sqlFechaIso }

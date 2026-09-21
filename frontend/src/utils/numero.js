@@ -6,8 +6,6 @@
 export function parseNumeroPegado(texto) {
   const s = (texto || '').trim()
   if (!s) return null
-  // Ya es un número válido tal cual (lo que el input nativo ya entiende) — no tocar.
-  if (/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s)
 
   const limpio = s.replace(/[^\d,.-]/g, '')
   const tieneComa = limpio.includes(',')
@@ -22,7 +20,18 @@ export function parseNumeroPegado(texto) {
     normalizado = limpio.replace(/\./g, '').replace(',', '.')
   } else if (tienePunto) {
     const partes = limpio.split('.')
-    if (partes.length > 2) normalizado = partes.join('')  // varios puntos → son de miles (ej. "2.138.474")
+    if (partes.length > 2) {
+      normalizado = partes.join('')  // varios puntos → son de miles (ej. "2.138.474")
+    } else if (partes[1]?.length === 3) {
+      // Un solo punto con exactamente 3 dígitos después ("150.000") es el
+      // formato argentino de miles, no un decimal con tres ceros (nadie
+      // pega eso queriendo decir "150,000 veces más chico") — si no se
+      // detecta esto acá, "150.000" quedaba entendido como 150 en vez de
+      // 150000, mil veces menos en silencio.
+      normalizado = partes.join('')
+    }
+    // un solo punto con 1, 2 o 4+ dígitos después es un decimal genuino
+    // (ej. "150.5", "150.25") — se deja tal cual.
   }
 
   const n = parseFloat(normalizado)

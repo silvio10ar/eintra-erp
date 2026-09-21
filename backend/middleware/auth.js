@@ -3,7 +3,7 @@ const { db } = require('../db/database');
 
 // "tareas_gerencia" (Mis Tareas) no es un módulo con permiso asignable — es
 // abierto a cualquier usuario autenticado, ver routes/tareasGerencia.js.
-const MODULOS = ['stock','pedidos_stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios','rrhh','partes','codificacion','materiales','calidad','crm','compras_informes','analisis_proyectos','costeo_equipos'];
+const MODULOS = ['stock','pedidos_stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios','rrhh','partes','codificacion','materiales','calidad','crm','compras_informes','analisis_proyectos','costeo_equipos','venta_repuestos','electrico'];
 
 const MODULOS_LABEL = {
   stock:'Stock', pedidos_stock:'Pedido de Stock', compras:'Compras', ventas:'Ventas', proyectos:'Proyectos',
@@ -11,7 +11,7 @@ const MODULOS_LABEL = {
   administracion:'Administración', usuarios:'Usuarios', rrhh:'RRHH', partes:'Partes',
   codificacion:'Codificación', materiales:'Materiales', calidad:'Calidad', crm:'CRM',
   compras_informes:'Compras — Informes y exportación', analisis_proyectos:'Análisis de Proyectos',
-  costeo_equipos:'Costeo de Equipos',
+  costeo_equipos:'Costeo de Equipos', venta_repuestos:'Venta de Repuestos', electrico:'Eléctrico',
 };
 
 // padre → [submodulos]: acceso al padre otorga el mismo acceso a todos sus submodulos
@@ -97,7 +97,12 @@ const esRutaCambiarPassword = req => req.method === 'PUT' && req.path.endsWith('
 function verificarToken(req, res, next) {
   const token = req.headers['authorization']?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Token requerido' });
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+  // Fija el algoritmo esperado — sin esto, la librería confía en el que venga
+  // en el propio token para decidir cómo verificarlo. No explotable hoy (jwt
+  // rechaza 'none' por default y acá no hay una clave pública RS256 de por
+  // medio para una confusión de algoritmo), pero es una línea de defensa en
+  // profundidad que cuesta nada tener.
+  jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] }, (err, user) => {
     if (err) return res.status(403).json({ error: 'Token inválido o expirado' });
     if (user.debe_cambiar_password && !esRutaCambiarPassword(req)) {
       return res.status(403).json({ error: 'Tenés que cambiar tu contraseña antes de continuar', code: 'DEBE_CAMBIAR_PASSWORD' });

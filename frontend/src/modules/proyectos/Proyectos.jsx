@@ -30,7 +30,7 @@ const TIPOS_ENT      = [
   { v: 'D', label: 'Devolución',  c: 'warning'  },
 ]
 const hoyStr = () => new Date().toISOString().slice(0, 10)
-const FORM_ENT_VACIO = { fecha: '', nro_oc: '', formato: '', documento: '', plano_nivel: '', codigo_plano: '', tipo: 'S', individuo: '', comentarios: '' }
+const FORM_ENT_VACIO = { fecha: '', nro_oc: '', formato: '', documento: '', plano_nivel: '', codigo_plano: '', tipo: 'S', individuo: '', comentarios: '', modulo: 0 }
 const COD_BUILDER_VACIO = { b1: '', b2: '', b3: '', b5: '' }
 
 // Ensambla el código de plano: B1-B2-B3-B4-B5
@@ -51,7 +51,7 @@ const parsearCodigo = (cod, nivel) => {
 
 // B2 = últimos 6 dígitos del N° OC
 const ultimos6DeOC = v => (v.match(/\d/g) || []).join('').slice(-6)
-const FORM_MAT_VACIO = { producto_id: '', codigo: '', descripcion: '', unidad: 'UND.', cantidad: 1, observaciones: '' }
+const FORM_MAT_VACIO = { producto_id: '', codigo: '', descripcion: '', unidad: 'UND.', cantidad: 1, observaciones: '', modulo: 0 }
 
 const fmtF     = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
 const fmtN     = n   => new Intl.NumberFormat('es-AR', { maximumFractionDigits:2 }).format(n ?? 0)
@@ -346,6 +346,9 @@ export default function Proyectos() {
   })()
 
   const estBadge = v => ESTADOS_P.find(e=>e.v===v)?.c || 'secondary'
+  // Código PROV-#### = creado al vuelo desde el fusionador de proyectos
+  // legado de Stock, sin regularizar todavía (cliente, código y fechas reales).
+  const esProvisorio = c => !!c?.startsWith('PROV-')
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'calc(100vh - 120px)', minHeight:0 }}>
@@ -439,7 +442,14 @@ export default function Proyectos() {
                     <tr key={p.id} className={activo ? 'table-primary' : ''}
                       style={{ cursor:'pointer' }} onClick={() => verDetalle(p)}>
                       <td style={{fontFamily:'monospace',fontSize:'0.75rem'}}>{fmtCod(p.codigo)}</td>
-                      <td className="fw-medium">{p.nombre}</td>
+                      <td className="fw-medium">
+                        {p.nombre}
+                        {esProvisorio(p.codigo) && (
+                          <span className="badge bg-warning text-dark ms-1" style={{fontSize:'0.62rem'}} title="Creado desde el fusionador de Stock — falta regularizar código, cliente y fechas">
+                            <i className="bi bi-exclamation-triangle me-1"/>Provisorio
+                          </span>
+                        )}
+                      </td>
                       {!selP && <td className="text-muted">{p.cliente_nombre || '—'}</td>}
                       <td><span className={`badge bg-${estBadge(p.estado)}`} style={{fontSize:'0.68rem'}}>{p.estado}</span></td>
                       {!selP && <td className="text-muted">{fmtF(p.fecha_inicio) || '—'}</td>}
@@ -476,6 +486,11 @@ export default function Proyectos() {
                         <div className="d-flex align-items-center gap-2 mb-1 flex-wrap">
                           <span className="badge bg-dark" style={{fontFamily:'monospace',fontSize:'0.7rem'}}>{fmtCod(p.codigo)}</span>
                           <span className={`badge bg-${estBadge(p.estado)}`} style={{fontSize:'0.68rem'}}>{p.estado}</span>
+                          {esProvisorio(p.codigo) && (
+                            <span className="badge bg-warning text-dark" style={{fontSize:'0.62rem'}} title="Creado desde el fusionador de Stock — falta regularizar código, cliente y fechas">
+                              <i className="bi bi-exclamation-triangle me-1"/>Provisorio
+                            </span>
+                          )}
                         </div>
                         <div className="fw-medium small" style={{lineHeight:1.3}}>{p.nombre}</div>
                         {p.cliente_nombre && (
@@ -517,6 +532,11 @@ export default function Proyectos() {
             <span className="badge bg-dark" style={{fontFamily:'monospace'}}>{fmtCod(selP.codigo)}</span>
             <strong className="flex-grow-1" style={{fontSize:'0.88rem',lineHeight:1.3}}>{selP.nombre}</strong>
             <span className={`badge bg-${estBadge(selP.estado)}`}>{selP.estado}</span>
+            {esProvisorio(selP.codigo) && (
+              <span className="badge bg-warning text-dark" title="Creado desde el fusionador de Stock — regularizá el código, cliente y fechas con el botón Editar">
+                <i className="bi bi-exclamation-triangle me-1"/>Provisorio
+              </span>
+            )}
             {canWrite && (
               <button className="btn btn-xs btn-outline-secondary py-0 px-2" style={{fontSize:'0.75rem'}}
                 onClick={() => { setFormP({codigo:selP.codigo,nombre:selP.nombre,cliente_nombre:selP.cliente_nombre||'',responsable:selP.responsable||'',descripcion:selP.descripcion||'',fecha_inicio:selP.fecha_inicio||'',fecha_fin_est:selP.fecha_fin_est||'',estado:selP.estado,presupuesto_venta:selP.presupuesto_venta||0}); setErrP(''); setModalP(selP) }}>
@@ -748,7 +768,12 @@ export default function Proyectos() {
                               return (
                                 <tr key={m.id}>
                                   <td className="text-muted" style={{fontFamily:'monospace', fontSize:'0.72rem'}}>{m.codigo || '—'}</td>
-                                  <td><div className="text-truncate" style={{maxWidth:200}} title={m.descripcion}>{m.descripcion}</div></td>
+                                  <td>
+                                    <div className="text-truncate" style={{maxWidth:200}} title={m.descripcion}>
+                                      {m.descripcion}
+                                      {m.modulo > 0 && <span className="badge bg-secondary-subtle text-secondary-emphasis ms-1" style={{fontSize:'0.62rem'}}>Mód. {m.modulo}</span>}
+                                    </div>
+                                  </td>
                                   <td className="text-muted">{m.unidad}</td>
                                   <td className="text-end fw-semibold">{fmtN(m.cantidad)}</td>
                                   <td className="text-end">
@@ -766,7 +791,7 @@ export default function Proyectos() {
                                     <td>
                                       <div className="d-flex gap-1">
                                         <button className="btn btn-xs py-0 px-1" title="Editar"
-                                          onClick={() => { setFormMat({producto_id:m.producto_id||'',codigo:m.codigo||'',descripcion:m.descripcion,unidad:m.unidad,cantidad:m.cantidad,observaciones:m.observaciones||''}); setBuscarMat(m.descripcion); setSugsMat([]); setErrMat(''); setModalMat(m) }}>
+                                          onClick={() => { setFormMat({producto_id:m.producto_id||'',codigo:m.codigo||'',descripcion:m.descripcion,unidad:m.unidad,cantidad:m.cantidad,observaciones:m.observaciones||'',modulo:m.modulo||0}); setBuscarMat(m.descripcion); setSugsMat([]); setErrMat(''); setModalMat(m) }}>
                                           <i className="bi bi-pencil text-secondary"/>
                                         </button>
                                         <button className="btn btn-xs py-0 px-1" title="Eliminar"
@@ -847,7 +872,10 @@ export default function Proyectos() {
                                 </td>
                                 <td><span className="badge bg-light text-dark border" style={{fontSize:'0.65rem'}}>{ent.formato||'—'}</span></td>
                                 <td>
-                                  <div className="text-truncate" style={{maxWidth:200}} title={ent.documento}>{ent.documento||'—'}</div>
+                                  <div className="text-truncate" style={{maxWidth:200}} title={ent.documento}>
+                                    {ent.documento||'—'}
+                                    {ent.modulo > 0 && <span className="badge bg-secondary-subtle text-secondary-emphasis ms-1" style={{fontSize:'0.62rem'}}>Mód. {ent.modulo}</span>}
+                                  </div>
                                 </td>
                                 <td className="text-muted" style={{fontFamily:'monospace',fontSize:'0.72rem'}}>{ent.codigo_plano||'—'}</td>
                                 <td className="text-muted text-center">{ent.plano_nivel||'—'}</td>
@@ -859,7 +887,7 @@ export default function Proyectos() {
                                   {canWrite && (
                                     <div className="d-flex gap-1">
                                       <button className="btn btn-xs py-0 px-1" style={{fontSize:'0.7rem'}} title="Editar"
-                                        onClick={() => { const cp=ent.codigo_plano||''; const nv=ent.plano_nivel||''; setFormEnt({fecha:ent.fecha,nro_oc:ent.nro_oc||'',formato:ent.formato||'',documento:ent.documento||'',plano_nivel:nv,codigo_plano:cp,tipo:ent.tipo||'S',individuo:ent.individuo||'',comentarios:ent.comentarios||''}); setCodBuilder(parsearCodigo(cp,nv)); setErrEnt(''); setModalEnt(ent) }}>
+                                        onClick={() => { const cp=ent.codigo_plano||''; const nv=ent.plano_nivel||''; setFormEnt({fecha:ent.fecha,nro_oc:ent.nro_oc||'',formato:ent.formato||'',documento:ent.documento||'',plano_nivel:nv,codigo_plano:cp,tipo:ent.tipo||'S',individuo:ent.individuo||'',comentarios:ent.comentarios||'',modulo:ent.modulo||0}); setCodBuilder(parsearCodigo(cp,nv)); setErrEnt(''); setModalEnt(ent) }}>
                                         <i className="bi bi-pencil text-secondary"/>
                                       </button>
                                       <button className="btn btn-xs py-0 px-1" style={{fontSize:'0.7rem'}} title="Eliminar"
@@ -1120,7 +1148,7 @@ export default function Proyectos() {
                       {FORMATOS_ENT.map(f => <option key={f} value={f}>{f}</option>)}
                     </select>
                   </div>
-                  <div className="col-md-10">
+                  <div className="col-md-8">
                     <label className="form-label small fw-medium">Documento entregado <span className="text-muted fw-normal">(descripción)</span></label>
                     <input className="form-control form-control-sm" placeholder="Ej: Vistas generales estructura"
                       value={formEnt.documento}
@@ -1131,6 +1159,12 @@ export default function Proyectos() {
                     <input className="form-control form-control-sm" placeholder="Persona"
                       value={formEnt.individuo}
                       onChange={e => setFormEnt(p => ({...p, individuo: e.target.value}))}/>
+                  </div>
+                  <div className="col-md-2">
+                    <label className="form-label small fw-medium" title="Para proyectos con varios equipos en paralelo — 0 son las entregas generales del proyecto, o alcanza con eso si es de un solo módulo.">Módulo</label>
+                    <input type="number" className="form-control form-control-sm" min={0}
+                      value={formEnt.modulo ?? 0}
+                      onChange={e => setFormEnt(p => ({...p, modulo: parseInt(e.target.value) || 0}))}/>
                   </div>
                   <div className="col-12">
                     <label className="form-label small fw-medium">
@@ -1256,6 +1290,12 @@ export default function Proyectos() {
                     <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" required min="0" step="any"
                       value={formMat.cantidad}
                       onChange={e => setFormMat(p => ({...p, cantidad: e.target.value}))}/>
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label small fw-medium" title="Para proyectos con varios equipos en paralelo — 0 son los materiales generales del proyecto, o alcanza con eso si es de un solo módulo.">Módulo</label>
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" min={0}
+                      value={formMat.modulo ?? 0}
+                      onChange={e => setFormMat(p => ({...p, modulo: parseInt(e.target.value) || 0}))}/>
                   </div>
                   <div className="col-12">
                     <label className="form-label small fw-medium">Observaciones</label>

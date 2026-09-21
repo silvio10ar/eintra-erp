@@ -3,6 +3,7 @@ import api from '../../api/client'
 import DateInput from '../../components/DateInput'
 import { estadoFila, ESTADO_LABEL, ROW_BG, cuotaCobrada, fechaCobroCuota } from './estadoOCClientes'
 import { manejarPegadoNumero } from '../../utils/numero'
+import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
 const fmtF = s => {
   if (!s) return '—'
@@ -13,6 +14,7 @@ const fmtF = s => {
 // Para los campos propios de la OC (monto_oc, anticipo/final en USD) — están
 // siempre en dólares por definición del formulario.
 const fmtUSD = n => {
+  if (esMontoOculto(n)) return MONTO_OCULTO
   const v = parseFloat(n)
   if (!v || isNaN(v)) return '—'
   return 'USD ' + v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -21,6 +23,7 @@ const fmtUSD = n => {
 // Para el importe de una FACTURA o PAGO real vinculado — esos sí pueden estar
 // en pesos, no siempre en dólares como los campos propios de la OC.
 const fmtMoneda = (n, mon) => {
+  if (esMontoOculto(n)) return MONTO_OCULTO
   const v = parseFloat(n)
   if (!v || isNaN(v)) return '—'
   const sym = mon === 'DÓLAR' ? 'USD ' : mon === 'EURO' ? '€ ' : '$ '
@@ -331,8 +334,10 @@ export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
 
   const eliminar = async r => {
     if (!confirm(`¿Eliminar la OC "${r.numero_oc}" de ${r.cliente}?`)) return
-    await api.delete(`/finanzas/oc-clientes/${r.id}`)
-    setRows(p => p.filter(x => x.id !== r.id))
+    try {
+      await api.delete(`/finanzas/oc-clientes/${r.id}`)
+      setRows(p => p.filter(x => x.id !== r.id))
+    } catch (e) { alert(e.response?.data?.error || 'Error al eliminar') }
   }
 
   const sf = (k, v) => setForm(p => ({ ...p, [k]: v }))
