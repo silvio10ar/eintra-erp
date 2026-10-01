@@ -35,7 +35,7 @@ const CAMPOS_PROV = [
   { k:'vendedor',       l:'Vendedor'       },
   { k:'condicion_pago', l:'Cond. de Pago'  },
 ]
-const ITEM_VACIO = { producto_id:'', producto_codigo:'', descripcion:'', unidad:'UND.', cantidad:1, precio_unitario:0, bonif1:0, bonif2:0, bonif3:0, bonif4:0, precio_final:0, plazo:'INMEDIATO', dias_plazo:'', cant_recibida:0, sin_codificar:false }
+const ITEM_VACIO = { producto_id:'', producto_codigo:'', descripcion:'', unidad:'UND.', cantidad:1, precio_unitario:0, bonif1:0, bonif2:0, bonif3:0, bonif4:0, precio_final:0, plazo:'INMEDIATO', dias_plazo:'', cant_recibida:0, sin_codificar:false, cantidad_unidades:'', cant_recibida_unidades:0 }
 const FORM_OC = { proveedor_id:'', proveedor_nombre:'', proveedor_cuit:'', fecha:hoy(), moneda:'DÓLAR', tasa_cambio:0, autorizado_por:'', elaborado_por:'', condicion_pago:'TRANSF. BANCARIA', lugar_entrega:'e-intra', presupuesto_n:'', observaciones:'', fecha_entrega_est:'', estado_doc:'', modo_plazo:'OC', dias_plazo:'', items:[{ ...ITEM_VACIO, _key: nextItemKey() }], cuotas:[] }
 
 // Cuotas de facturación de una OC (opcional) — cuando una OC se factura en
@@ -198,6 +198,7 @@ export default function Compras() {
   /* ── Modal recibir ──────────────────────────────────────────────── */
   const [modalRec, setModalRec]     = useState(null)
   const [recCants, setRecCants]     = useState({})
+  const [recCantsUnidades, setRecCantsUnidades] = useState({})
   const [fechaRec, setFechaRec]     = useState(hoy())
   const [nroRemito, setNroRemito]   = useState('')
   const [savRec, setSavRec]         = useState(false)
@@ -331,7 +332,7 @@ export default function Compras() {
       modo_plazo: oc.modo_plazo === 'ITEM' ? 'ITEM' : 'OC',
       dias_plazo: oc.dias_plazo ?? '',
       items: oc.items?.length
-        ? oc.items.map(it => ({ id: it.id, _key: nextItemKey(), producto_id: it.producto_id||'', producto_codigo: it.producto_codigo||'', descripcion: it.descripcion||'', unidad: it.unidad||'UND.', cantidad: it.cantidad, precio_unitario: it.precio_unitario, bonif1: it.bonif1||0, bonif2: it.bonif2||0, bonif3: it.bonif3||0, bonif4: it.bonif4||0, precio_final: it.precio_final, plazo: it.plazo||'INMEDIATO', dias_plazo: it.dias_plazo ?? '', cant_recibida: it.cant_recibida||0, sin_codificar: !!it.sin_codificar }))
+        ? oc.items.map(it => ({ id: it.id, _key: nextItemKey(), producto_id: it.producto_id||'', producto_codigo: it.producto_codigo||'', descripcion: it.descripcion||'', unidad: it.unidad||'UND.', cantidad: it.cantidad, precio_unitario: it.precio_unitario, bonif1: it.bonif1||0, bonif2: it.bonif2||0, bonif3: it.bonif3||0, bonif4: it.bonif4||0, precio_final: it.precio_final, plazo: it.plazo||'INMEDIATO', dias_plazo: it.dias_plazo ?? '', cant_recibida: it.cant_recibida||0, sin_codificar: !!it.sin_codificar, cantidad_unidades: it.cantidad_unidades ?? '', cant_recibida_unidades: it.cant_recibida_unidades||0 }))
         : [{ ...ITEM_VACIO, _key: nextItemKey() }],
       cuotas: oc.cuotas?.length
         ? oc.cuotas.map(c => ({ id: c.id, tipo: c.tipo||'avance', pct: c.pct ?? '', monto_planeado: c.monto_planeado ?? '', fecha_estimada: c.fecha_estimada||'', factura_id: c.factura_id||null, factura_numero: c.factura_numero||'', factura_fecha: c.factura_fecha||'', factura_importe: c.factura_importe, factura_moneda: c.factura_moneda, factura_pago_confirmado: c.factura_pago_confirmado }))
@@ -409,10 +410,18 @@ export default function Compras() {
   /* ── Recibir OC ─────────────────────────────────────────────────── */
   const abrirRecibir = oc => {
     const cants = {}
+    const cantsUnidades = {}
     for (const it of oc.items || []) {
-      if (it.producto_id) { const pend = it.cantidad - (it.cant_recibida||0); cants[it.id] = pend > 0 ? pend : 0 }
+      if (it.producto_id) {
+        const pend = it.cantidad - (it.cant_recibida||0)
+        cants[it.id] = pend > 0 ? pend : 0
+        if (it.cantidad_unidades != null) {
+          const pendUnidades = it.cantidad_unidades - (it.cant_recibida_unidades||0)
+          cantsUnidades[it.id] = pendUnidades > 0 ? pendUnidades : 0
+        }
+      }
     }
-    setLinkRecItem(null); setRecCants(cants); setFechaRec(hoy()); setNroRemito(''); setSavRec(false); setModalRec(oc)
+    setLinkRecItem(null); setRecCants(cants); setRecCantsUnidades(cantsUnidades); setFechaRec(hoy()); setNroRemito(''); setSavRec(false); setModalRec(oc)
   }
 
   const confirmarRecibir = async () => {
@@ -431,7 +440,7 @@ export default function Compras() {
       for (const it of (modalRec.items||[])) {
         if (it.producto_id) producto_ids[it.id] = it.producto_id
       }
-      await api.post(`/compras/oc/${modalRec.id}/recibir`, { recepciones: recCants, fecha: fechaRec, numero_remito: nroRemito.trim(), producto_ids })
+      await api.post(`/compras/oc/${modalRec.id}/recibir`, { recepciones: recCants, recepcionesUnidades: recCantsUnidades, fecha: fechaRec, numero_remito: nroRemito.trim(), producto_ids })
       setModalRec(null); setModalOC(null); cargarOC()
       alert('Recepción registrada. Los materiales quedaron pendientes de ingreso al stock.')
     } catch(err) { alert(err.response?.data?.error ?? 'Error al recibir') }
@@ -518,7 +527,12 @@ export default function Compras() {
     const yaTeniaPrecioPropio = parseFloat(formOC.items[idx]?.precio_unitario) > 0
     setFormOC(prev => ({
       ...prev, items: prev.items.map((it, i) => i !== idx ? it : {
-        ...it, producto_id: prod.id, producto_codigo: prod.codigo, descripcion: prod.descripcion, unidad: prod.unidad||'UND.',
+        // La OC es lo que se le manda al proveedor: si el material tiene una
+        // unidad de compra distinta a la de stock (ej. se compra en KG pero
+        // se cuenta en UND.), la OC va en la de compra — la de stock solo se
+        // usa como respaldo cuando no hay una unidad de compra cargada.
+        ...it, producto_id: prod.id, producto_codigo: prod.codigo, descripcion: prod.descripcion,
+        unidad: prod.unidad_compra?.trim() || prod.unidad || 'UND.',
         sin_codificar: false,
         ...(yaTeniaPrecioPropio ? {} : {
           precio_unitario: prod.precio_costo||0,
@@ -1384,7 +1398,23 @@ export default function Compras() {
                             )}
                           </td>
                           <td><input className="form-control form-control-sm border-0 p-0 px-1" value={it.unidad} onChange={e=>setItem(idx,'unidad',e.target.value)}/></td>
-                          <td><input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.cantidad} min="0" step="any" onChange={e=>setItem(idx,'cantidad',e.target.value)}/></td>
+                          <td>
+                            <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.cantidad} min="0" step="any" onChange={e=>setItem(idx,'cantidad',e.target.value)}/>
+                            {(() => {
+                              const prod = productos.find(p => p.id === it.producto_id)
+                              const distinta = !!prod?.unidad_compra?.trim() && prod.unidad_compra.trim() !== (prod.unidad||'').trim()
+                              if (!distinta) return null
+                              return (
+                                <input type="number" onPaste={manejarPegadoNumero}
+                                  className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas mt-1"
+                                  style={{background:'#eef2ff'}}
+                                  placeholder={`${prod.unidad||'UND.'} reales`}
+                                  title={`Cantidad equivalente en ${prod.unidad||'unidad de stock'} — se usa al confirmar el ingreso en Stock, sin recontar`}
+                                  value={it.cantidad_unidades} min="0" step="any"
+                                  onChange={e=>setItem(idx,'cantidad_unidades',e.target.value)}/>
+                              )
+                            })()}
+                          </td>
                           <td>
                             <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm border-0 p-0 px-1 text-end input-sin-flechas" value={it.precio_unitario} min="0" step="any" onChange={e=>setItem(idx,'precio_unitario',e.target.value)}/>
                             {refPrecios[idx] && <div className="text-end text-secondary" style={{fontSize:'0.62rem',lineHeight:1.1}}>{fmtN(refPrecios[idx].precio_unitario)}</div>}
@@ -1567,10 +1597,21 @@ export default function Compras() {
                     <input className="form-control form-control-sm" placeholder="Ej: 0001-00012345" value={nroRemito} onChange={e=>setNroRemito(e.target.value)}/>
                   </div>
                 </div>
+                {(modalRec.items||[]).some(it => it.producto_unidad?.trim() && it.unidad_compra?.trim() && it.unidad_compra.trim() !== it.producto_unidad.trim()) && (
+                  <div className="alert alert-info py-2 small mb-2">
+                    <i className="bi bi-info-circle me-1"/>
+                    Algunos ítems se compran en una unidad distinta a la del depósito (ej. KG vs UND.). Acá se
+                    registra lo que llegó según el remito, en la unidad de la OC (arriba), y la cantidad
+                    equivalente en la unidad de stock (abajo, en celda gris) — precargada con lo cargado al
+                    armar la OC. Si algún ítem no la tiene, se puede completar después al confirmar el ingreso
+                    en <strong>Stock → Ingresos Pendientes</strong>.
+                  </div>
+                )}
                 <table className="table table-sm table-bordered" style={{fontSize:'0.83rem'}}>
                   <thead className="table-light">
                     <tr>
                       <th>DESCRIPCIÓN</th>
+                      <th>UNIDAD</th>
                       <th className="text-end">PEDIDO</th>
                       <th className="text-end">YA RECIBIDO</th>
                       <th className="text-end">PENDIENTE</th>
@@ -1579,10 +1620,13 @@ export default function Compras() {
                   </thead>
                   <tbody>
                     {(modalRec.items||[]).length === 0
-                      ? <tr><td colSpan={5} className="text-center text-muted py-3">Sin ítems</td></tr>
+                      ? <tr><td colSpan={6} className="text-center text-muted py-3">Sin ítems</td></tr>
                       : (modalRec.items||[]).map(it => {
                           const sinCod = !it.producto_id
                           const pend = it.cantidad - (it.cant_recibida||0)
+                          const distintaUnidad = !!it.producto_unidad?.trim() && !!it.unidad_compra?.trim() && it.unidad_compra.trim() !== it.producto_unidad.trim()
+                          const tieneUnidades = distintaUnidad && it.cantidad_unidades != null
+                          const pendUnidades = tieneUnidades ? it.cantidad_unidades - (it.cant_recibida_unidades||0) : 0
                           return (
                             <tr key={it.id} style={sinCod ? {background:'#fff8e1', outline:'1px solid #ffc107'} : {}}>
                               <td>
@@ -1674,15 +1718,33 @@ export default function Compras() {
                                   )
                                 }
                               </td>
-                              <td className="text-end align-middle">{fmtN(it.cantidad)}</td>
+                              <td className="align-middle">
+                                {it.unidad || '—'}
+                                {distintaUnidad && <span className="text-muted ms-1" title={`Stock en ${it.producto_unidad}`}>({it.producto_unidad})</span>}
+                              </td>
+                              <td className="text-end align-middle">
+                                {fmtN(it.cantidad)}
+                                {tieneUnidades && <div className="text-muted" style={{fontSize:'0.7rem'}}>{fmtN(it.cantidad_unidades)} {it.producto_unidad}</div>}
+                              </td>
                               <td className="text-end align-middle text-success">{fmtN(it.cant_recibida||0)}</td>
-                              <td className={`text-end align-middle ${pend>0&&!sinCod?'text-warning':''}`}>{fmtN(pend)}</td>
+                              <td className={`text-end align-middle ${pend>0&&!sinCod?'text-warning':''}`}>
+                                {fmtN(pend)}
+                                {tieneUnidades && <div className="text-muted" style={{fontSize:'0.7rem'}}>{fmtN(pendUnidades)} {it.producto_unidad}</div>}
+                              </td>
                               <td>
                                 <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm text-end"
                                   value={recCants[it.id]??0} min="0" max={pend} step="any"
                                   disabled={pend<=0 || sinCod}
                                   style={{marginLeft:'auto'}}
                                   onChange={e=>setRecCants(p=>({...p,[it.id]:parseFloat(e.target.value)||0}))}/>
+                                {tieneUnidades && (
+                                  <input type="number" onPaste={manejarPegadoNumero}
+                                    className="form-control form-control-sm text-end mt-1" style={{background:'#eef2ff'}}
+                                    title={`Cantidad real en ${it.producto_unidad}`}
+                                    value={recCantsUnidades[it.id]??0} min="0" max={pendUnidades} step="any"
+                                    disabled={pendUnidades<=0 || sinCod}
+                                    onChange={e=>setRecCantsUnidades(p=>({...p,[it.id]:parseFloat(e.target.value)||0}))}/>
+                                )}
                               </td>
                             </tr>
                           )

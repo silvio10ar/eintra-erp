@@ -421,6 +421,13 @@ function inicializar() {
   try { db.exec(`ALTER TABLE oc_items ADD COLUMN estado_factura TEXT DEFAULT ''`) } catch(e) {}
   try { db.exec(`ALTER TABLE oc_items ADD COLUMN sin_codificar INTEGER DEFAULT 0`) } catch(e) {}
 
+  // Cuando el material se compra en una unidad distinta a la de stock (ej.
+  // chapas/perfiles: se pactan en KG con el proveedor pero el depósito cuenta
+  // piezas), al armar la OC ya se sabe cuántas piezas son — se carga acá para
+  // no tener que recontarlas a mano al confirmar el ingreso en Stock.
+  try { db.exec(`ALTER TABLE oc_items ADD COLUMN cantidad_unidades REAL`) } catch(e) {}
+  try { db.exec(`ALTER TABLE oc_items ADD COLUMN cant_recibida_unidades REAL DEFAULT 0`) } catch(e) {}
+
   // Cuotas de facturación de una OC de compra (anticipo + saldo, avances, etc.)
   // — mismo patrón que fin_oc_cliente_cuotas, para que Control OC deje de
   // marcar como error una OC que se factura de a partes mientras todavía
@@ -1117,6 +1124,10 @@ function inicializar() {
     `)
   } catch(e) {}
   try { db.exec(`ALTER TABLE ingresos_pendientes ADD COLUMN partida TEXT DEFAULT ''`) } catch(e) {}
+  // Cantidad ya conocida en unidades de stock (ver oc_items.cantidad_unidades) —
+  // precarga el campo "cantidad a stock" al confirmar el ingreso en Stock, sin
+  // tener que volver a contar las piezas a mano.
+  try { db.exec(`ALTER TABLE ingresos_pendientes ADD COLUMN cantidad_unidades REAL`) } catch(e) {}
 
   // ── Documentos de proyecto (Form 30) ─────────────────────────────────────
   db.exec(`
@@ -1776,6 +1787,20 @@ function inicializar() {
 
   try { db.exec(`ALTER TABLE fin_oc_clientes ADD COLUMN cliente_id INTEGER REFERENCES clientes(id)`) } catch(e) {}
   try { db.exec(`ALTER TABLE fin_oc_clientes ADD COLUMN proyecto_id INTEGER REFERENCES proyectos(id)`) } catch(e) {}
+  // Qué tipo de pedido es esta OC — 'proyecto' | 'repuesto' | 'servicio' | ''
+  // (sin clasificar, para lo ya cargado antes de este campo). Se fuerza a
+  // 'proyecto' en el backend cuando la OC tiene proyecto_id, así que acá solo
+  // hace falta backfillear las que ya tenían proyecto_id cargado.
+  try { db.exec(`ALTER TABLE fin_oc_clientes ADD COLUMN tipo TEXT DEFAULT ''`) } catch(e) {}
+  migrar('backfill_tipo_oc_clientes_con_proyecto', () => {
+    db.exec(`UPDATE fin_oc_clientes SET tipo='proyecto' WHERE proyecto_id IS NOT NULL AND tipo=''`)
+  })
+  // Código interno con el que se bautiza la OC (y, si es de tipo proyecto, el
+  // proyecto que nace de ella): <código del cliente><nro de orden de OC del
+  // cliente, 3 dígitos><C/R/S según tipo>. Se genera una sola vez al crear la
+  // OC (backend/routes/finanzas.js) y queda fijo — las OC cargadas antes de
+  // este campo quedan sin él ('').
+  try { db.exec(`ALTER TABLE fin_oc_clientes ADD COLUMN codigo_interno TEXT DEFAULT ''`) } catch(e) {}
 
   // Cuotas de facturación de una OC de cliente — reemplaza el esquema fijo de
   // 2 hitos (anticipo/final) por una cantidad variable de pagos, cada uno
@@ -2293,6 +2318,17 @@ function inicializar() {
   // a cuál corresponde cada entrega o cada material previsto.
   try { db.exec(`ALTER TABLE proyecto_entregas_doc ADD COLUMN modulo INTEGER DEFAULT 0`) } catch (_) {}
   try { db.exec(`ALTER TABLE proyecto_materiales ADD COLUMN modulo INTEGER DEFAULT 0`) } catch (_) {}
+  // El archivo real del documento entregado — antes esta grilla solo guardaba
+  // la descripción, sin el archivo en sí. archivo_path es el nombre del
+  // archivo en disco (uploads/entregas_doc/<proyecto_id>/), no la ruta
+  // completa — mismo criterio que documentos_calidad.
+  try { db.exec(`ALTER TABLE proyecto_entregas_doc ADD COLUMN archivo_path TEXT DEFAULT ''`) } catch (_) {}
+  try { db.exec(`ALTER TABLE proyecto_entregas_doc ADD COLUMN archivo_nombre_original TEXT DEFAULT ''`) } catch (_) {}
+  // Archivo fuente (DWG, DOC, XLS, etc.) — el archivo_path de arriba es
+  // siempre el PDF entregado; este es el editable del que salió ese PDF,
+  // guardado aparte con el mismo criterio.
+  try { db.exec(`ALTER TABLE proyecto_entregas_doc ADD COLUMN archivo_fuente_path TEXT DEFAULT ''`) } catch (_) {}
+  try { db.exec(`ALTER TABLE proyecto_entregas_doc ADD COLUMN archivo_fuente_nombre_original TEXT DEFAULT ''`) } catch (_) {}
 
   // ── Cambio de contraseña obligatorio (seguridad): NULL = todavía no la
   // cambió por su cuenta (usuario nuevo, contraseña reseteada por un admin, o

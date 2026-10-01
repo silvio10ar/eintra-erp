@@ -76,7 +76,7 @@ export default function App() {
             <Route path="/venta-repuestos" element={<RutaConPermiso modulo="venta_repuestos"><VentaRepuestos /></RutaConPermiso>} />
             <Route path="/ventas/presupuesto/:id/oferta-tecnica" element={<RutaConPermiso modulo="ventas"><OfertaTecnica /></RutaConPermiso>} />
             <Route path="/crm"         element={<Navigate to="/ventas" replace />} />
-            <Route path="/proyectos"   element={<RutaConPermiso modulo="proyectos"><Proyectos /></RutaConPermiso>} />
+            <Route path="/proyectos"   element={<RutaConPermiso modulo="proyectos" extraModuloEscribir="entrega_documentacion"><Proyectos /></RutaConPermiso>} />
             <Route path="/analisis-proyectos" element={<RutaConPermiso modulo="analisis_proyectos"><AnalisisProyectos /></RutaConPermiso>} />
             <Route path="/costeo-equipos" element={<RutaConPermiso modulo="costeo_equipos"><CosteoEquipos /></RutaConPermiso>} />
             <Route path="/produccion"  element={<RutaConPermiso modulo="produccion"><Produccion /></RutaConPermiso>} />

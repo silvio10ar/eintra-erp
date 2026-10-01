@@ -5,6 +5,7 @@ const { db }  = require('../db/database');
 const { verificarToken, puede } = require('../middleware/auth');
 const { traerCotizacionBNA } = require('../helpers/bnaScraper');
 const { hoyArgentina } = require('../helpers/fecha');
+const { LETRA_TIPO_OC, generarCodigoOC } = require('../helpers/ocClientes');
 const { obtenerAutorizantes } = require('../helpers/organigrama');
 const { enviarMensajeSistema } = require('../helpers/mensajes');
 const { getConfig } = require('../helpers/config');
@@ -2042,7 +2043,7 @@ router.get('/seguimiento-oc-compras', verificarToken, leerFinanzas, (req, res) =
 // ── Control OC Clientes ──────────────────────────────────────────────────────
 
 const OC_CLIENTE_SELECT = `
-    SELECT f.*, c.nombre AS cli_nombre_cat, c.cuit AS cli_cuit_cat, p.codigo AS proy_codigo, p.nombre AS proy_nombre
+    SELECT f.*, c.nombre AS cli_nombre_cat, c.cuit AS cli_cuit_cat, c.codigo AS cli_codigo_cat, p.codigo AS proy_codigo, p.nombre AS proy_nombre
     FROM fin_oc_clientes f
     LEFT JOIN clientes c ON c.id = f.cliente_id
     LEFT JOIN proyectos p ON p.id = f.proyecto_id`;
@@ -2134,12 +2135,20 @@ const CAMPOS_MONETARIOS_OC_CLIENTE = ['monto_oc', 'anticipo_pct', 'monto_anticip
 const CAMPOS_MONETARIOS_CUOTA = ['monto_planeado', 'factura_importe', 'factura_numero'];
 const CAMPOS_MONETARIOS_PAGO = ['importe', 'entidad', 'moneda'];
 router.get('/oc-clientes', verificarToken, (req, res) => {
-  const { buscar, proyecto_id } = req.query;
+  const { buscar, proyecto_id, id, tipo } = req.query;
   let sql = `${OC_CLIENTE_SELECT} WHERE f.activo=1`;
   const params = [];
+  if (id) {
+    sql += ' AND f.id=?';
+    params.push(id);
+  }
   if (proyecto_id) {
     sql += ' AND f.proyecto_id=?';
     params.push(proyecto_id);
+  }
+  if (tipo) {
+    sql += ' AND f.tipo=?';
+    params.push(tipo);
   }
   if (buscar) {
     sql += ' AND (f.cliente LIKE ? OR f.numero_oc LIKE ? OR c.nombre LIKE ?)';
@@ -2165,17 +2174,35 @@ router.get('/oc-clientes', verificarToken, (req, res) => {
 router.post('/oc-clientes', verificarToken, (req, res) => {
   if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
   const f = req.body;
+  if (!f.cliente_id) return res.status(400).json({ error: 'Elegí un cliente de la lista' });
+  if (!LETRA_TIPO_OC[f.tipo]) return res.status(400).json({ error: 'Elegí el tipo de la OC (Proyecto, Repuesto o Servicio)' });
+  if (f.tipo === 'proyecto' && !f.proyecto_nombre?.trim()) return res.status(400).json({ error: 'Ingresá un nombre para el proyecto' });
+
   const trx = db.transaction(() => {
+    // El código interno bautiza la OC (y el proyecto, si nace uno) — ver
+    // generarCodigoOC, compartido con el alta automática desde Venta de
+    // Repuestos cuando se carga un pedido sin elegir una OC ya cargada acá.
+    const { cliente, codigo: codigoInterno } = generarCodigoOC(f.cliente_id, f.tipo);
+
+    let proyectoId = null;
+    if (f.tipo === 'proyecto') {
+      const rp = db.prepare(`
+        INSERT INTO proyectos (codigo,nombre,cliente_id,cliente_nombre,fecha_inicio,created_by)
+        VALUES (?,?,?,?,?,?)
+      `).run(codigoInterno, f.proyecto_nombre.trim(), cliente.id, cliente.nombre, hoyArgentina(), req.usuario.id);
+      proyectoId = rp.lastInsertRowid;
+    }
+
     const r = db.prepare(`
       INSERT INTO fin_oc_clientes
-        (cliente_id,cliente,proyecto_id,numero_oc,monto_oc,fecha_oc,fecha_recepcion_oc,
+        (cliente_id,cliente,proyecto_id,tipo,codigo_interno,numero_oc,monto_oc,fecha_oc,fecha_recepcion_oc,
          anticipo_pct,monto_anticipo_usd,fecha_fact_anticipo,fecha_pago_anticipo,
          numero_poliza,fecha_pedido_poliza,fecha_poliza,vigencia_poliza,fecha_entrega_doc,
          observaciones,final_pct,monto_final_usd,fecha_fact_final,
          cierre_tipo,fecha_cierre_admin,comentarios)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
-      f.cliente_id||null, f.cliente||'', f.proyecto_id||null,
+      cliente.id, cliente.nombre, proyectoId, f.tipo, codigoInterno,
       f.numero_oc||'', f.monto_oc||null, f.fecha_oc||'', f.fecha_recepcion_oc||'',
       f.anticipo_pct||null, f.monto_anticipo_usd||null, f.fecha_fact_anticipo||'', f.fecha_pago_anticipo||'',
       f.numero_poliza||'', f.fecha_pedido_poliza||'', f.fecha_poliza||'', f.vigencia_poliza||'', f.fecha_entrega_doc||'',
@@ -2191,6 +2218,7 @@ router.post('/oc-clientes', verificarToken, (req, res) => {
     if (e.codigo === 'FACTURA_EN_USO') return res.status(409).json({ error: 'Una de las facturas ya está vinculada a otra OC de cliente' });
     if (e.codigo === 'PAGO_EN_USO') return res.status(409).json({ error: 'Uno de los pagos ya está vinculado a otra cuota' });
     if (e.codigo === 'CUOTAS_PCT_INVALIDO') return res.status(400).json({ error: e.message });
+    if (e.codigo?.startsWith('OC_')) return res.status(400).json({ error: e.message });
     throw e;
   }
   const row = db.prepare(`${OC_CLIENTE_SELECT} WHERE f.id=?`).get(id);
@@ -2201,10 +2229,30 @@ router.post('/oc-clientes', verificarToken, (req, res) => {
 router.put('/oc-clientes/:id', verificarToken, (req, res) => {
   if (!puedeEscribir(req)) return res.status(403).json({ error: 'Sin permisos' });
   const f = req.body;
+  // Cliente, tipo, proyecto vinculado y código interno se fijan al crear la OC
+  // (bautizan el proyecto que nace de ella, si corresponde) y quedan
+  // inmutables para cualquier usuario normal — evita que se pisen por error
+  // el vínculo o el código ya usado en otro lado (ej. como código del
+  // proyecto). El admin es la única excepción: para corregir una carga mal
+  // hecha sin tener que borrar y recrear la OC, puede editarlos a mano.
+  const actual = db.prepare('SELECT * FROM fin_oc_clientes WHERE id=? AND activo=1').get(req.params.id);
+  if (!actual) return res.status(404).json({ error: 'OC no encontrada' });
+  let { cliente_id, cliente, tipo, proyecto_id, codigo_interno } = actual;
+  if (req.usuario.rol === 'admin') {
+    if (f.cliente_id) {
+      const cli = db.prepare('SELECT id, nombre FROM clientes WHERE id=?').get(f.cliente_id);
+      if (!cli) return res.status(404).json({ error: 'Cliente no encontrado' });
+      cliente_id = cli.id; cliente = cli.nombre;
+    }
+    if (['proyecto', 'repuesto', 'servicio', ''].includes(f.tipo)) tipo = f.tipo;
+    if (f.proyecto_id !== undefined) proyecto_id = f.proyecto_id || null;
+    if (f.codigo_interno !== undefined) codigo_interno = f.codigo_interno || '';
+  }
   const trx = db.transaction(() => {
     db.prepare(`
       UPDATE fin_oc_clientes SET
-        cliente_id=?,cliente=?,proyecto_id=?,numero_oc=?,monto_oc=?,fecha_oc=?,fecha_recepcion_oc=?,
+        cliente_id=?,cliente=?,tipo=?,proyecto_id=?,codigo_interno=?,
+        numero_oc=?,monto_oc=?,fecha_oc=?,fecha_recepcion_oc=?,
         anticipo_pct=?,monto_anticipo_usd=?,fecha_fact_anticipo=?,fecha_pago_anticipo=?,
         numero_poliza=?,fecha_pedido_poliza=?,fecha_poliza=?,vigencia_poliza=?,fecha_entrega_doc=?,
         observaciones=?,final_pct=?,monto_final_usd=?,fecha_fact_final=?,
@@ -2212,7 +2260,7 @@ router.put('/oc-clientes/:id', verificarToken, (req, res) => {
         updated_at=datetime('now','localtime')
       WHERE id=? AND activo=1
     `).run(
-      f.cliente_id||null, f.cliente||'', f.proyecto_id||null,
+      cliente_id, cliente, tipo, proyecto_id, codigo_interno,
       f.numero_oc||'', f.monto_oc||null, f.fecha_oc||'', f.fecha_recepcion_oc||'',
       f.anticipo_pct||null, f.monto_anticipo_usd||null, f.fecha_fact_anticipo||'', f.fecha_pago_anticipo||'',
       f.numero_poliza||'', f.fecha_pedido_poliza||'', f.fecha_poliza||'', f.vigencia_poliza||'', f.fecha_entrega_doc||'',

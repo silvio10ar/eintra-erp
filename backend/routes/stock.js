@@ -736,12 +736,15 @@ router.post('/ingresos-pendientes/:id/confirmar', verificarToken, (req, res) => 
   // requiere y no se cargó ahí, se puede completar recién acá, al confirmar.
   const partida = req.body.partida ?? row.partida;
   // Cuando el material se compra en una unidad distinta a la de stock (ej.
-  // chapas: OC en kg, depósito en unidades — productos.unidad_compra), no hay
-  // conversión automática: quien confirma el ingreso carga a mano cuánto
-  // entró realmente al depósito, en la unidad de stock. Si no se manda nada,
+  // chapas: OC en kg, depósito en unidades — productos.unidad_compra), la
+  // cantidad real en unidades ya se cargó al armar la OC (ver oc_items.cantidad_unidades,
+  // arrastrada acá en ingresos_pendientes.cantidad_unidades) y se usa como
+  // valor por defecto; si esa OC no la tenía cargada, o si se manda un ajuste
+  // manual, se respeta lo que llegue en el body. Si no hay ninguna de las dos,
   // se asume que son la misma cantidad (comportamiento de siempre).
   const cantidadStock = (req.body.cantidad_stock !== undefined && req.body.cantidad_stock !== null && req.body.cantidad_stock !== '')
-    ? parseFloat(req.body.cantidad_stock) : row.cantidad;
+    ? parseFloat(req.body.cantidad_stock)
+    : (row.cantidad_unidades != null ? row.cantidad_unidades : row.cantidad);
   if (!(cantidadStock > 0)) return res.status(400).json({ error: 'Cantidad a stock inválida' });
   try {
     db.transaction(() => {
@@ -917,15 +920,53 @@ router.delete('/pedidos/:id', verificarToken, leerPedidosStock, (req, res) => {
 });
 
 // Todos los pedidos pendientes/parciales — para quien tiene acceso de lectura a Stock
+//
+// Incluye, mezclados con los pedidos internos (pedido_stock), los retiros
+// pendientes de Venta de Repuestos: para el depósito son lo mismo — algo que
+// alguien más cargó y que hay que entregar/retirar eligiendo partida o
+// número de serie — así que le aparecen acá igual, sin que el operario de
+// Stock necesite entrar (ni tener permiso) a la pantalla de Venta de
+// Repuestos. `id`/`items[].id` quedan prefijados ('ps-'/'vr-') para que
+// nunca choquen entre sí en las claves de React ni en los estados de
+// cantidad/partida elegidos en el modal (ambas tablas arrancan su
+// autoincrement en 1); `real_id` es el id real para pegarle a la API
+// correspondiente al confirmar.
 router.get('/pedidos', verificarToken, leerStock, (req, res) => {
-  const pedidos = db.prepare(`${PEDIDOS_SELECT_ASIGNACION} WHERE ps.estado IN ('Pendiente','Parcial') ORDER BY ps.created_at ASC`).all();
-  const ids = pedidos.map(p => p.id);
-  const items = ids.length ? db.prepare(`
+  const pedidosStock = db.prepare(`${PEDIDOS_SELECT_ASIGNACION} WHERE ps.estado IN ('Pendiente','Parcial') ORDER BY ps.created_at ASC`).all();
+  const idsStock = pedidosStock.map(p => p.id);
+  const itemsStock = idsStock.length ? db.prepare(`
     SELECT psi.*, p.codigo, p.descripcion, p.unidad, p.stock_actual, p.trazabilidad_stock
     FROM pedido_stock_items psi JOIN productos p ON p.id = psi.producto_id
-    WHERE psi.pedido_id IN (${ids.map(() => '?').join(',')})
-  `).all(...ids) : [];
-  res.json(pedidos.map(p => ({ ...p, items: items.filter(i => i.pedido_id === p.id) })));
+    WHERE psi.pedido_id IN (${idsStock.map(() => '?').join(',')})
+  `).all(...idsStock) : [];
+  const normalizadosStock = pedidosStock.map(p => ({
+    ...p, id: `ps-${p.id}`, real_id: p.id, origen: 'pedido_stock',
+    items: itemsStock.filter(i => i.pedido_id === p.id).map(i => ({ ...i, id: `ps-${i.id}`, real_id: i.id })),
+  }));
+
+  const pedidosVR = db.prepare(`
+    SELECT * FROM pedidos_venta_repuesto WHERE estado IN ('Pendiente','Parcial') ORDER BY created_at ASC
+  `).all();
+  const idsVR = pedidosVR.map(p => p.id);
+  const itemsVR = idsVR.length ? db.prepare(`
+    SELECT pvi.*, p.codigo, p.descripcion, p.unidad, p.stock_actual, p.trazabilidad_stock
+    FROM pedido_venta_repuesto_items pvi JOIN productos p ON p.id = pvi.producto_id
+    WHERE pvi.pedido_id IN (${idsVR.map(() => '?').join(',')})
+  `).all(...idsVR) : [];
+  const normalizadosVR = pedidosVR.map(p => ({
+    id: `vr-${p.id}`, real_id: p.id, origen: 'venta_repuesto',
+    estado: p.estado, created_at: p.created_at,
+    solicitante_nombre: p.vendedor_nombre, cliente_nombre: p.cliente_nombre,
+    numero_oc_cliente: p.numero_oc_cliente,
+    autorizado_por_id: p.autorizado_por_id, autorizado_por_nombre: p.autorizado_por_nombre,
+    observaciones: p.observaciones,
+    items: itemsVR.filter(i => i.pedido_id === p.id).map(i => ({
+      ...i, id: `vr-${i.id}`, real_id: i.id, cantidad_entregada: i.cantidad_retirada,
+    })),
+  }));
+
+  const todos = [...normalizadosStock, ...normalizadosVR].sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+  res.json(todos);
 });
 
 // Confirmar entrega (total o parcial) de un pedido — descuenta stock recién acá

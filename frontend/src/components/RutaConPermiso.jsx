@@ -1,12 +1,21 @@
 import { Link } from 'react-router-dom'
-import { getUser, puedeLeer } from '../store/authStore'
+import { getUser, puedeLeer, puedeEscribir } from '../store/authStore'
 
 // Evita que alguien entre a un módulo escribiendo la URL directamente cuando no
 // tiene permiso — antes solo se ocultaba el link del menú, pero la ruta seguía
 // siendo accesible (se veía la pantalla vacía, sin datos, en vez de bloquearse).
-export default function RutaConPermiso({ modulo, children }) {
+export default function RutaConPermiso({ modulo, extraModuloEscribir, children }) {
   const esAdmin = getUser()?.rol === 'admin'
+  // extraModuloEscribir habilita el acceso por permiso de ESCRITURA de otro
+  // módulo — ej. Proyectos, donde alguien con el permiso liviano de Entrega
+  // Documentación (sin proyectos.leer) también tiene que poder entrar, aunque
+  // vea muchísimo menos que alguien con acceso completo. Se evalúa acá adentro
+  // (no como prop ya resuelta) para que sea fresco en cada navegación —
+  // RutaConPermiso vive dentro de <Routes>, así que solo se vuelve a
+  // renderizar al entrar a esta ruta, a diferencia de App.jsx que renderiza
+  // una sola vez.
   const tieneAcceso = !modulo || esAdmin || (modulo !== '__admin__' && puedeLeer(modulo))
+    || (!!extraModuloEscribir && puedeEscribir(extraModuloEscribir))
 
   if (!tieneAcceso) {
     return (

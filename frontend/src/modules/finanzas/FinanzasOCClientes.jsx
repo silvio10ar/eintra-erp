@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
+import { getUser } from '../../store/authStore'
 import DateInput from '../../components/DateInput'
 import { estadoFila, ESTADO_LABEL, ROW_BG, cuotaCobrada, fechaCobroCuota } from './estadoOCClientes'
 import { manejarPegadoNumero } from '../../utils/numero'
@@ -34,6 +36,9 @@ const CUOTA_VACIA = { tipo: 'unico', pct: 100, monto_planeado: '', fecha_estimad
 
 const TIPO_CUOTA_LABEL = { anticipo: 'Anticipo', avance: 'Avance', saldo_final: 'Saldo final', unico: 'Pago único' }
 
+const TIPO_OC_LABEL = { proyecto: 'Proyecto', repuesto: 'Repuesto', servicio: 'Servicio' }
+const TIPO_OC_BADGE = { proyecto: 'bg-primary', repuesto: 'bg-info text-dark', servicio: 'bg-secondary' }
+
 // Atajos para armar las cuotas rápido según cómo venga la OC — quedan 100%
 // editables después (agregar/quitar filas, cambiar %, etc.).
 const PRESETS_CUOTAS = {
@@ -55,7 +60,7 @@ const PRESETS_CUOTAS = {
 
 const FORM_VACIO = {
   cliente_id: null, cliente: '', cli_nombre_cat: '', cli_cuit_cat: '',
-  proyecto_id: null, proyecto: '',
+  proyecto_id: null, proyecto: '', tipo: '', proyecto_nombre: '', codigo_interno: '',
   numero_oc: '', monto_oc: '', fecha_oc: '', fecha_recepcion_oc: '',
   cuotas: [{ ...CUOTA_VACIA }],
   numero_poliza: '', fecha_pedido_poliza: '', fecha_poliza: '', vigencia_poliza: '', fecha_entrega_doc: '',
@@ -112,6 +117,8 @@ function ClienteSelector({ value, onChange }) {
   )
 }
 
+// Solo para el admin, al editar una OC ya creada: re-vincularla a otro
+// proyecto ya existente (no crea uno nuevo — eso solo pasa al dar de alta).
 function ProyectoSelector({ value, onChange }) {
   const [query,   setQuery]   = useState(value || '')
   const [opciones, setOpc]    = useState([])
@@ -135,16 +142,7 @@ function ProyectoSelector({ value, onChange }) {
     onChange(p)
   }
 
-  // No toda OC corresponde a un proyecto cargado — hace falta poder sacarlo,
-  // no solo cambiarlo por otro.
-  const quitar = () => {
-    setQuery('')
-    setAbierto(false)
-    onChange(null)
-  }
-
-  // Si se tipeó algo sin elegir una opción de la lista, se descarta al salir
-  // del campo — para vaciarlo de verdad está el botón "Quitar".
+  const quitar = () => { setQuery(''); setAbierto(false); onChange(null) }
   const cancelarTexto = () => setTimeout(() => { setAbierto(false); setQuery(value || '') }, 180)
 
   return (
@@ -155,7 +153,7 @@ function ProyectoSelector({ value, onChange }) {
         onBlur={cancelarTexto}
         autoComplete="off" />
       {value && (
-        <button type="button" className="btn btn-sm btn-outline-secondary flex-shrink-0" title="Quitar proyecto"
+        <button type="button" className="btn btn-sm btn-outline-secondary flex-shrink-0" title="Quitar proyecto vinculado"
           onMouseDown={e => e.preventDefault()} onClick={quitar}>
           <i className="bi bi-x" />
         </button>
@@ -167,9 +165,7 @@ function ProyectoSelector({ value, onChange }) {
               onMouseDown={() => seleccionar(p)}>
               <span className="badge bg-secondary me-1" style={{ fontSize: '0.7rem', fontFamily: 'monospace' }}>{p.codigo}</span>
               <span className="fw-semibold">{p.nombre}</span>
-              {p.cliente_nombre && (
-                <span className="text-muted ms-2" style={{ fontSize: '0.75rem' }}>{p.cliente_nombre}</span>
-              )}
+              {p.cliente_nombre && <span className="text-muted ms-2" style={{ fontSize: '0.75rem' }}>{p.cliente_nombre}</span>}
             </div>
           ))}
         </div>
@@ -179,6 +175,8 @@ function ProyectoSelector({ value, onChange }) {
 }
 
 export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
+  const navigate = useNavigate()
+  const esAdmin = getUser()?.rol === 'admin'
   const [expandidas, setExpandidas] = useState(new Set())
   const toggleExpand = id => setExpandidas(p => {
     const s = new Set(p)
@@ -190,6 +188,7 @@ export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
   const [loading, setLoading] = useState(false)
   const [buscar,  setBuscar]  = useState('')
   const [filtEst, setFiltEst] = useState('')
+  const [filtTipo, setFiltTipo] = useState('')
   const [modal,   setModal]   = useState(null)  // null | 'new' | objeto
   const [form,    setForm]    = useState(FORM_VACIO)
   const [saving,  setSaving]  = useState(false)
@@ -314,7 +313,12 @@ export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
   const totalPct = form.cuotas.reduce((s, c) => s + (parseFloat(c.pct) || 0), 0)
 
   const guardar = async () => {
-    if (!form.cliente.trim() || !form.numero_oc.trim()) return alert('Cliente y N° OC son requeridos')
+    if (!form.cliente_id) return alert('Elegí un cliente de la lista')
+    if (!form.numero_oc.trim()) return alert('N° OC es requerido')
+    if (modal === 'new') {
+      if (!form.tipo) return alert('Elegí el tipo de la OC (Proyecto, Repuesto o Servicio)')
+      if (form.tipo === 'proyecto' && !form.proyecto_nombre.trim()) return alert('Ingresá un nombre para el proyecto')
+    }
     setSaving(true)
     // El backend guarda los vínculos a pagos por id (pago_ids); "pagos" acá es
     // solo para mostrar el detalle en pantalla, no hace falta mandarlo entero.
@@ -344,8 +348,13 @@ export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
 
   const rowsFiltradas = rows.filter(r => {
     if (filtEst && estadoFila(r) !== filtEst) return false
+    if (filtTipo === 'null_' ? !!r.tipo : filtTipo && (r.tipo || '') !== filtTipo) return false
     return true
   })
+
+  // Abre Venta de Repuestos con esta OC precargada — el cliente y el N° de
+  // OC salen de ahí, no hace falta volver a buscarlos.
+  const crearPedidoRepuesto = r => navigate(`/venta-repuestos?oc=${r.id}`)
 
   return (
     <div className="flex-grow-1 d-flex flex-column overflow-hidden">
@@ -362,9 +371,17 @@ export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
               <option key={k} value={k}>{v.txt}</option>
             )}
           </select>
-          {(buscar || filtEst) && (
+          <select className="form-select form-select-sm" style={{ width: 150 }}
+            value={filtTipo} onChange={e => setFiltTipo(e.target.value)}>
+            <option value="">Todos los tipos</option>
+            {Object.entries(TIPO_OC_LABEL).map(([k, v]) =>
+              <option key={k} value={k}>{v}</option>
+            )}
+            <option value="null_">Sin clasificar</option>
+          </select>
+          {(buscar || filtEst || filtTipo) && (
             <button className="btn btn-sm btn-outline-secondary py-0 px-2"
-              onClick={() => { setBuscar(''); setFiltEst('') }}>
+              onClick={() => { setBuscar(''); setFiltEst(''); setFiltTipo('') }}>
               <i className="bi bi-x" />
             </button>
           )}
@@ -391,6 +408,7 @@ export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
               <tr>
                 <th style={{ width: 34 }} />
                 <th style={{ minWidth: 140 }}>CLIENTE</th>
+                <th style={{ minWidth: 90 }}>TIPO</th>
                 <th style={{ minWidth: 130 }}>PROYECTO</th>
                 <th style={{ minWidth: 120 }}>N° OC</th>
                 <th style={{ minWidth: 110 }} className="text-end">MONTO OC</th>
@@ -418,11 +436,19 @@ export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
                         {!r.cli_nombre_cat && <span className="text-danger ms-1" title="Sin vincular a un cliente real">●</span>}
                       </td>
                       <td>
+                        {r.tipo
+                          ? <span className={`badge ${TIPO_OC_BADGE[r.tipo]}`} style={{ fontSize: '0.68rem' }}>{TIPO_OC_LABEL[r.tipo]}</span>
+                          : <span className="text-muted">—</span>}
+                      </td>
+                      <td>
                         {r.proy_codigo
                           ? <span className="badge bg-secondary" style={{ fontSize: '0.7rem', fontFamily: 'monospace' }} title={r.proy_nombre}>{r.proy_codigo}</span>
                           : <span className="text-muted">—</span>}
                       </td>
-                      <td className="fw-semibold text-primary">{r.numero_oc || '—'}</td>
+                      <td className="fw-semibold text-primary">
+                        {r.numero_oc || '—'}
+                        {r.codigo_interno && <div className="text-muted fw-normal" style={{ fontSize: '0.68rem', fontFamily: 'monospace' }}>{r.codigo_interno}</div>}
+                      </td>
                       <td className="text-end">{fmtUSD(r.monto_oc)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtF(r.fecha_oc)}</td>
                       <td>
@@ -441,6 +467,12 @@ export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
                       {canWrite && (
                         <td>
                           <div className="d-flex gap-1">
+                            {r.tipo === 'repuesto' && (
+                              <button className="btn btn-sm btn-outline-info py-0 px-1" title="Crear pedido de repuesto desde esta OC"
+                                onClick={() => crearPedidoRepuesto(r)}>
+                                <i className="bi bi-box-seam" />
+                              </button>
+                            )}
                             <button className="btn btn-sm btn-outline-primary py-0 px-1" title="Editar" onClick={() => abrirEditar(r)}>
                               <i className="bi bi-pencil" />
                             </button>
@@ -453,7 +485,7 @@ export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
                     </tr>
                     {abierta && (
                       <tr>
-                        <td colSpan={canWrite ? 9 : 8} className="bg-light">
+                        <td colSpan={canWrite ? 10 : 9} className="bg-light">
                           <div className="row g-3 py-2 px-2" style={{ fontSize: '0.78rem' }}>
                             <div className="col-md-3">
                               <div className="text-muted" style={{ fontSize: '0.7rem' }}>RAZÓN SOCIAL / CUIT</div>
@@ -524,36 +556,112 @@ export default function FinanzasOCClientes({ canWrite, abrirOcId, onAbierto }) {
                 {/* Datos generales */}
                 <p className="small fw-semibold text-muted mb-2" style={{ letterSpacing: '0.05em' }}>DATOS DE LA OC</p>
                 <div className="row g-2 mb-3">
-                  <div className="col-md-4">
-                    <label className="form-label small fw-semibold">Cliente (referencia) *</label>
-                    <input className="form-control form-control-sm" value={form.cliente}
-                      onChange={e => sf('cliente', e.target.value)} placeholder="Ej: ECOLAB TRANSPORTADORA" />
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label small fw-semibold">
-                      Cliente real (razón social)
-                      {!form.cliente_id && <span className="text-danger ms-1" title="Sin vincular a un cliente real todavía">●</span>}
-                    </label>
-                    <ClienteSelector
-                      value={form.cli_nombre_cat || ''}
-                      onChange={c => setForm(p => ({ ...p, cliente_id: c.id, cli_nombre_cat: c.nombre, cli_cuit_cat: c.cuit }))}
-                    />
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label small fw-semibold">Proyecto</label>
-                    <ProyectoSelector
-                      value={form.proyecto}
-                      onChange={p => setForm(f => ({ ...f, proyecto_id: p?.id || null, proyecto: p ? `${p.codigo} — ${p.nombre}` : '' }))}
-                    />
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label small fw-semibold">N° OC / Presupuesto *</label>
-                    <input className="form-control form-control-sm" value={form.numero_oc}
-                      onChange={e => sf('numero_oc', e.target.value)} placeholder="Ej: 4100010934" />
-                  </div>
+                  {modal === 'new' ? (
+                    <>
+                      <div className="col-md-3">
+                        <label className="form-label small fw-semibold">Cliente *</label>
+                        <ClienteSelector
+                          value={form.cli_nombre_cat || ''}
+                          onChange={c => setForm(p => ({ ...p, cliente_id: c.id, cliente: c.nombre, cli_nombre_cat: c.nombre, cli_cuit_cat: c.cuit }))}
+                        />
+                      </div>
+                      <div className="col-md-2">
+                        <label className="form-label small fw-semibold">Tipo *</label>
+                        <select className="form-select form-select-sm" value={form.tipo}
+                          onChange={e => sf('tipo', e.target.value)}>
+                          <option value="">— Elegir —</option>
+                          <option value="proyecto">Proyecto</option>
+                          <option value="repuesto">Repuesto</option>
+                          <option value="servicio">Servicio</option>
+                        </select>
+                      </div>
+                      {form.tipo === 'proyecto' ? (
+                        <div className="col-md-4">
+                          <label className="form-label small fw-semibold">Nombre del proyecto nuevo *</label>
+                          <input className="form-control form-control-sm" value={form.proyecto_nombre}
+                            onChange={e => sf('proyecto_nombre', e.target.value)} placeholder="Ej: Planta de tratamiento Ecolab" />
+                          <div className="form-text" style={{ fontSize: '0.7rem' }}>
+                            Se crea un proyecto nuevo con este nombre, bautizado con el código que se genera al guardar.
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="col-md-4">
+                          <label className="form-label small fw-semibold">Código interno</label>
+                          <input className="form-control form-control-sm text-muted" value="Se genera al guardar" disabled />
+                        </div>
+                      )}
+                      <div className="col-md-3">
+                        <label className="form-label small fw-semibold">N° OC / Presupuesto *</label>
+                        <input className="form-control form-control-sm" value={form.numero_oc}
+                          onChange={e => sf('numero_oc', e.target.value)} placeholder="Ej: 4100010934" />
+                      </div>
+                    </>
+                  ) : esAdmin ? (
+                    <>
+                      <div className="col-md-3">
+                        <label className="form-label small fw-semibold">Cliente</label>
+                        <ClienteSelector
+                          value={form.cli_nombre_cat || form.cliente || ''}
+                          onChange={c => setForm(p => ({ ...p, cliente_id: c.id, cliente: c.nombre, cli_nombre_cat: c.nombre, cli_cuit_cat: c.cuit }))}
+                        />
+                      </div>
+                      <div className="col-md-2">
+                        <label className="form-label small fw-semibold">Tipo</label>
+                        <select className="form-select form-select-sm" value={form.tipo}
+                          onChange={e => sf('tipo', e.target.value)}>
+                          <option value="">— Sin clasificar —</option>
+                          <option value="proyecto">Proyecto</option>
+                          <option value="repuesto">Repuesto</option>
+                          <option value="servicio">Servicio</option>
+                        </select>
+                      </div>
+                      <div className="col-md-4">
+                        <label className="form-label small fw-semibold">
+                          {form.tipo === 'proyecto' ? 'Proyecto vinculado' : 'Código interno'}
+                        </label>
+                        {form.tipo === 'proyecto' ? (
+                          <ProyectoSelector
+                            value={form.proyecto}
+                            onChange={p => setForm(f => ({ ...f, proyecto_id: p?.id || null, proyecto: p ? `${p.codigo} — ${p.nombre}` : '' }))}
+                          />
+                        ) : (
+                          <input className="form-control form-control-sm" value={form.codigo_interno}
+                            onChange={e => sf('codigo_interno', e.target.value)} placeholder="Ej: ECO004R" />
+                        )}
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small fw-semibold">N° OC / Presupuesto *</label>
+                        <input className="form-control form-control-sm" value={form.numero_oc}
+                          onChange={e => sf('numero_oc', e.target.value)} placeholder="Ej: 4100010934" />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="col-md-3">
+                        <label className="form-label small fw-semibold">Cliente</label>
+                        <input className="form-control form-control-sm" value={form.cli_nombre_cat || form.cliente} disabled />
+                      </div>
+                      <div className="col-md-2">
+                        <label className="form-label small fw-semibold">Tipo</label>
+                        <input className="form-control form-control-sm" value={TIPO_OC_LABEL[form.tipo] || 'Sin clasificar'} disabled />
+                      </div>
+                      <div className="col-md-4">
+                        <label className="form-label small fw-semibold">
+                          {form.tipo === 'proyecto' ? 'Proyecto' : 'Código interno'}
+                        </label>
+                        <input className="form-control form-control-sm" disabled
+                          value={form.tipo === 'proyecto' ? (form.proyecto || form.codigo_interno) : (form.codigo_interno || '—')} />
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small fw-semibold">N° OC / Presupuesto *</label>
+                        <input className="form-control form-control-sm" value={form.numero_oc}
+                          onChange={e => sf('numero_oc', e.target.value)} placeholder="Ej: 4100010934" />
+                      </div>
+                    </>
+                  )}
                   <div className="col-md-2">
                     <label className="form-label small fw-semibold">Monto OC (USD, neto sin IVA)</label>
-                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={form.monto_oc}
+                    <input type="number" onPaste={manejarPegadoNumero} className="form-control form-control-sm" value={form.monto_oc ?? ''}
                       onChange={e => sf('monto_oc', e.target.value)} min="0" step="0.01" placeholder="0.00" />
                   </div>
                   <div className="col-md-2">

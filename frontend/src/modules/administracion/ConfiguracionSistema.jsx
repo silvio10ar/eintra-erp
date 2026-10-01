@@ -133,7 +133,9 @@ const CAMPOS_SMTP = [
 ]
 
 const VACIO = { smtp_host:'', smtp_port:'587', smtp_user:'', smtp_pass:'', smtp_from:'', smtp_secure:'false', backup_to:'', pago_umbral_autorizacion_usd:'1000',
-  dashboard_finanzas_activo:'false', dashboard_finanzas_hora:'08:00', dashboard_finanzas_email:'' }
+  dashboard_finanzas_activo:'false', dashboard_finanzas_hora:'08:00', dashboard_finanzas_email:'',
+  respuesta_ceo_activo:'false', respuesta_ceo_email:'antonio.palladino@e-intrasrl.com', respuesta_ceo_asunto:'Como esta todo',
+  imap_host:'', imap_port:'993', imap_secure:'true' }
 
 export default function ConfiguracionSistema() {
   const [tab, setTab]           = useState('sistema')
@@ -143,6 +145,7 @@ export default function ConfiguracionSistema() {
   const [testing, setTesting]   = useState(false)
   const [backing, setBacking]   = useState(false)
   const [envDash, setEnvDash]   = useState(false)
+  const [probCeo, setProbCeo]   = useState(false)
   const [msg, setMsg]           = useState(null)   // { tipo: 'ok'|'err', texto }
   const [showPass, setShowPass] = useState(false)
   const [descargando, setDescargando] = useState(null)  // 'backup' | 'instalador' | null
@@ -191,6 +194,16 @@ export default function ConfiguracionSistema() {
     } catch(err) {
       setMsg({ tipo: 'err', texto: err.response?.data?.error ?? 'Error al enviar el reporte' })
     } finally { setEnvDash(false) }
+  }
+
+  const probarRespuestaCEO = async () => {
+    setProbCeo(true); setMsg(null)
+    try {
+      const r = await api.post('/configuracion/respuesta-ceo-ahora')
+      setMsg({ tipo: 'ok', texto: r.data.mensaje + (r.data.errores ? ` (errores: ${r.data.errores.join(' | ')})` : '') })
+    } catch(err) {
+      setMsg({ tipo: 'err', texto: err.response?.data?.error ?? 'Error al revisar la bandeja' })
+    } finally { setProbCeo(false) }
   }
 
   const descargar = async (endpoint, tipo) => {
@@ -364,6 +377,89 @@ export default function ConfiguracionSistema() {
                 {envDash
                   ? <><span className="spinner-border spinner-border-sm me-1"/>Enviando...</>
                   : <><i className="bi bi-send me-1"/>Enviar ahora (prueba)</>}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Respuesta automática al CEO ──────────────────────── */}
+        <div className="card mb-3">
+          <div className="card-header py-2 d-flex align-items-center gap-2">
+            <i className="bi bi-reply-fill text-primary"/>
+            <strong className="small">Respuesta automática al CEO</strong>
+          </div>
+          <div className="card-body pb-2">
+            <div className="form-check mb-3">
+              <input className="form-check-input" type="checkbox" id="respuesta_ceo_activo"
+                checked={form.respuesta_ceo_activo === 'true'}
+                onChange={e => set('respuesta_ceo_activo', e.target.checked ? 'true' : 'false')}/>
+              <label className="form-check-label small" htmlFor="respuesta_ceo_activo">
+                Cuando llegue un mail con el asunto de abajo, contestar automáticamente con el Dashboard de Finanzas
+              </label>
+            </div>
+            <div className="row g-3">
+              <div className="col-md-6">
+                <label className="form-label small fw-medium mb-1">Email del CEO</label>
+                <input className="form-control form-control-sm" type="email" placeholder="ceo@empresa.com"
+                  value={form.respuesta_ceo_email}
+                  onChange={e => set('respuesta_ceo_email', e.target.value)} />
+              </div>
+              <div className="col-md-6">
+                <label className="form-label small fw-medium mb-1">Asunto disparador</label>
+                <input className="form-control form-control-sm"
+                  value={form.respuesta_ceo_asunto}
+                  onChange={e => set('respuesta_ceo_asunto', e.target.value)} />
+              </div>
+            </div>
+            <p className="text-muted small mt-2 mb-0">
+              <i className="bi bi-info-circle me-1"/>
+              Solo contesta mails que vengan de esa dirección, sin importar mayúsculas ni acentos en el asunto.
+            </p>
+
+            <div className="mt-3 pt-2 border-top">
+              <p className="small fw-medium mb-2">
+                <i className="bi bi-inbox me-1"/>Acceso a la casilla (IMAP, para poder leerla)
+              </p>
+              <div className="row g-3">
+                <div className="col-md-6">
+                  <label className="form-label small fw-medium mb-1">Servidor IMAP</label>
+                  <input className="form-control form-control-sm" placeholder={form.smtp_host || 'igual que el SMTP'}
+                    value={form.imap_host}
+                    onChange={e => set('imap_host', e.target.value)} />
+                  <div className="form-text" style={{ fontSize: '0.7rem' }}>Vacío = usa el mismo servidor que el SMTP de arriba.</div>
+                </div>
+                <div className="col-md-2">
+                  <label className="form-label small fw-medium mb-1">Puerto</label>
+                  <input className="form-control form-control-sm" type="number"
+                    value={form.imap_port}
+                    onChange={e => set('imap_port', e.target.value)} />
+                </div>
+                <div className="col-md-4">
+                  <div className="form-check mt-4 pt-1">
+                    <input className="form-check-input" type="checkbox" id="imap_secure"
+                      checked={form.imap_secure === 'true'}
+                      onChange={e => set('imap_secure', e.target.checked ? 'true' : 'false')}/>
+                    <label className="form-check-label small" htmlFor="imap_secure">Activar SSL/TLS (IMAPS)</label>
+                  </div>
+                </div>
+              </div>
+              <p className="text-muted small mt-2 mb-0">
+                <i className="bi bi-info-circle me-1"/>
+                Usa el mismo usuario y contraseña que el correo saliente (SMTP) de arriba — tiene que ser la
+                misma casilla (<code>gestion@e-intrasrl.com</code>).
+              </p>
+            </div>
+
+            <div className="mt-3 pt-2 border-top d-flex align-items-center gap-2 flex-wrap">
+              <small className="text-muted flex-grow-1">
+                <i className="bi bi-exclamation-triangle me-1"/>
+                Guardá la configuración antes de probar — este botón revisa la casilla ya mismo con lo último guardado.
+              </small>
+              <button type="button" className="btn btn-sm btn-outline-primary"
+                onClick={probarRespuestaCEO} disabled={probCeo}>
+                {probCeo
+                  ? <><span className="spinner-border spinner-border-sm me-1"/>Revisando...</>
+                  : <><i className="bi bi-arrow-repeat me-1"/>Revisar bandeja ahora</>}
               </button>
             </div>
           </div>

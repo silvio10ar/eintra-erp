@@ -335,9 +335,15 @@ export default function Stock() {
       const entregas = {}
       for (const it of ped.items) {
         const cant = entregaCant[it.id] ?? 0
-        entregas[it.id] = it.trazabilidad_stock !== 'ninguna' ? { cantidad: cant, lote_id: entregaLote[it.id] || null } : cant
+        entregas[it.real_id] = it.trazabilidad_stock !== 'ninguna' ? { cantidad: cant, lote_id: entregaLote[it.id] || null } : cant
       }
-      await api.post(`/stock/pedidos/${ped.id}/entregar`, { entregas })
+      // Un retiro de Venta de Repuestos usa su propio endpoint (mismo permiso
+      // de Stock, pero la tabla que actualiza es otra) — ver GET /stock/pedidos.
+      const esVentaRepuesto = ped.origen === 'venta_repuesto'
+      await api.post(
+        esVentaRepuesto ? `/venta-repuestos/${ped.real_id}/retirar` : `/stock/pedidos/${ped.real_id}/entregar`,
+        esVentaRepuesto ? { retiros: entregas } : { entregas }
+      )
       // Se borran los valores tipeados para este pedido: si queda algo pendiente
       // (entrega parcial), que se recalcule de nuevo contra el saldo real, en
       // vez de arrastrar la cantidad vieja que ya se entregó.
@@ -1447,9 +1453,12 @@ export default function Stock() {
                             const partidaFalta = row.trazabilidad_stock !== 'ninguna' && !partidaPorIngreso[row.id]?.trim()
                             const esSerie = row.trazabilidad_stock === 'serie'
                             // El material se compra en una unidad distinta a la de stock (ej.
-                            // chapas: OC en kg, depósito por unidad) — sin conversión
-                            // automática, hay que cargar a mano cuánto entra realmente.
+                            // chapas: OC en kg, depósito por unidad). Si al armar/recibir la OC
+                            // ya se cargó la equivalencia en unidades, se precarga acá — si no,
+                            // hay que cargarla a mano.
                             const distintaUnidad = !!row.unidad_compra?.trim() && row.unidad_compra.trim() !== (row.producto_unidad||'').trim()
+                            const cantStockValor = (cantStockPorIngreso[row.id] !== undefined && cantStockPorIngreso[row.id] !== '')
+                              ? cantStockPorIngreso[row.id] : (row.cantidad_unidades != null ? row.cantidad_unidades : '')
                             return (
                             <tr key={row.id}>
                               <td className="fw-semibold">{row.oc_numero}</td>
@@ -1466,7 +1475,7 @@ export default function Stock() {
                                   <input className="form-control form-control-sm" type="number" onPaste={manejarPegadoNumero}
                                     placeholder={`${row.cantidad} ${row.producto_unidad||''}?`}
                                     title={`La OC está en ${row.unidad} — cargá cuánto entró realmente en ${row.producto_unidad||'la unidad de stock'}`}
-                                    value={cantStockPorIngreso[row.id] ?? ''}
+                                    value={cantStockValor}
                                     onChange={e => setCantStockPorIngreso(p => ({...p, [row.id]: e.target.value}))} />
                                 ) : <span className="text-muted">—</span>}
                               </td>
@@ -1480,9 +1489,9 @@ export default function Stock() {
                               <td className="text-end" style={{whiteSpace:'nowrap'}}>
                                 {canWrite && (
                                   <button className="btn btn-sm btn-success me-1"
-                                    disabled={savIng === row.id || partidaFalta || (distintaUnidad && !(parseFloat(cantStockPorIngreso[row.id]) > 0))}
+                                    disabled={savIng === row.id || partidaFalta || (distintaUnidad && !(parseFloat(cantStockValor) > 0))}
                                     title={partidaFalta ? (esSerie ? 'Este material requiere número de serie' : 'Este material requiere partida')
-                                      : (distintaUnidad && !(parseFloat(cantStockPorIngreso[row.id]) > 0)) ? 'Cargá cuánto entró realmente en la unidad de stock' : ''}
+                                      : (distintaUnidad && !(parseFloat(cantStockValor) > 0)) ? 'Cargá cuánto entró realmente en la unidad de stock' : ''}
                                     onClick={() => confirmarIngreso(row.id)}>
                                     {savIng === row.id ? <span className="spinner-border spinner-border-sm"/> : <><i className="bi bi-check-lg me-1"/>Confirmar</>}
                                   </button>
@@ -1647,10 +1656,16 @@ export default function Stock() {
                     <div key={ped.id} className="border-bottom p-3">
                       <div className="d-flex justify-content-between align-items-center mb-2">
                         <div>
-                          <span className="fw-semibold me-2">Pedido #{ped.id}</span>
+                          {ped.origen === 'venta_repuesto' ? (
+                            <span className="badge bg-primary me-2"><i className="bi bi-truck me-1"/>Venta de repuestos #{ped.real_id}</span>
+                          ) : (
+                            <span className="fw-semibold me-2">Pedido #{ped.real_id}</span>
+                          )}
                           <span className="text-muted small">{ped.solicitante_nombre}</span>
                           <span className="badge bg-light text-dark border ms-2">
-                            {ped.actividad_nombre || `${ped.proyecto_codigo} — ${ped.proyecto_nombre}`}
+                            {ped.origen === 'venta_repuesto'
+                              ? `Cliente: ${ped.cliente_nombre}${ped.numero_oc_cliente ? ` · OC ${ped.numero_oc_cliente}` : ''}`
+                              : (ped.actividad_nombre || `${ped.proyecto_codigo} — ${ped.proyecto_nombre}`)}
                           </span>
                           {ped.estado === 'Parcial' && <span className="badge bg-info text-dark ms-2">Parcial</span>}
                           {ped.autorizado_por_nombre && (

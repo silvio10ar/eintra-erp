@@ -6,6 +6,7 @@ const { hoyArgentina } = require('../helpers/fecha')
 const { obtenerAutorizantes } = require('../helpers/organigrama')
 const { enviarMensajeSistema } = require('../helpers/mensajes')
 const { aplicarMovimiento } = require('../helpers/stockLotes')
+const { generarCodigoOC } = require('../helpers/ocClientes')
 
 const router = express.Router()
 router.use(verificarToken)
@@ -54,6 +55,22 @@ function validarCabeceraYItems(body) {
   return { cliente, autorizante, ocCliente }
 }
 
+// Todo pedido de repuestos queda con una OC de cliente detrás — si no se
+// eligió una ya cargada en Finanzas, se crea una nueva ahí mismo (tipo
+// 'repuesto'), bautizada con el mismo esquema que una OC cargada a mano
+// (código de cliente + nro de orden + 'R'), y ese código se usa también como
+// N° de OC — así el pedido siempre tiene un número, lo haya provisto el
+// cliente o no. Tiene que llamarse dentro de la transacción del pedido.
+function resolverOcClienteId(ocCliente, cliente) {
+  if (ocCliente) return ocCliente.id
+  const { codigo } = generarCodigoOC(cliente.id, 'repuesto')
+  const r = db.prepare(`
+    INSERT INTO fin_oc_clientes (cliente_id, cliente, tipo, codigo_interno, numero_oc)
+    VALUES (?,?,?,?,?)
+  `).run(cliente.id, cliente.nombre, 'repuesto', codigo, codigo)
+  return r.lastInsertRowid
+}
+
 // ── Listado ────────────────────────────────────────────────────────────────
 router.get('/', leerVR, (req, res) => {
   const { cliente_id, estado, desde, hasta, buscar } = req.query
@@ -62,7 +79,18 @@ router.get('/', leerVR, (req, res) => {
   if (estado)     { conds.push('pv.estado=?'); params.push(estado) }
   if (desde)      { conds.push('pv.fecha>=?'); params.push(desde) }
   if (hasta)      { conds.push('pv.fecha<=?'); params.push(hasta) }
-  if (buscar)     { conds.push('(pv.cliente_nombre LIKE ? OR pv.numero_oc_cliente LIKE ?)'); params.push(`%${buscar}%`, `%${buscar}%`) }
+  if (buscar) {
+    // Cliente, N° de OC (tanto el vinculado en Finanzas como el tipeado a
+    // mano) o el código/descripción de alguno de los materiales pedidos.
+    conds.push(`(
+      pv.cliente_nombre LIKE ? OR pv.numero_oc_cliente LIKE ? OR fc.numero_oc LIKE ? OR EXISTS (
+        SELECT 1 FROM pedido_venta_repuesto_items pvi
+        JOIN productos p ON p.id = pvi.producto_id
+        WHERE pvi.pedido_id = pv.id AND (p.codigo LIKE ? OR p.descripcion LIKE ?)
+      )
+    )`)
+    params.push(`%${buscar}%`, `%${buscar}%`, `%${buscar}%`, `%${buscar}%`, `%${buscar}%`)
+  }
   const where = conds.length ? 'WHERE ' + conds.join(' AND ') : ''
   const pedidos = db.prepare(`${PEDIDO_SELECT} ${where} ORDER BY pv.created_at DESC`).all(...params)
   const items = itemsDe(pedidos.map(p => p.id))
@@ -83,6 +111,25 @@ router.get('/facturas-disponibles', leerVR, (req, res) => {
   res.json(rows)
 })
 
+// OC de Cliente de tipo "repuesto" que todavía no tienen un pedido armado —
+// para mostrarlas como punto de partida de un pedido nuevo, sin tener que
+// buscar a mano el N° de OC. Si el pedido que las usaba se cancela, la OC
+// vuelve a aparecer acá (solo se descuentan las que tienen un pedido activo).
+router.get('/oc-disponibles', leerVR, (req, res) => {
+  const rows = db.prepare(`
+    SELECT f.id, f.numero_oc, f.codigo_interno, f.fecha_oc, f.cliente_id, f.cliente, c.nombre AS cli_nombre_cat
+    FROM fin_oc_clientes f
+    LEFT JOIN clientes c ON c.id = f.cliente_id
+    WHERE f.activo=1 AND f.tipo='repuesto'
+      AND f.id NOT IN (
+        SELECT oc_cliente_id FROM pedidos_venta_repuesto
+        WHERE oc_cliente_id IS NOT NULL AND estado != 'Cancelado'
+      )
+    ORDER BY f.created_at DESC
+  `).all()
+  res.json(rows)
+})
+
 router.get('/:id', leerVR, (req, res) => {
   const p = db.prepare(`${PEDIDO_SELECT} WHERE pv.id=?`).get(req.params.id)
   if (!p) return res.status(404).json({ error: 'No encontrado' })
@@ -95,18 +142,25 @@ router.post('/', escribirVR, (req, res) => {
   if (v.error) return res.status(400).json({ error: v.error })
   const { cliente, autorizante, ocCliente } = v
   const { numero_oc_cliente, observaciones, items } = req.body
-  const pedidoId = db.transaction(() => {
-    const r = db.prepare(`
-      INSERT INTO pedidos_venta_repuesto
-        (cliente_id, cliente_nombre, oc_cliente_id, numero_oc_cliente, vendedor_id, vendedor_nombre,
-         autorizado_por_id, autorizado_por_nombre, observaciones, created_by)
-      VALUES (?,?,?,?,?,?,?,?,?,?)
-    `).run(cliente.id, cliente.nombre, ocCliente?.id || null, numero_oc_cliente || '', req.usuario.id, req.usuario.nombre || '',
-           autorizante.id, autorizante.nombre, observaciones || '', req.usuario.id)
-    const insItem = db.prepare(`INSERT INTO pedido_venta_repuesto_items (pedido_id, producto_id, cantidad, precio_unit) VALUES (?,?,?,?)`)
-    for (const it of items) insItem.run(r.lastInsertRowid, it.producto_id, parseFloat(it.cantidad), parseFloat(it.precio_unit) || 0)
-    return r.lastInsertRowid
-  })()
+  let pedidoId
+  try {
+    pedidoId = db.transaction(() => {
+      const ocClienteId = resolverOcClienteId(ocCliente, cliente)
+      const r = db.prepare(`
+        INSERT INTO pedidos_venta_repuesto
+          (cliente_id, cliente_nombre, oc_cliente_id, numero_oc_cliente, vendedor_id, vendedor_nombre,
+           autorizado_por_id, autorizado_por_nombre, observaciones, created_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+      `).run(cliente.id, cliente.nombre, ocClienteId, numero_oc_cliente || '', req.usuario.id, req.usuario.nombre || '',
+             autorizante.id, autorizante.nombre, observaciones || '', req.usuario.id)
+      const insItem = db.prepare(`INSERT INTO pedido_venta_repuesto_items (pedido_id, producto_id, cantidad, precio_unit) VALUES (?,?,?,?)`)
+      for (const it of items) insItem.run(r.lastInsertRowid, it.producto_id, parseFloat(it.cantidad), parseFloat(it.precio_unit) || 0)
+      return r.lastInsertRowid
+    })()
+  } catch (e) {
+    if (e.codigo?.startsWith('OC_')) return res.status(400).json({ error: e.message })
+    throw e
+  }
   res.status(201).json({ id: pedidoId })
 })
 
@@ -120,15 +174,21 @@ router.put('/:id', escribirVR, (req, res) => {
   if (v.error) return res.status(400).json({ error: v.error })
   const { cliente, autorizante, ocCliente } = v
   const { numero_oc_cliente, observaciones, items } = req.body
-  db.transaction(() => {
-    db.prepare(`
-      UPDATE pedidos_venta_repuesto SET cliente_id=?, cliente_nombre=?, oc_cliente_id=?, numero_oc_cliente=?,
-        autorizado_por_id=?, autorizado_por_nombre=?, observaciones=? WHERE id=?
-    `).run(cliente.id, cliente.nombre, ocCliente?.id || null, numero_oc_cliente || '', autorizante.id, autorizante.nombre, observaciones || '', ped.id)
-    db.prepare('DELETE FROM pedido_venta_repuesto_items WHERE pedido_id=?').run(ped.id)
-    const insItem = db.prepare(`INSERT INTO pedido_venta_repuesto_items (pedido_id, producto_id, cantidad, precio_unit) VALUES (?,?,?,?)`)
-    for (const it of items) insItem.run(ped.id, it.producto_id, parseFloat(it.cantidad), parseFloat(it.precio_unit) || 0)
-  })()
+  try {
+    db.transaction(() => {
+      const ocClienteId = resolverOcClienteId(ocCliente, cliente)
+      db.prepare(`
+        UPDATE pedidos_venta_repuesto SET cliente_id=?, cliente_nombre=?, oc_cliente_id=?, numero_oc_cliente=?,
+          autorizado_por_id=?, autorizado_por_nombre=?, observaciones=? WHERE id=?
+      `).run(cliente.id, cliente.nombre, ocClienteId, numero_oc_cliente || '', autorizante.id, autorizante.nombre, observaciones || '', ped.id)
+      db.prepare('DELETE FROM pedido_venta_repuesto_items WHERE pedido_id=?').run(ped.id)
+      const insItem = db.prepare(`INSERT INTO pedido_venta_repuesto_items (pedido_id, producto_id, cantidad, precio_unit) VALUES (?,?,?,?)`)
+      for (const it of items) insItem.run(ped.id, it.producto_id, parseFloat(it.cantidad), parseFloat(it.precio_unit) || 0)
+    })()
+  } catch (e) {
+    if (e.codigo?.startsWith('OC_')) return res.status(400).json({ error: e.message })
+    throw e
+  }
   res.json({ ok: true })
 })
 

@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import api from '../../api/client'
 import { puedeEscribir } from '../../store/authStore'
 import { manejarPegadoNumero } from '../../utils/numero'
+import DateInput from '../../components/DateInput'
 import { estadoItem, estadoPedido, ESTADO_LABEL, resumenItems } from './estadoVentaRepuesto'
 import { MONTO_OCULTO, esMontoOculto } from '../../utils/montoOculto'
 
@@ -37,7 +39,7 @@ function OcClienteSelector({ value, onChange }) {
     setQuery(q)
     if (q.length < 1) { setOpc([]); setAbierto(false); return }
     try {
-      const r = await api.get('/finanzas/oc-clientes', { params: { buscar: q } })
+      const r = await api.get('/finanzas/oc-clientes', { params: { buscar: q, tipo: 'repuesto' } })
       setOpc(r.data.slice(0, 10))
       setAbierto(true)
     } catch { setOpc([]) }
@@ -164,25 +166,45 @@ export default function VentaRepuestos() {
   const canWrite = puedeEscribir('venta_repuestos')
   const canStock = puedeEscribir('stock')
 
+  // Llegada desde "Crear pedido de repuesto" en Finanzas → OC Clientes
+  // (?oc=<id>): abre el alta de pedido con esa OC (y su cliente) precargados.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepLinkOc = useRef(searchParams.get('oc'))
+
   const [pedidos, setPedidos] = useState([])
   const [loading, setLoading] = useState(true)
   const [autorizantes, setAutorizantes] = useState([])
   const [filtroEstado, setFiltroEstado] = useState('')
+  const [filtroDesde, setFiltroDesde] = useState('')
+  const [filtroHasta, setFiltroHasta] = useState('')
   const [buscar, setBuscar] = useState('')
 
   const cargar = useCallback(() => {
     setLoading(true)
-    api.get('/venta-repuestos', { params: { estado: filtroEstado || undefined, buscar: buscar || undefined } })
+    api.get('/venta-repuestos', { params: {
+      estado: filtroEstado || undefined, buscar: buscar || undefined,
+      desde: filtroDesde || undefined, hasta: filtroHasta || undefined,
+    } })
       .then(r => setPedidos(r.data))
       .catch(e => console.error(e))
       .finally(() => setLoading(false))
-  }, [filtroEstado, buscar])
+  }, [filtroEstado, buscar, filtroDesde, filtroHasta])
 
   useEffect(() => { cargar() }, [cargar])
   useEffect(() => { api.get('/stock/autorizantes').then(r => setAutorizantes(r.data)).catch(e => console.error(e)) }, [])
 
-  /* ── Nuevo pedido ──────────────────────────────────────────────── */
+  // OC de Cliente (tipo Repuesto) sin pedido armado todavía — punto de
+  // partida visible para arrancar un pedido nuevo, sin tener que buscar a
+  // mano el N° de OC.
+  const [ocDisponibles, setOcDisponibles] = useState([])
+  const cargarOcDisponibles = useCallback(() => {
+    api.get('/venta-repuestos/oc-disponibles').then(r => setOcDisponibles(r.data)).catch(e => console.error(e))
+  }, [])
+  useEffect(() => { cargarOcDisponibles() }, [cargarOcDisponibles])
+
+  /* ── Nuevo pedido / editar pedido pendiente ────────────────────── */
   const [abierto, setAbierto] = useState(false)
+  const [editandoId, setEditandoId] = useState(null) // null = alta nueva; si no, id del pedido que se está editando
   const [form, setForm] = useState(FORM_VACIO)
   const [items, setItems] = useState([])
   const [busquedaProd, setBusquedaProd] = useState('')
@@ -191,7 +213,27 @@ export default function VentaRepuestos() {
   const [error, setError] = useState('')
 
   const nuevoPedido = () => {
+    setEditandoId(null)
     setForm(FORM_VACIO); setItems([]); setBusquedaProd(''); setSugsProd([]); setError(''); setAbierto(true)
+  }
+
+  // Editar un pedido que sigue en 'Pendiente' (nada retirado todavía) — el
+  // backend acepta cambiar cliente/OC/ítems/observaciones mientras no haya
+  // ningún retiro cargado; una vez que se retira algo, se bloquea allá y acá
+  // ya no se ofrece el botón.
+  const editarPedido = ped => {
+    setEditandoId(ped.id)
+    setForm({
+      ocCliente: ped.oc_cliente_id ? { id: ped.oc_cliente_id, numero_oc: ped.oc_cliente_numero, cliente_id: ped.cliente_id, cli_nombre_cat: ped.cliente_nombre } : null,
+      cliente: { id: ped.cliente_id, nombre: ped.cliente_nombre },
+      autorizado_por_id: ped.autorizado_por_id || '',
+      observaciones: ped.observaciones || '',
+    })
+    setItems(ped.items.map(it => ({
+      producto_id: it.producto_id, codigo: it.codigo, descripcion: it.descripcion, unidad: it.unidad,
+      stock_actual: it.stock_actual, cantidad: it.cantidad, precio_unit: it.precio_unit,
+    })))
+    setBusquedaProd(''); setSugsProd([]); setError(''); setAbierto(true)
   }
 
   const buscarProducto = txt => {
@@ -214,6 +256,21 @@ export default function VentaRepuestos() {
   const elegirOc = oc => setForm(p => ({ ...p, ocCliente: oc, cliente: { id: oc.cliente_id, nombre: oc.cli_nombre_cat || oc.cliente } }))
   const quitarOc = () => setForm(p => ({ ...p, ocCliente: null, cliente: null }))
 
+  useEffect(() => {
+    const ocId = deepLinkOc.current
+    if (!ocId) return
+    deepLinkOc.current = null
+    setSearchParams({}, { replace: true })
+    api.get('/finanzas/oc-clientes', { params: { id: ocId } })
+      .then(r => {
+        const oc = r.data[0]
+        if (!oc) return
+        nuevoPedido()
+        elegirOc(oc)
+      })
+      .catch(e => console.error(e))
+  }, [])
+
   const quitarItem = idx => setItems(prev => prev.filter((_, i) => i !== idx))
   const setItemCampo = (idx, campo, val) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, [campo]: val } : it))
 
@@ -226,16 +283,18 @@ export default function VentaRepuestos() {
     }
     if (!form.autorizado_por_id) return setError('Elegí quién autoriza el retiro de stock')
     setGuardando(true)
+    const body = {
+      cliente_id: form.cliente.id,
+      oc_cliente_id: form.ocCliente?.id || null,
+      observaciones: form.observaciones,
+      autorizado_por_id: form.autorizado_por_id,
+      items: items.map(it => ({ producto_id: it.producto_id, cantidad: it.cantidad, precio_unit: it.precio_unit })),
+    }
     try {
-      await api.post('/venta-repuestos', {
-        cliente_id: form.cliente.id,
-        oc_cliente_id: form.ocCliente?.id || null,
-        observaciones: form.observaciones,
-        autorizado_por_id: form.autorizado_por_id,
-        items: items.map(it => ({ producto_id: it.producto_id, cantidad: it.cantidad, precio_unit: it.precio_unit })),
-      })
-      setAbierto(false)
-      cargar()
+      if (editandoId) await api.put(`/venta-repuestos/${editandoId}`, body)
+      else await api.post('/venta-repuestos', body)
+      setAbierto(false); setEditandoId(null)
+      cargar(); cargarOcDisponibles()
     } catch (e) {
       setError(e.response?.data?.error || 'Error al guardar')
     } finally { setGuardando(false) }
@@ -245,7 +304,7 @@ export default function VentaRepuestos() {
     if (!confirm(`¿Cancelar el pedido #${ped.id}?`)) return
     try {
       await api.delete(`/venta-repuestos/${ped.id}`)
-      cargar()
+      cargar(); cargarOcDisponibles()
     } catch (e) { alert(e.response?.data?.error || 'Error al cancelar') }
   }
 
@@ -341,10 +400,34 @@ export default function VentaRepuestos() {
         Seguimiento de venta de repuestos: retirado de stock → entregado al cliente → facturado → cobrado.
       </p>
 
+      {!abierto && canWrite && ocDisponibles.length > 0 && (
+        <div className="card border-0 shadow-sm mb-4">
+          <div className="card-body py-2">
+            <h6 className="fw-semibold mb-2" style={{ fontSize: '0.85rem' }}>
+              <i className="bi bi-file-earmark-text me-1 text-primary" />
+              OC de repuestos pendientes de armar pedido
+            </h6>
+            <div className="d-flex flex-column gap-1">
+              {ocDisponibles.map(oc => (
+                <button key={oc.id} type="button"
+                  className="btn btn-outline-primary btn-sm d-flex justify-content-between align-items-center text-start"
+                  onClick={() => { nuevoPedido(); elegirOc(oc) }}>
+                  <span>
+                    <span className="badge bg-secondary me-2" style={{ fontFamily: 'monospace' }}>{oc.numero_oc}</span>
+                    {oc.cli_nombre_cat || oc.cliente}
+                  </span>
+                  <span className="text-muted small">{fmtF(oc.fecha_oc)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {abierto && (
         <div className="card border-0 shadow-sm mb-4">
           <div className="card-body">
-            <h6 className="fw-semibold mb-3">Nuevo pedido</h6>
+            <h6 className="fw-semibold mb-3">{editandoId ? `Editar pedido #${editandoId}` : 'Nuevo pedido'}</h6>
             <div className="row g-2 mb-2">
               <div className="col-md-5">
                 <label className="form-label small fw-semibold">OC de Cliente <span className="fw-normal text-muted">(si ya está cargada en Finanzas)</span></label>
@@ -433,16 +516,16 @@ export default function VentaRepuestos() {
             <div className="d-flex gap-2 mt-3">
               <button className="btn btn-primary btn-sm" onClick={guardarPedido} disabled={guardando}>
                 {guardando ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-check-lg me-1" />}
-                Guardar pedido
+                {editandoId ? 'Guardar cambios' : 'Guardar pedido'}
               </button>
-              <button className="btn btn-outline-secondary btn-sm" onClick={() => setAbierto(false)}>Cancelar</button>
+              <button className="btn btn-outline-secondary btn-sm" onClick={() => { setAbierto(false); setEditandoId(null) }}>Cancelar</button>
             </div>
           </div>
         </div>
       )}
 
-      <div className="d-flex gap-2 flex-wrap mb-3">
-        <input className="form-control form-control-sm" style={{ width: 260 }} placeholder="Buscar cliente o N° OC..."
+      <div className="d-flex gap-2 flex-wrap align-items-center mb-3">
+        <input className="form-control form-control-sm" style={{ width: 260 }} placeholder="Buscar cliente, N° OC o material..."
           value={buscar} onChange={e => setBuscar(e.target.value)} />
         <select className="form-select form-select-sm" style={{ width: 180 }} value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}>
           <option value="">Todos los estados</option>
@@ -452,6 +535,16 @@ export default function VentaRepuestos() {
           <option value="Entregado">Entregado</option>
           <option value="Cancelado">Cancelado</option>
         </select>
+        <span className="text-muted small">Desde</span>
+        <DateInput style={{ width: 130 }} value={filtroDesde} onChange={setFiltroDesde} />
+        <span className="text-muted small">Hasta</span>
+        <DateInput style={{ width: 130 }} value={filtroHasta} onChange={setFiltroHasta} />
+        {(buscar || filtroEstado || filtroDesde || filtroHasta) && (
+          <button className="btn btn-sm btn-outline-secondary py-0 px-2"
+            onClick={() => { setBuscar(''); setFiltroEstado(''); setFiltroDesde(''); setFiltroHasta('') }}>
+            <i className="bi bi-x" />
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -481,9 +574,14 @@ export default function VentaRepuestos() {
                     <div className="d-flex align-items-center gap-2">
                       <span className={`badge ${ESTADO_LABEL[est]?.cls || 'bg-secondary'}`}>{ESTADO_LABEL[est]?.txt || est}</span>
                       {ped.estado === 'Pendiente' && canWrite && (
-                        <button className="btn btn-sm btn-outline-danger py-0 px-2" title="Cancelar pedido" onClick={() => cancelarPedido(ped)}>
-                          <i className="bi bi-x-lg" />
-                        </button>
+                        <>
+                          <button className="btn btn-sm btn-outline-primary py-0 px-2" title="Editar pedido" onClick={() => editarPedido(ped)}>
+                            <i className="bi bi-pencil" />
+                          </button>
+                          <button className="btn btn-sm btn-outline-danger py-0 px-2" title="Cancelar pedido" onClick={() => cancelarPedido(ped)}>
+                            <i className="bi bi-x-lg" />
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>

@@ -3,7 +3,7 @@ const { db } = require('../db/database');
 
 // "tareas_gerencia" (Mis Tareas) no es un módulo con permiso asignable — es
 // abierto a cualquier usuario autenticado, ver routes/tareasGerencia.js.
-const MODULOS = ['stock','pedidos_stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios','rrhh','partes','codificacion','materiales','calidad','crm','compras_informes','analisis_proyectos','costeo_equipos','venta_repuestos','electrico'];
+const MODULOS = ['stock','pedidos_stock','compras','ventas','proyectos','produccion','finanzas','mantenimiento','administracion','usuarios','rrhh','partes','codificacion','materiales','calidad','crm','compras_informes','analisis_proyectos','costeo_equipos','venta_repuestos','electrico','entrega_documentacion'];
 
 const MODULOS_LABEL = {
   stock:'Stock', pedidos_stock:'Pedido de Stock', compras:'Compras', ventas:'Ventas', proyectos:'Proyectos',
@@ -12,6 +12,12 @@ const MODULOS_LABEL = {
   codificacion:'Codificación', materiales:'Materiales', calidad:'Calidad', crm:'CRM',
   compras_informes:'Compras — Informes y exportación', analisis_proyectos:'Análisis de Proyectos',
   costeo_equipos:'Costeo de Equipos', venta_repuestos:'Venta de Repuestos', electrico:'Eléctrico',
+  // Permiso liviano, independiente de proyectos.escribir: solo habilita subir
+  // y editar archivos en la pestaña "Entrega Doc." de un proyecto — no da
+  // acceso a crear/editar proyectos, Form 30, Materiales previstos ni Plan.
+  // Sigue exigiendo proyectos.leer (para poder entrar al módulo y elegir el
+  // proyecto); ver puedeEntregaDoc en routes/proyectos.js.
+  entrega_documentacion:'Proyectos — Entrega de Documentación',
 };
 
 // padre → [submodulos]: acceso al padre otorga el mismo acceso a todos sus submodulos

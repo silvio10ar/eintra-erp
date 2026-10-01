@@ -1,5 +1,8 @@
 'use strict'
 const express = require('express')
+const path    = require('path')
+const fs      = require('fs')
+const multer  = require('multer')
 const { body, validationResult } = require('express-validator')
 const { db }  = require('../db/database')
 const { verificarToken } = require('../middleware/auth')
@@ -10,6 +13,58 @@ const router = express.Router()
 
 const puedeL = req => !!(req.permisos?.proyectos?.leer || req.permisos?.proyectos?.escribir)
 const puedeE = req => !!req.permisos?.proyectos?.escribir
+// Permiso liviano e independiente de proyectos.escribir — deja subir/editar
+// archivos en "Entrega Doc." sin dar acceso al resto del módulo (crear/editar
+// proyectos, Form 30, Materiales, Plan). Sigue exigiendo proyectos.leer para
+// entrar al módulo y elegir el proyecto (eso ya lo controla la ruta del
+// frontend, no hace falta repetirlo acá).
+const puedeEntregaDoc = req => puedeE(req) || !!req.permisos?.entrega_documentacion?.escribir
+// Para LEER la propia lista/archivo de "Entrega Doc." de un proyecto —
+// alguien con solo entrega_documentacion también tiene que poder verla, no
+// solo escribir a ciegas. No se usa para GET /:id (trae costos del proyecto)
+// ni para /documentos ni /materiales — esos siguen exigiendo proyectos.leer,
+// el frontend ni los pide para este permiso liviano.
+const puedeVerEntregaDoc = req => puedeL(req) || !!req.permisos?.entrega_documentacion?.escribir
+
+// ── Archivo de Entrega de Documentación — una carpeta por proyecto ────────────
+const backendRoot = path.resolve(__dirname, '..')
+const rawUploads   = process.env.UPLOADS_PATH || './uploads'
+const uploadsDir   = path.isAbsolute(rawUploads) ? rawUploads : path.resolve(backendRoot, rawUploads)
+const ENTREGAS_DIR = path.join(uploadsDir, 'entregas_doc')
+
+// Documentación de proyectos puede ser de cualquier tipo de negocio (PDF, planos
+// DWG, Excel, Word, imágenes, ZIP) — en vez de una lista blanca de mimetypes (que
+// rompería casos de uso reales), se bloquea por extensión lo que podría ejecutarse
+// como script si alguna vez se sirviera o se abriera directo en el navegador.
+const EXTENSIONES_BLOQUEADAS_ENTREGA = ['.html', '.htm', '.svg', '.js', '.mjs', '.php', '.exe', '.sh', '.bat', '.cmd', '.ps1', '.jar', '.com', '.scr', '.vbs']
+
+const uploadEntregaDoc = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const dir = path.join(ENTREGAS_DIR, String(req.params.id))
+      fs.mkdirSync(dir, { recursive: true })
+      cb(null, dir)
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || ''
+      // Los dos archivos (PDF + fuente) de una misma entrega pueden llegar en
+      // el mismo milisegundo — el fieldname evita que se pisen entre sí.
+      cb(null, `${Date.now()}_${file.fieldname}${ext}`)
+    },
+  }),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase()
+    cb(null, !EXTENSIONES_BLOQUEADAS_ENTREGA.includes(ext))
+  },
+}).fields([{ name: 'archivo', maxCount: 1 }, { name: 'archivo_fuente', maxCount: 1 }])
+
+// Borra el archivo anterior de una entrega (al reemplazarlo o al eliminar el
+// registro) — no falla si el archivo ya no está, solo lo intenta.
+function borrarArchivoEntrega(proyectoId, archivoPath) {
+  if (!archivoPath) return
+  try { fs.unlinkSync(path.join(ENTREGAS_DIR, String(proyectoId), archivoPath)) } catch (_) {}
+}
 
 // ── Listado ───────────────────────────────────────────────────────────────────
 router.get('/', verificarToken, (req, res) => {
@@ -287,38 +342,95 @@ router.post('/importar', verificarToken, (req, res) => {
 })
 
 router.get('/:id/entregas-doc', verificarToken, (req, res) => {
-  if (!puedeL(req)) return res.status(403).json({ error: 'Sin permisos' })
+  if (!puedeVerEntregaDoc(req)) return res.status(403).json({ error: 'Sin permisos' })
   const rows = db.prepare('SELECT * FROM proyecto_entregas_doc WHERE proyecto_id=? ORDER BY fecha DESC, id DESC').all(req.params.id)
   res.json(rows)
 })
 
-router.post('/:id/entregas-doc', verificarToken, (req, res) => {
-  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+// Datos para autocompletar B1 (cliente) y B2 (OC) del código de plano, sin
+// depender de que el proyecto tenga cargada una OC Cliente en Finanzas — el
+// código del cliente sale directo de proyectos.cliente_id, siempre disponible.
+// El N° OC preferido es el de la OC Cliente activa más reciente; si el
+// proyecto no tiene ninguna cargada ahí, se reusa el último N° OC que ya se
+// haya tipeado a mano en una entrega anterior de este mismo proyecto — mejor
+// eso que dejarlo vacío. Gateado igual que /entregas-doc (permiso liviano).
+router.get('/:id/entregas-doc-base', verificarToken, (req, res) => {
+  if (!puedeVerEntregaDoc(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const p = db.prepare('SELECT cliente_id FROM proyectos WHERE id=?').get(req.params.id)
+  const cliente = p?.cliente_id ? db.prepare('SELECT codigo FROM clientes WHERE id=?').get(p.cliente_id) : null
+  const ocFinanzas = db.prepare('SELECT numero_oc FROM fin_oc_clientes WHERE proyecto_id=? AND activo=1 ORDER BY id DESC LIMIT 1').get(req.params.id)
+  const ocPrevia = !ocFinanzas ? db.prepare("SELECT nro_oc FROM proyecto_entregas_doc WHERE proyecto_id=? AND nro_oc!='' ORDER BY id DESC LIMIT 1").get(req.params.id) : null
+  res.json({
+    cliente_codigo: cliente?.codigo || '',
+    numero_oc: ocFinanzas?.numero_oc || ocPrevia?.nro_oc || '',
+  })
+})
+
+// Los archivos son opcionales: la grilla ya se usaba antes sin ellos (importación
+// de Form 56, registros solo de texto) y eso sigue funcionando igual. "archivo"
+// es siempre el PDF entregado; "archivo_fuente" es el editable (DWG/DOC/XLS/etc.)
+// del que salió ese PDF.
+router.post('/:id/entregas-doc', verificarToken, uploadEntregaDoc, (req, res) => {
+  if (!puedeEntregaDoc(req)) return res.status(403).json({ error: 'Sin permisos' })
   const { fecha, nro_oc, formato, documento, plano_nivel, codigo_plano, tipo, individuo, comentarios, modulo } = req.body
   if (!fecha) return res.status(400).json({ error: 'La fecha es requerida' })
   const p = db.prepare('SELECT nombre FROM proyectos WHERE id=?').get(req.params.id)
+  const archivo = req.files?.archivo?.[0]
+  const archivoFuente = req.files?.archivo_fuente?.[0]
   const r = db.prepare(`
-    INSERT INTO proyecto_entregas_doc (proyecto_id,proyecto_nombre,fecha,nro_oc,formato,documento,plano_nivel,codigo_plano,tipo,individuo,comentarios,modulo,created_by)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).run(req.params.id, p?.nombre||'', fecha, nro_oc||'', formato||'', documento||'', plano_nivel||'', codigo_plano||'', tipo||'S', individuo||'', comentarios||'', parseInt(modulo)||0, req.usuario.id)
+    INSERT INTO proyecto_entregas_doc
+      (proyecto_id,proyecto_nombre,fecha,nro_oc,formato,documento,plano_nivel,codigo_plano,tipo,individuo,comentarios,modulo,archivo_path,archivo_nombre_original,archivo_fuente_path,archivo_fuente_nombre_original,created_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(req.params.id, p?.nombre||'', fecha, nro_oc||'', formato||'', documento||'', plano_nivel||'', codigo_plano||'', tipo||'S', individuo||'', comentarios||'', parseInt(modulo)||0,
+         archivo?.filename || '', archivo?.originalname || '', archivoFuente?.filename || '', archivoFuente?.originalname || '', req.usuario.id)
   res.status(201).json(db.prepare('SELECT * FROM proyecto_entregas_doc WHERE id=?').get(r.lastInsertRowid))
 })
 
-router.put('/:id/entregas-doc/:ent_id', verificarToken, (req, res) => {
-  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+router.put('/:id/entregas-doc/:ent_id', verificarToken, uploadEntregaDoc, (req, res) => {
+  if (!puedeEntregaDoc(req)) return res.status(403).json({ error: 'Sin permisos' })
   const ent = db.prepare('SELECT * FROM proyecto_entregas_doc WHERE id=? AND proyecto_id=?').get(req.params.ent_id, req.params.id)
   if (!ent) return res.status(404).json({ error: 'No encontrado' })
   const { fecha, nro_oc, formato, documento, plano_nivel, codigo_plano, tipo, individuo, comentarios, modulo } = req.body
-  db.prepare(`UPDATE proyecto_entregas_doc SET fecha=?,nro_oc=?,formato=?,documento=?,plano_nivel=?,codigo_plano=?,tipo=?,individuo=?,comentarios=?,modulo=? WHERE id=?`)
-    .run(fecha??ent.fecha, nro_oc??ent.nro_oc, formato??ent.formato, documento??ent.documento,
+  const archivo = req.files?.archivo?.[0]
+  const archivoFuente = req.files?.archivo_fuente?.[0]
+  // Un archivo nuevo reemplaza al anterior — se borra el viejo del disco para
+  // no dejar huérfanos. Los dos archivos se reemplazan de forma independiente.
+  if (archivo) borrarArchivoEntrega(req.params.id, ent.archivo_path)
+  if (archivoFuente) borrarArchivoEntrega(req.params.id, ent.archivo_fuente_path)
+  db.prepare(`
+    UPDATE proyecto_entregas_doc SET fecha=?,nro_oc=?,formato=?,documento=?,plano_nivel=?,codigo_plano=?,tipo=?,individuo=?,comentarios=?,modulo=?,archivo_path=?,archivo_nombre_original=?,archivo_fuente_path=?,archivo_fuente_nombre_original=?
+    WHERE id=?
+  `).run(fecha??ent.fecha, nro_oc??ent.nro_oc, formato??ent.formato, documento??ent.documento,
          plano_nivel??ent.plano_nivel, codigo_plano??ent.codigo_plano, tipo??ent.tipo, individuo??ent.individuo, comentarios??ent.comentarios,
          modulo!=null ? parseInt(modulo)||0 : ent.modulo,
+         archivo ? archivo.filename : ent.archivo_path, archivo ? archivo.originalname : ent.archivo_nombre_original,
+         archivoFuente ? archivoFuente.filename : ent.archivo_fuente_path, archivoFuente ? archivoFuente.originalname : ent.archivo_fuente_nombre_original,
          req.params.ent_id)
   res.json(db.prepare('SELECT * FROM proyecto_entregas_doc WHERE id=?').get(req.params.ent_id))
 })
 
+router.get('/:id/entregas-doc/:ent_id/archivo', verificarToken, (req, res) => {
+  if (!puedeVerEntregaDoc(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const ent = db.prepare('SELECT * FROM proyecto_entregas_doc WHERE id=? AND proyecto_id=?').get(req.params.ent_id, req.params.id)
+  if (!ent || !ent.archivo_path) return res.status(404).json({ error: 'Esta entrega no tiene un archivo cargado' })
+  const full = path.join(ENTREGAS_DIR, String(req.params.id), ent.archivo_path)
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Archivo no encontrado en el servidor' })
+  res.download(full, ent.archivo_nombre_original || path.basename(full))
+})
+
+router.get('/:id/entregas-doc/:ent_id/archivo-fuente', verificarToken, (req, res) => {
+  if (!puedeVerEntregaDoc(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const ent = db.prepare('SELECT * FROM proyecto_entregas_doc WHERE id=? AND proyecto_id=?').get(req.params.ent_id, req.params.id)
+  if (!ent || !ent.archivo_fuente_path) return res.status(404).json({ error: 'Esta entrega no tiene un archivo fuente cargado' })
+  const full = path.join(ENTREGAS_DIR, String(req.params.id), ent.archivo_fuente_path)
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Archivo no encontrado en el servidor' })
+  res.download(full, ent.archivo_fuente_nombre_original || path.basename(full))
+})
+
 router.delete('/:id/entregas-doc/:ent_id', verificarToken, (req, res) => {
-  if (!puedeE(req)) return res.status(403).json({ error: 'Sin permisos' })
+  if (!puedeEntregaDoc(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const ent = db.prepare('SELECT * FROM proyecto_entregas_doc WHERE id=? AND proyecto_id=?').get(req.params.ent_id, req.params.id)
+  if (ent) { borrarArchivoEntrega(req.params.id, ent.archivo_path); borrarArchivoEntrega(req.params.id, ent.archivo_fuente_path) }
   db.prepare('DELETE FROM proyecto_entregas_doc WHERE id=? AND proyecto_id=?').run(req.params.ent_id, req.params.id)
   res.json({ ok: true })
 })

@@ -67,6 +67,10 @@ const uploadsDir = process.env.UPLOADS_PATH || path.resolve(__dirname, '../uploa
 // cuando pasan a obsoletos) — se descargan solo por la ruta autenticada
 // GET /api/v1/calidad/documentos/:id/archivo, nunca de forma estática/pública.
 app.use('/uploads/documentos_calidad', (req, res) => res.status(403).json({ error: 'Acceso restringido' }));
+// Mismo criterio para Entrega de Documentación de Proyectos: el permiso liviano
+// entrega_documentacion controla el acceso vía GET /:id/entregas-doc/:ent_id/archivo
+// (proyectos.js) — servir esta carpeta de forma estática bypasearía ese chequeo.
+app.use('/uploads/entregas_doc', (req, res) => res.status(403).json({ error: 'Acceso restringido' }));
 app.use('/uploads', express.static(uploadsDir));
 
 // Health-check: para monitoreo externo y para el propio deploy (ver deploy.ps1)

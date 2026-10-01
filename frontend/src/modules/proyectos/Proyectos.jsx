@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useLocation } from 'react-router-dom'
 import api from '../../api/client'
-import { puedeEscribir, getUser } from '../../store/authStore'
+import { puedeEscribir, puedeLeer, getUser } from '../../store/authStore'
 import EmpleadoSelect from '../../components/EmpleadoSelect'
 import DateInput from '../../components/DateInput'
 import PlanGantt from './PlanGantt'
@@ -31,13 +31,13 @@ const TIPOS_ENT      = [
 ]
 const hoyStr = () => new Date().toISOString().slice(0, 10)
 const FORM_ENT_VACIO = { fecha: '', nro_oc: '', formato: '', documento: '', plano_nivel: '', codigo_plano: '', tipo: 'S', individuo: '', comentarios: '', modulo: 0 }
-const COD_BUILDER_VACIO = { b1: '', b2: '', b3: '', b5: '' }
+const COD_BUILDER_VACIO = { b1: '', b2: '', b3: '', b5: '', b6: '' }
 
-// Ensambla el código de plano: B1-B2-B3-B4-B5
-const ensamblarCodigo = (b1, b2, b3, b4, b5) =>
-  [b1, b2, b3, b4, b5].filter(Boolean).join('-')
+// Ensambla el código de plano: B1-B2-B3-B4-B5-B6
+const ensamblarCodigo = (b1, b2, b3, b4, b5, b6) =>
+  [b1, b2, b3, b4, b5, b6].filter(Boolean).join('-')
 
-// Intenta parsear un código existente en sus partes B1..B5
+// Intenta parsear un código existente en sus partes B1..B6
 const parsearCodigo = (cod, nivel) => {
   if (!cod) return COD_BUILDER_VACIO
   const parts = cod.split('-')
@@ -45,12 +45,16 @@ const parsearCodigo = (cod, nivel) => {
     b1: parts[0] || '',
     b2: parts[1] || '',
     b3: parts[2] || '',
-    b5: parts.slice(4).join('-') || '',
+    b5: parts[4] || '',
+    b6: parts[5] || '',
   }
 }
 
-// B2 = últimos 6 dígitos del N° OC
 const ultimos6DeOC = v => (v.match(/\d/g) || []).join('').slice(-6)
+// B5/B6 = 2 caracteres alfanuméricos (hoja / versión)
+const dosAlfanumericos = v => (v.match(/[a-zA-Z0-9]/g) || []).join('').toUpperCase().slice(0, 2)
+// B2 = últimos 6 dígitos del Nº OC + 2 dígitos del número de módulo
+const armarB2 = (nroOc, modulo) => ultimos6DeOC(nroOc) + String(parseInt(modulo, 10) || 0).padStart(2, '0')
 const FORM_MAT_VACIO = { producto_id: '', codigo: '', descripcion: '', unidad: 'UND.', cantidad: 1, observaciones: '', modulo: 0 }
 
 const fmtF     = iso => iso ? iso.slice(0,10).split('-').reverse().join('/') : '—'
@@ -73,6 +77,15 @@ const colorDoc = e => {
 
 export default function Proyectos() {
   const canWrite = puedeEscribir('proyectos')
+  // Permiso liviano: deja subir/editar archivos en "Entrega Doc." sin dar
+  // acceso al resto del módulo (crear/editar proyectos, Form 30, Materiales,
+  // Plan) — esos siguen exigiendo canWrite (proyectos.escribir).
+  const canWriteEntregas = canWrite || puedeEscribir('entrega_documentacion')
+  // Alguien que entró solo por el permiso liviano de Entrega Documentación
+  // (sin proyectos.leer/escribir) no tiene que ver nada más del módulo: ni
+  // costos de proyecto, ni Form 30, ni Materiales, ni Plan — solo la lista
+  // (con datos livianos, sin costos) y la pestaña Entrega Doc.
+  const tieneAccesoProyectos = puedeLeer('proyectos')
   const isAdmin  = getUser()?.rol === 'admin'
   const location  = useLocation()
 
@@ -90,6 +103,10 @@ export default function Proyectos() {
   const [tab,      setTab]      = useState('form30')
   const [savDoc,   setSavDoc]   = useState(null)  // id del doc en edición
   const [ocCliente, setOcCliente] = useState(null)
+  // Base para autocompletar B1/B2 del código de plano — código de cliente del
+  // proyecto + N° OC vigente (Finanzas, o el último tipeado a mano si no hay
+  // ninguna cargada ahí). Independiente de `ocCliente` (que puede no existir).
+  const [baseEntregaDoc, setBaseEntregaDoc] = useState({ cliente_codigo: '', numero_oc: '' })
 
   /* Modal nuevo / editar proyecto */
   const [modalP,  setModalP]  = useState(null)   // null | 'nuevo' | objeto
@@ -105,15 +122,17 @@ export default function Proyectos() {
   const [codBuilder,  setCodBuilder]  = useState(COD_BUILDER_VACIO)
   const [savEnt,      setSavEnt]      = useState(false)
   const [errEnt,      setErrEnt]      = useState('')
+  const [archivoEnt,  setArchivoEnt]  = useState(null)  // File PDF elegido en el modal, o null
+  const [archivoFuenteEnt, setArchivoFuenteEnt] = useState(null)  // File fuente (DWG/DOC/XLS/etc.), o null
   const [savPlantilla, setSavPlantilla] = useState(false)
 
   const updBuilder = (field, val) => {
     const nb = {...codBuilder, [field]: val}
     setCodBuilder(nb)
-    setFormEnt(p => ({...p, codigo_plano: ensamblarCodigo(nb.b1, nb.b2, nb.b3, p.plano_nivel, nb.b5)}))
+    setFormEnt(p => ({...p, codigo_plano: ensamblarCodigo(nb.b1, nb.b2, nb.b3, p.plano_nivel, nb.b5, nb.b6)}))
   }
   const updNivel = val => {
-    setFormEnt(p => ({...p, plano_nivel: val, codigo_plano: ensamblarCodigo(codBuilder.b1, codBuilder.b2, codBuilder.b3, val, codBuilder.b5)}))
+    setFormEnt(p => ({...p, plano_nivel: val, codigo_plano: ensamblarCodigo(codBuilder.b1, codBuilder.b2, codBuilder.b3, val, codBuilder.b5, codBuilder.b6)}))
   }
 
   /* Materiales previstos */
@@ -147,28 +166,58 @@ export default function Proyectos() {
 
   const cargar = useCallback(() => {
     setLoading(true)
+    if (!tieneAccesoProyectos) {
+      // Sin proyectos.leer: /proyectos (que trae costo_total) está fuera de
+      // alcance — se usa el mismo listado liviano y sin costos que ya
+      // consumen Partes/Stock para armar selectores de proyecto, filtrado acá
+      // mismo ya que ese endpoint no acepta query params.
+      api.get('/rrhh/proyectos')
+        .then(r => {
+          const q = buscar.trim().toLowerCase()
+          let rows = r.data
+          if (q) rows = rows.filter(p => `${p.codigo} ${p.nombre} ${p.cliente_nombre || ''}`.toLowerCase().includes(q))
+          if (filtEst) rows = rows.filter(p => p.estado === filtEst)
+          setProyectos(rows)
+        })
+        .finally(() => setLoading(false))
+      return
+    }
     const p = {}
     if (buscar)  p.buscar = buscar
     if (filtEst) p.estado = filtEst
     api.get('/proyectos', { params: p })
       .then(r => setProyectos(r.data))
       .finally(() => setLoading(false))
-  }, [buscar, filtEst])
+  }, [buscar, filtEst, tieneAccesoProyectos])
 
   useEffect(() => { cargar() }, [cargar])
 
   const verDetalle = p => {
-    setSelP(p); setLoadDet(true); setDetalle(null); setDocs([]); setEntregas([]); setMateriales([]); setTab('form30'); setOcCliente(null)
-    Promise.all([
-      api.get(`/proyectos/${p.id}`),
-      api.get(`/proyectos/${p.id}/documentos`),
-      api.get(`/proyectos/${p.id}/entregas-doc`),
-      api.get(`/proyectos/${p.id}/materiales`),
-    ]).then(([r1, r2, r3, r4]) => { setDetalle(r1.data); setDocs(r2.data); setEntregas(r3.data); setMateriales(r4.data) })
-      .finally(() => setLoadDet(false))
+    setSelP(p); setLoadDet(true); setDetalle(null); setDocs([]); setEntregas([]); setMateriales([])
+    setTab(tieneAccesoProyectos ? 'form30' : 'entregas'); setOcCliente(null)
+    if (!tieneAccesoProyectos) {
+      // Sin proyectos.leer: ni el detalle (trae costos), ni Form 30, ni
+      // Materiales están a su alcance — solo Entrega Doc., ya habilitada
+      // aparte con el permiso liviano.
+      api.get(`/proyectos/${p.id}/entregas-doc`)
+        .then(r => setEntregas(r.data))
+        .finally(() => setLoadDet(false))
+    } else {
+      Promise.all([
+        api.get(`/proyectos/${p.id}`),
+        api.get(`/proyectos/${p.id}/documentos`),
+        api.get(`/proyectos/${p.id}/entregas-doc`),
+        api.get(`/proyectos/${p.id}/materiales`),
+      ]).then(([r1, r2, r3, r4]) => { setDetalle(r1.data); setDocs(r2.data); setEntregas(r3.data); setMateriales(r4.data) })
+        .finally(() => setLoadDet(false))
+    }
     api.get('/finanzas/oc-clientes', { params: { proyecto_id: p.id } })
       .then(r => setOcCliente(r.data[0] || null))
       .catch(() => setOcCliente(null))
+    setBaseEntregaDoc({ cliente_codigo: '', numero_oc: '' })
+    api.get(`/proyectos/${p.id}/entregas-doc-base`)
+      .then(r => setBaseEntregaDoc(r.data))
+      .catch(() => setBaseEntregaDoc({ cliente_codigo: '', numero_oc: '' }))
   }
 
   const cargarEntregas = p => {
@@ -181,16 +230,42 @@ export default function Proyectos() {
   const guardarEntrega = async e => {
     e.preventDefault(); setSavEnt(true); setErrEnt('')
     try {
+      const fd = new FormData()
+      Object.entries(formEnt).forEach(([k, v]) => fd.append(k, v ?? ''))
+      if (archivoEnt) fd.append('archivo', archivoEnt)
+      if (archivoFuenteEnt) fd.append('archivo_fuente', archivoFuenteEnt)
       if (modalEnt === 'nuevo') {
-        const r = await api.post(`/proyectos/${selP.id}/entregas-doc`, formEnt)
+        const r = await api.post(`/proyectos/${selP.id}/entregas-doc`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
         setEntregas(prev => [r.data, ...prev])
       } else {
-        const r = await api.put(`/proyectos/${selP.id}/entregas-doc/${modalEnt.id}`, formEnt)
+        const r = await api.put(`/proyectos/${selP.id}/entregas-doc/${modalEnt.id}`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
         setEntregas(prev => prev.map(x => x.id === modalEnt.id ? r.data : x))
       }
       setModalEnt(null)
     } catch(err) { setErrEnt(err.response?.data?.error ?? 'Error al guardar') }
     finally { setSavEnt(false) }
+  }
+
+  const verArchivoEntrega = async (ent, fuente = false) => {
+    try {
+      const url_ = fuente ? 'archivo-fuente' : 'archivo'
+      const r = await api.get(`/proyectos/${selP.id}/entregas-doc/${ent.id}/${url_}`, { responseType: 'blob' })
+      // El nombre real (con su extensión original) viene en Content-Disposition,
+      // no en el nombre del archivo en disco (que es solo un timestamp) — sin
+      // leerlo de ahí, la descarga perdía el nombre y el formato con el que se
+      // subió (window.open con una blob URL tampoco lo aplica, por eso se
+      // cambia a un link con `download`, que sí respeta el nombre elegido).
+      const cd = r.headers['content-disposition'] || ''
+      const match = cd.match(/filename="?([^";]+)"?/)
+      const nombreOriginal = fuente ? ent.archivo_fuente_nombre_original : ent.archivo_nombre_original
+      const filename = match ? match[1] : (nombreOriginal || 'archivo')
+      const url = URL.createObjectURL(r.data)
+      const a = document.createElement('a')
+      a.href = url; a.download = filename
+      document.body.appendChild(a); a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) { alert(err.response?.data?.error || err.message || 'No se pudo descargar el archivo') }
   }
 
   const eliminarEntrega = async ent => {
@@ -571,30 +646,38 @@ export default function Proyectos() {
             )}
           </div>
 
-          {/* Tabs */}
+          {/* Tabs — sin proyectos.leer (solo el permiso liviano de Entrega
+              Documentación) no hay nada más que ofrecer: ni Form 30, ni
+              Materiales, ni Plan están a su alcance. */}
           <ul className="nav nav-tabs px-3 pt-1" style={{fontSize:'0.82rem'}}>
-            <li className="nav-item">
-              <button className={`nav-link py-1 ${tab==='form30'?'active':''}`} onClick={()=>setTab('form30')}>
-                <i className="bi bi-file-earmark-check me-1"/>Form 30
-              </button>
-            </li>
-            <li className="nav-item">
-              <button className={`nav-link py-1 ${tab==='materiales'?'active':''}`} onClick={()=>setTab('materiales')}>
-                <i className="bi bi-boxes me-1"/>Materiales
-                {materiales.length > 0 && <span className="badge bg-secondary ms-1" style={{fontSize:'0.65rem'}}>{materiales.length}</span>}
-              </button>
-            </li>
+            {tieneAccesoProyectos && (
+              <li className="nav-item">
+                <button className={`nav-link py-1 ${tab==='form30'?'active':''}`} onClick={()=>setTab('form30')}>
+                  <i className="bi bi-file-earmark-check me-1"/>Form 30
+                </button>
+              </li>
+            )}
+            {tieneAccesoProyectos && (
+              <li className="nav-item">
+                <button className={`nav-link py-1 ${tab==='materiales'?'active':''}`} onClick={()=>setTab('materiales')}>
+                  <i className="bi bi-boxes me-1"/>Materiales
+                  {materiales.length > 0 && <span className="badge bg-secondary ms-1" style={{fontSize:'0.65rem'}}>{materiales.length}</span>}
+                </button>
+              </li>
+            )}
             <li className="nav-item">
               <button className={`nav-link py-1 ${tab==='entregas'?'active':''}`} onClick={()=>setTab('entregas')}>
                 <i className="bi bi-file-arrow-up me-1"/>Entrega Doc.
                 {entregas.length > 0 && <span className="badge bg-secondary ms-1" style={{fontSize:'0.65rem'}}>{entregas.length}</span>}
               </button>
             </li>
-            <li className="nav-item">
-              <button className={`nav-link py-1 ${tab==='plan'?'active':''}`} onClick={()=>setTab('plan')}>
-                <i className="bi bi-bar-chart-steps me-1"/>Plan
-              </button>
-            </li>
+            {tieneAccesoProyectos && (
+              <li className="nav-item">
+                <button className={`nav-link py-1 ${tab==='plan'?'active':''}`} onClick={()=>setTab('plan')}>
+                  <i className="bi bi-bar-chart-steps me-1"/>Plan
+                </button>
+              </li>
+            )}
           </ul>
 
           {loadDet ? (
@@ -821,15 +904,15 @@ export default function Proyectos() {
                     <span className="small text-muted fw-medium">
                       <i className="bi bi-file-arrow-up me-1"/>Entregas / solicitudes de documentación
                     </span>
-                    {canWrite && (
+                    {canWriteEntregas && (
                       <button className="btn btn-sm btn-primary py-0 px-2" style={{fontSize:'0.78rem'}}
                         onClick={() => {
-                          const b1 = (selP?.codigo || '').slice(0, 5).toUpperCase()
-                          const nroOc = ocCliente?.numero_oc || ''
-                          const b2 = ultimos6DeOC(nroOc)
-                          setFormEnt({...FORM_ENT_VACIO, fecha: hoyStr(), nro_oc: nroOc, codigo_plano: ensamblarCodigo(b1,b2,'','','')})
+                          const b1 = (baseEntregaDoc.cliente_codigo || '').toUpperCase()
+                          const nroOc = baseEntregaDoc.numero_oc || ''
+                          const b2 = armarB2(nroOc, FORM_ENT_VACIO.modulo)
+                          setFormEnt({...FORM_ENT_VACIO, fecha: hoyStr(), nro_oc: nroOc, codigo_plano: ensamblarCodigo(b1,b2,'','','','')})
                           setCodBuilder({...COD_BUILDER_VACIO, b1, b2})
-                          setErrEnt(''); setModalEnt('nuevo')
+                          setErrEnt(''); setArchivoEnt(null); setArchivoFuenteEnt(null); setModalEnt('nuevo')
                         }}>
                         <i className="bi bi-plus-lg me-1"/>Agregar
                       </button>
@@ -851,6 +934,7 @@ export default function Proyectos() {
                             <th style={{width:60}}>Tipo</th>
                             <th style={{width:60}}>Formato</th>
                             <th>Documento</th>
+                            <th style={{width:70}} className="text-center">Archivo</th>
                             <th style={{width:100}}>Cód. Plano</th>
                             <th style={{width:55}}>Nivel</th>
                             <th style={{width:110}}>Individuo</th>
@@ -877,6 +961,24 @@ export default function Proyectos() {
                                     {ent.modulo > 0 && <span className="badge bg-secondary-subtle text-secondary-emphasis ms-1" style={{fontSize:'0.62rem'}}>Mód. {ent.modulo}</span>}
                                   </div>
                                 </td>
+                                <td className="text-center">
+                                  <div className="d-flex justify-content-center gap-1">
+                                    {ent.archivo_path ? (
+                                      <button type="button" className="btn btn-xs btn-link p-0 text-success" title={`PDF: ${ent.archivo_nombre_original||''}`}
+                                        onClick={() => verArchivoEntrega(ent)}>
+                                        <i className="bi bi-file-earmark-pdf-fill fs-6"/>
+                                      </button>
+                                    ) : (
+                                      <i className="bi bi-file-earmark-x text-muted" title="Sin PDF subido"/>
+                                    )}
+                                    {ent.archivo_fuente_path && (
+                                      <button type="button" className="btn btn-xs btn-link p-0 text-primary" title={`Fuente: ${ent.archivo_fuente_nombre_original||''}`}
+                                        onClick={() => verArchivoEntrega(ent, true)}>
+                                        <i className="bi bi-file-earmark-code-fill fs-6"/>
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
                                 <td className="text-muted" style={{fontFamily:'monospace',fontSize:'0.72rem'}}>{ent.codigo_plano||'—'}</td>
                                 <td className="text-muted text-center">{ent.plano_nivel||'—'}</td>
                                 <td className="text-muted">{ent.individuo||'—'}</td>
@@ -884,10 +986,10 @@ export default function Proyectos() {
                                   <div className="text-truncate text-muted" style={{maxWidth:160}} title={ent.comentarios}>{ent.comentarios||''}</div>
                                 </td>
                                 <td>
-                                  {canWrite && (
+                                  {canWriteEntregas && (
                                     <div className="d-flex gap-1">
                                       <button className="btn btn-xs py-0 px-1" style={{fontSize:'0.7rem'}} title="Editar"
-                                        onClick={() => { const cp=ent.codigo_plano||''; const nv=ent.plano_nivel||''; setFormEnt({fecha:ent.fecha,nro_oc:ent.nro_oc||'',formato:ent.formato||'',documento:ent.documento||'',plano_nivel:nv,codigo_plano:cp,tipo:ent.tipo||'S',individuo:ent.individuo||'',comentarios:ent.comentarios||'',modulo:ent.modulo||0}); setCodBuilder(parsearCodigo(cp,nv)); setErrEnt(''); setModalEnt(ent) }}>
+                                        onClick={() => { const cp=ent.codigo_plano||''; const nv=ent.plano_nivel||''; setFormEnt({fecha:ent.fecha,nro_oc:ent.nro_oc||'',formato:ent.formato||'',documento:ent.documento||'',plano_nivel:nv,codigo_plano:cp,tipo:ent.tipo||'S',individuo:ent.individuo||'',comentarios:ent.comentarios||'',modulo:ent.modulo||0}); setCodBuilder(parsearCodigo(cp,nv)); setErrEnt(''); setArchivoEnt(null); setArchivoFuenteEnt(null); setModalEnt(ent) }}>
                                         <i className="bi bi-pencil text-secondary"/>
                                       </button>
                                       <button className="btn btn-xs py-0 px-1" style={{fontSize:'0.7rem'}} title="Eliminar"
@@ -1128,7 +1230,7 @@ export default function Proyectos() {
                       onChange={e => {
                         const v = e.target.value
                         setFormEnt(p => ({...p, nro_oc: v}))
-                        updBuilder('b2', ultimos6DeOC(v))
+                        updBuilder('b2', armarB2(v, formEnt.modulo))
                       }}/>
                   </div>
                   <div className="col-md-3">
@@ -1156,21 +1258,25 @@ export default function Proyectos() {
                   </div>
                   <div className="col-md-2">
                     <label className="form-label small fw-medium">Individuo</label>
-                    <input className="form-control form-control-sm" placeholder="Persona"
+                    <EmpleadoSelect className="form-select form-select-sm"
                       value={formEnt.individuo}
-                      onChange={e => setFormEnt(p => ({...p, individuo: e.target.value}))}/>
+                      onChange={v => setFormEnt(p => ({...p, individuo: v}))}/>
                   </div>
                   <div className="col-md-2">
                     <label className="form-label small fw-medium" title="Para proyectos con varios equipos en paralelo — 0 son las entregas generales del proyecto, o alcanza con eso si es de un solo módulo.">Módulo</label>
                     <input type="number" className="form-control form-control-sm" min={0}
                       value={formEnt.modulo ?? 0}
-                      onChange={e => setFormEnt(p => ({...p, modulo: parseInt(e.target.value) || 0}))}/>
+                      onChange={e => {
+                        const m = parseInt(e.target.value) || 0
+                        setFormEnt(p => ({...p, modulo: m}))
+                        updBuilder('b2', armarB2(formEnt.nro_oc, m))
+                      }}/>
                   </div>
                   <div className="col-12">
                     <label className="form-label small fw-medium">
                       Código de plano
                       <span className="text-muted fw-normal ms-2" style={{fontSize:'0.7rem'}}>
-                        B1·Proyecto — B2·OC (6 díg.) — B3·Destino — B4·Nivel — B5·Hoja (PE-08)
+                        B1·Cliente — B2·OC (6 díg.) + Módulo (2 díg.) — B3·Destino — B4·Nivel — B5·Hoja (2 car.) — B6·Versión (2 car.) (PE-08)
                       </span>
                       {!isAdmin && (
                         <span className="text-muted fw-normal ms-2" style={{fontSize:'0.68rem'}}>
@@ -1179,13 +1285,13 @@ export default function Proyectos() {
                       )}
                     </label>
                     <div className="d-flex gap-1 align-items-center mb-1 flex-wrap">
-                      <input className="form-control form-control-sm" style={{width:72}} placeholder="B1 proyecto"
-                        title="Código del proyecto — solo el administrador puede editarlo manualmente"
+                      <input className="form-control form-control-sm" style={{width:72}} placeholder="B1 cliente"
+                        title="Código del cliente — solo el administrador puede editarlo manualmente"
                         value={codBuilder.b1} onChange={e => updBuilder('b1', e.target.value.toUpperCase())}
                         disabled={!isAdmin} maxLength={6}/>
                       <span className="text-muted">-</span>
                       <input className="form-control form-control-sm" style={{width:90}} placeholder="B2 OC"
-                        title="Últimos 6 dígitos del Nº OC — solo el administrador puede editarlo manualmente"
+                        title="Últimos 6 dígitos del Nº OC + 2 dígitos del módulo — solo el administrador puede editarlo manualmente"
                         value={codBuilder.b2} onChange={e => updBuilder('b2', e.target.value.toUpperCase())}
                         disabled={!isAdmin} maxLength={10}/>
                       <span className="text-muted">-</span>
@@ -1201,8 +1307,11 @@ export default function Proyectos() {
                         {NIVELES_ENT.map(n => <option key={n} value={n}>{n}</option>)}
                       </select>
                       <span className="text-muted">-</span>
-                      <input className="form-control form-control-sm" style={{width:65}} placeholder="B5 hoja"
-                        value={codBuilder.b5} onChange={e => updBuilder('b5', e.target.value.toUpperCase())} maxLength={6}/>
+                      <input className="form-control form-control-sm" style={{width:52}} placeholder="B5" title="Hoja (2 caracteres alfanuméricos)"
+                        value={codBuilder.b5} onChange={e => updBuilder('b5', dosAlfanumericos(e.target.value))} maxLength={2}/>
+                      <span className="text-muted">-</span>
+                      <input className="form-control form-control-sm" style={{width:52}} placeholder="B6" title="Versión (2 caracteres alfanuméricos)"
+                        value={codBuilder.b6} onChange={e => updBuilder('b6', dosAlfanumericos(e.target.value))} maxLength={2}/>
                     </div>
                     <input className="form-control form-control-sm font-monospace fw-semibold"
                       placeholder="Código ensamblado — editable manualmente"
@@ -1220,6 +1329,34 @@ export default function Proyectos() {
                     <input className="form-control form-control-sm"
                       value={formEnt.comentarios}
                       onChange={e => setFormEnt(p => ({...p, comentarios: e.target.value}))}/>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label small fw-medium">Archivo PDF</label>
+                    <input type="file" className="form-control form-control-sm" accept=".pdf"
+                      onChange={e => {
+                        const f = e.target.files[0] || null
+                        setArchivoEnt(f)
+                        // El nombre del PDF (sin extensión) carga solo el campo
+                        // "Documento entregado" — sigue siendo editable a mano después.
+                        if (f) setFormEnt(p => ({...p, documento: f.name.replace(/\.pdf$/i, '')}))
+                      }}/>
+                    {modalEnt !== 'nuevo' && modalEnt?.archivo_path && !archivoEnt && (
+                      <div className="text-muted mt-1" style={{fontSize:'0.72rem'}}>
+                        <i className="bi bi-file-earmark-check-fill text-success me-1"/>
+                        Ya tiene cargado: <strong>{modalEnt.archivo_nombre_original}</strong> — elegí otro archivo para reemplazarlo.
+                      </div>
+                    )}
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label small fw-medium">Archivo fuente <span className="text-muted fw-normal">(DWG, DOC, XLS, etc.)</span></label>
+                    <input type="file" className="form-control form-control-sm"
+                      onChange={e => setArchivoFuenteEnt(e.target.files[0] || null)}/>
+                    {modalEnt !== 'nuevo' && modalEnt?.archivo_fuente_path && !archivoFuenteEnt && (
+                      <div className="text-muted mt-1" style={{fontSize:'0.72rem'}}>
+                        <i className="bi bi-file-earmark-check-fill text-success me-1"/>
+                        Ya tiene cargado: <strong>{modalEnt.archivo_fuente_nombre_original}</strong> — elegí otro archivo para reemplazarlo.
+                      </div>
+                    )}
                   </div>
                 </div>
                 {errEnt && <div className="alert alert-danger mt-2 py-1 small mb-0">{errEnt}</div>}

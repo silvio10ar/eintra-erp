@@ -13,7 +13,10 @@ const TODOS_LOS_ITEMS = [
   { to: '/dashboard',      label: 'Dashboard',       icon: 'speedometer2',      modulo: null },
   { to: '/ventas',         label: 'Ventas',          icon: 'briefcase',         modulo: 'ventas' },
   { to: '/venta-repuestos', label: 'Venta de Repuestos', icon: 'truck',         modulo: 'venta_repuestos' },
-  { to: '/proyectos',      label: 'Proyectos',       icon: 'kanban',           modulo: 'proyectos' },
+  // extra: alguien con permiso liviano de "Entrega Documentación" (sin
+  // proyectos.leer) también tiene que ver este ítem — entra a Proyectos con
+  // acceso reducido, solo a la pestaña Entrega Doc. de cada proyecto.
+  { to: '/proyectos',      label: 'Proyectos',       icon: 'kanban',           modulo: 'proyectos', extra: p => !!p.entrega_documentacion?.escribir },
   { to: '/analisis-proyectos', label: 'Análisis de Proyectos', icon: 'graph-up-arrow', modulo: 'analisis_proyectos' },
   { to: '/costeo-equipos', label: 'Costeo de Equipos', icon: 'calculator', modulo: 'costeo_equipos' },
   // Sin módulo/permiso a propósito, igual que Dashboard: cualquier usuario
@@ -103,7 +106,7 @@ export default function Layout() {
     if (i.modulo === '__admin__') return rol === 'admin'
     if (!i.modulo) return true
     if (rol === 'admin') return true
-    return !!(permisos[i.modulo]?.leer || permisos[i.modulo]?.escribir)
+    return !!(permisos[i.modulo]?.leer || permisos[i.modulo]?.escribir) || !!i.extra?.(permisos)
   })
   // Un módulo sin gerencia asignada todavía (recién agregado, o ningún puesto
   // tiene permiso sobre él) cae en la gerencia general por defecto.

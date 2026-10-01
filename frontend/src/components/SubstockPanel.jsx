@@ -20,6 +20,7 @@ export default function SubstockPanel({ substock, canWrite }) {
   const [buscar, setBuscar]         = useState('')
   const [loadSaldo, setLoadSaldo]   = useState(false)
   const [historial, setHistorial]   = useState([])
+  const [filtroProyecto, setFiltroProyecto] = useState('')
   const [proyectos, setProyectos]   = useState([])
   const [actividades, setActividades] = useState([])
   const [autorizantes, setAutorizantes] = useState([])
@@ -55,6 +56,18 @@ export default function SubstockPanel({ substock, canWrite }) {
   const cargarHistorial = useCallback(() => {
     api.get(`/substock/${substock}/movimientos`).then(r => setHistorial(r.data)).catch(() => {})
   }, [substock])
+
+  // Proyectos/actividades que efectivamente aparecen en el historial cargado
+  // (no la lista completa de proyectos activos) — así el filtro solo ofrece
+  // valores que realmente tienen algo para mostrar, incluyendo los de un
+  // proyecto ya cerrado que en su momento sí tuvo entregas acá.
+  const proyectosEnHistorial = useMemo(() => (
+    [...new Set(historial.map(m => m.proyecto || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'))
+  ), [historial])
+
+  const historialFiltrado = useMemo(() => (
+    filtroProyecto ? historial.filter(m => m.proyecto === filtroProyecto) : historial
+  ), [historial, filtroProyecto])
 
   useEffect(() => {
     cargarSaldo()
@@ -223,11 +236,22 @@ export default function SubstockPanel({ substock, canWrite }) {
         </div>
       )}
 
-      <div className="fw-semibold text-muted mb-2" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-        <i className="bi bi-clock-history me-1" />Historial
+      <div className="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+        <div className="fw-semibold text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          <i className="bi bi-clock-history me-1" />Historial
+        </div>
+        {proyectosEnHistorial.length > 0 && (
+          <select className="form-select form-select-sm" style={{ width: 220, fontSize: '0.78rem' }}
+            value={filtroProyecto} onChange={e => setFiltroProyecto(e.target.value)}>
+            <option value="">Todos los proyectos/actividades</option>
+            {proyectosEnHistorial.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        )}
       </div>
       {historial.length === 0 ? (
         <div className="text-muted small">Sin movimientos todavía.</div>
+      ) : historialFiltrado.length === 0 ? (
+        <div className="text-muted small">Sin movimientos para "{filtroProyecto}".</div>
       ) : (
         <div className="table-responsive">
           <table className="table table-sm align-middle" style={{ fontSize: '0.82rem' }}>
@@ -238,7 +262,7 @@ export default function SubstockPanel({ substock, canWrite }) {
               </tr>
             </thead>
             <tbody>
-              {historial.map(m => (
+              {historialFiltrado.map(m => (
                 <tr key={m.id}>
                   <td>{fmtF(m.fecha)}</td>
                   <td>

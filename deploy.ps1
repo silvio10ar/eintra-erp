@@ -163,9 +163,11 @@ NODE_BIN=`$(which node 2>/dev/null || echo /usr/bin/node)
 CRON_MAIL="0 0 * * * `$NODE_BIN `$RUTA/backend/scripts/backup-email.js >> `$RUTA/logs/backup.log 2>&1"
 CRON_DISK="5 0 * * * `$NODE_BIN `$RUTA/backend/scripts/backup-disk.js >> `$RUTA/logs/backup-disk.log 2>&1"
 CRON_DASH="*/5 * * * * `$NODE_BIN `$RUTA/backend/scripts/enviar-dashboard-finanzas.js >> `$RUTA/logs/dashboard-finanzas.log 2>&1"
-( crontab -l 2>/dev/null | grep -v "backup-email.js" | grep -v "backup-disk.js" | grep -v "enviar-dashboard-finanzas.js" || true ; echo "`$CRON_MAIL" ; echo "`$CRON_DISK" ; echo "`$CRON_DASH" ) | crontab -
+CRON_CEO="*/5 * * * * `$NODE_BIN `$RUTA/backend/scripts/responder-ceo.js >> `$RUTA/logs/respuesta-ceo.log 2>&1"
+( crontab -l 2>/dev/null | grep -v "backup-email.js" | grep -v "backup-disk.js" | grep -v "enviar-dashboard-finanzas.js" | grep -v "responder-ceo.js" || true ; echo "`$CRON_MAIL" ; echo "`$CRON_DISK" ; echo "`$CRON_DASH" ; echo "`$CRON_CEO" ) | crontab -
 echo "[cron] Backup BD programado a medianoche (mail + copia local en backend/db/backups/)"
 echo "[cron] Reporte diario de Finanzas: chequeo cada 5 min (hora configurable en Configuracion del sistema)"
+echo "[cron] Respuesta automatica al CEO: chequeo cada 5 min (activar en Configuracion del sistema)"
 
 echo ""
 echo "[OK] Servicio activo en http://`$(hostname -I | awk '{print `$1}'):3002"

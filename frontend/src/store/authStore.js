@@ -28,6 +28,12 @@ export const setAuthImpersonated = (token, user) => {
   sessionStorage.setItem(IMP_USER, JSON.stringify(user))
 }
 
+// Mientras se está impersonando a alguien, getToken()/getUser() priorizan la
+// sesión impersonada — cualquier actualización de sesión hecha en ese momento
+// (ej. al cambiar la contraseña) tiene que ir a ESE slot, no al normal, o
+// queda escrita donde nadie la lee (ver CambiarPassword.jsx).
+export const isImpersonando = () => !!sessionStorage.getItem(IMP_TOKEN)
+
 export const clearAuth = () => {
   sessionStorage.removeItem(TOKEN_KEY)
   sessionStorage.removeItem(USER_KEY)

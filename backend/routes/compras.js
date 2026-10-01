@@ -611,7 +611,7 @@ router.get('/oc/:id', verificarToken, leerOCListado, (req, res) => {
   const oc = db.prepare('SELECT * FROM ordenes_compra WHERE id=?').get(req.params.id);
   if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
   const items = db.prepare(`
-    SELECT i.*, p.codigo as producto_codigo
+    SELECT i.*, p.codigo as producto_codigo, p.unidad as producto_unidad, p.unidad_compra
     FROM oc_items i LEFT JOIN productos p ON p.id = i.producto_id
     WHERE i.oc_id=? ORDER BY i.item_num
   `).all(oc.id);
@@ -753,11 +753,12 @@ router.post('/oc', verificarToken, body('proveedor_nombre').trim().notEmpty(), (
     const oc_id = r.lastInsertRowid;
     if (items?.length) {
       for (const [i, it] of items.entries()) {
-        db.prepare('INSERT INTO oc_items (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,dias_plazo,sin_codificar) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        db.prepare('INSERT INTO oc_items (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,dias_plazo,sin_codificar,cantidad_unidades) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
           .run(oc_id, i+1, it.producto_id||null, it.cantidad||0, it.unidad||'UND.', it.descripcion||'',
                it.precio_unitario||0, it.bonif1||0, it.bonif2||0, it.bonif3||0, it.bonif4||0,
                calcularPrecioFinal(it.precio_unitario, it.bonif1, it.bonif2, it.bonif3, it.bonif4), it.plazo||'INMEDIATO',
-               it.dias_plazo!=null && it.dias_plazo!=='' ? parseInt(it.dias_plazo,10) : null, it.sin_codificar ? 1 : 0);
+               it.dias_plazo!=null && it.dias_plazo!=='' ? parseInt(it.dias_plazo,10) : null, it.sin_codificar ? 1 : 0,
+               (it.cantidad_unidades!=null && it.cantidad_unidades!=='') ? parseFloat(it.cantidad_unidades) : null);
       }
     }
     if (cuotas?.length) guardarCuotasCompra(oc_id, cuotas);
@@ -814,11 +815,12 @@ router.put('/oc/:id', verificarToken, (req, res) => {
     if (items) {
       db.prepare('DELETE FROM oc_items WHERE oc_id=?').run(req.params.id);
       for (const [i, it] of items.entries()) {
-        db.prepare('INSERT INTO oc_items (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,dias_plazo,cant_recibida,sin_codificar) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        db.prepare('INSERT INTO oc_items (oc_id,item_num,producto_id,cantidad,unidad,descripcion,precio_unitario,bonif1,bonif2,bonif3,bonif4,precio_final,plazo,dias_plazo,cant_recibida,sin_codificar,cantidad_unidades,cant_recibida_unidades) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
           .run(req.params.id, i+1, it.producto_id||null, it.cantidad||0, it.unidad||'UND.', it.descripcion||'',
                it.precio_unitario||0, it.bonif1||0, it.bonif2||0, it.bonif3||0, it.bonif4||0,
                calcularPrecioFinal(it.precio_unitario, it.bonif1, it.bonif2, it.bonif3, it.bonif4), it.plazo||'INMEDIATO',
-               it.dias_plazo!=null && it.dias_plazo!=='' ? parseInt(it.dias_plazo,10) : null, it.cant_recibida||0, it.sin_codificar ? 1 : 0);
+               it.dias_plazo!=null && it.dias_plazo!=='' ? parseInt(it.dias_plazo,10) : null, it.cant_recibida||0, it.sin_codificar ? 1 : 0,
+               (it.cantidad_unidades!=null && it.cantidad_unidades!=='') ? parseFloat(it.cantidad_unidades) : null, it.cant_recibida_unidades||0);
       }
     }
     if (cuotas !== undefined) guardarCuotasCompra(req.params.id, cuotas);
@@ -846,7 +848,7 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
   if (!oc) return res.status(404).json({ error: 'OC no encontrada' });
   if (oc.estado === 'Cancelada') return res.status(400).json({ error: 'OC cancelada' });
 
-  const { recepciones, fecha, numero_remito, producto_ids, partidas } = req.body;
+  const { recepciones, recepcionesUnidades, fecha, numero_remito, producto_ids, partidas } = req.body;
   // Sin remito no hay forma de rastrear después con qué entrega física llegó
   // cada material — sobre todo si la OC se recibe de a partes, con un remito
   // distinto cada vez.
@@ -855,8 +857,8 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
 
   const insIngreso = db.prepare(`
     INSERT INTO ingresos_pendientes
-      (oc_id,oc_numero,proveedor_nombre,oc_item_id,producto_id,producto_codigo,producto_desc,unidad,cantidad,precio_costo,numero_remito,fecha_recepcion,partida)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      (oc_id,oc_numero,proveedor_nombre,oc_item_id,producto_id,producto_codigo,producto_desc,unidad,cantidad,precio_costo,numero_remito,fecha_recepcion,partida,cantidad_unidades)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
 
   const trx = db.transaction(() => {
@@ -884,11 +886,25 @@ router.post('/oc/:id/recibir', verificarToken, (req, res) => {
       const cantRecibir = recepciones?.[item.id] ?? pendiente;
       if (cantRecibir <= 0) { todosRecibidos = false; continue; }
       const real = Math.min(cantRecibir, pendiente);
+
+      // Si al armar la OC se cargó la equivalencia en unidades de stock
+      // (ej. 3 UND. = 190,80 KG), se recibe en esa misma proporción — por
+      // defecto, toda la unidades pendiente — sin tener que volver a
+      // contarla a mano al confirmar el ingreso en Stock.
+      let realUnidades = null;
+      if (item.cantidad_unidades != null) {
+        const pendienteUnidades = item.cantidad_unidades - (item.cant_recibida_unidades||0);
+        const unidadesPedidas = recepcionesUnidades?.[item.id] ?? pendienteUnidades;
+        realUnidades = Math.max(0, Math.min(parseFloat(unidadesPedidas)||0, pendienteUnidades));
+        db.prepare("UPDATE oc_items SET cant_recibida_unidades=cant_recibida_unidades+? WHERE id=?").run(realUnidades, item.id);
+      }
+
       db.prepare("UPDATE oc_items SET cant_recibida=cant_recibida+? WHERE id=?").run(real, item.id);
       const prod = db.prepare('SELECT codigo, descripcion, unidad FROM productos WHERE id=?').get(item.producto_id);
       insIngreso.run(oc.id, oc.numero, oc.proveedor_nombre, item.id, item.producto_id,
         prod?.codigo||'', prod?.descripcion||item.descripcion||'', prod?.unidad||item.unidad||'UND.',
-        real, item.precio_final||0, numero_remito||'', fechaRec, (partidas?.[item.id] || '').trim());
+        real, item.precio_final||0, numero_remito||'', fechaRec, (partidas?.[item.id] || '').trim(),
+        realUnidades);
       itemsRecibidos.push(item);
       if (real < pendiente) todosRecibidos = false;
     }

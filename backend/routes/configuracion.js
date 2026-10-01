@@ -9,7 +9,8 @@ router.use(verificarToken)
 
 const esAdmin = req => req.usuario?.rol === 'admin'
 const CLAVES  = ['smtp_host','smtp_port','smtp_user','smtp_pass','smtp_from','smtp_secure','backup_to','pago_umbral_autorizacion_usd',
-  'dashboard_finanzas_activo','dashboard_finanzas_hora','dashboard_finanzas_email']
+  'dashboard_finanzas_activo','dashboard_finanzas_hora','dashboard_finanzas_email',
+  'respuesta_ceo_activo','respuesta_ceo_email','respuesta_ceo_asunto','imap_host','imap_port','imap_secure']
 
 const get = clave => {
   const row = db.prepare('SELECT valor FROM configuracion WHERE clave=?').get(clave)
@@ -24,7 +25,11 @@ router.get('/', (req, res) => {
   // el SMTP se configuró únicamente por .env (sin nunca guardar desde esta
   // pantalla), esta pantalla lo mostraba todo en blanco aunque el sistema ya
   // estuviera mandando mail con esos valores.
-  const DEFAULTS = { pago_umbral_autorizacion_usd: '1000', dashboard_finanzas_activo: 'false', dashboard_finanzas_hora: '08:00' }
+  const DEFAULTS = {
+    pago_umbral_autorizacion_usd: '1000', dashboard_finanzas_activo: 'false', dashboard_finanzas_hora: '08:00',
+    respuesta_ceo_activo: 'false', respuesta_ceo_email: 'antonio.palladino@e-intrasrl.com', respuesta_ceo_asunto: 'Como esta todo',
+    imap_port: '993', imap_secure: 'true',
+  }
   const cfg = {}
   for (const k of CLAVES) cfg[k] = get(k) || DEFAULTS[k] || ''
   if (cfg.smtp_pass) cfg.smtp_pass = '***'
@@ -136,6 +141,29 @@ router.post('/dashboard-finanzas-ahora', async (req, res) => {
     res.json({ ok: true, mensaje: r.mensaje })
   } catch (err) {
     res.status(500).json({ error: `Error al generar/enviar el reporte: ${err.message}` })
+  }
+})
+
+// POST /respuesta-ceo-ahora — revisa la bandeja YA MISMO (sin esperar al cron
+// de 5 min) y contesta si encuentra el mail disparador sin leer. Usa la
+// configuración ya guardada (a diferencia de /test-email, acá probar con la
+// casilla real de IMAP hace falta guardar primero) — pensado para validar la
+// conexión IMAP/SMTP recién cargada antes de activarlo.
+router.post('/respuesta-ceo-ahora', async (req, res) => {
+  if (!esAdmin(req)) return res.status(403).json({ error: 'Sin permisos' })
+  const { revisarYResponderCEO } = require('../helpers/respuestaCEO')
+  try {
+    const r = await revisarYResponderCEO({ forzar: true })
+    if (r.motivo) return res.status(400).json({ error: r.motivo })
+    res.json({
+      ok: true,
+      mensaje: r.respondidos > 0
+        ? `Se revisaron ${r.revisados} mail(s) y se respondió ${r.respondidos}.`
+        : `Se revisaron ${r.revisados} mail(s) sin leer del CEO — ninguno con el asunto configurado.`,
+      errores: r.errores,
+    })
+  } catch (err) {
+    res.status(500).json({ error: `Error al revisar la bandeja: ${err.message}` })
   }
 })
 

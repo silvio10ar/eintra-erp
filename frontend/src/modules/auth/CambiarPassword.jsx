@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../../api/client'
-import { setAuth, getUser, clearAuth } from '../../store/authStore'
+import { setAuth, setAuthImpersonated, isImpersonando, getUser, clearAuth } from '../../store/authStore'
 import logo from '../../assets/logo.avif'
 
 // Pantalla de cambio obligatorio — a diferencia del modal de Usuarios.jsx (solo
@@ -25,7 +25,13 @@ export default function CambiarPassword() {
     setLoading(true)
     try {
       const { data } = await api.put(`/auth/usuarios/${usuario.id}/password`, { password: form.password })
-      setAuth(data.token, data.usuario)
+      // Si se está impersonando, getToken()/getUser() leen la sesión
+      // impersonada (erp_imp_*), no la normal — guardar acá con setAuth()
+      // quedaba escrito donde nadie lo leía, y ProtectedRoute seguía viendo
+      // el token viejo (debe_cambiar_password=true): pedía cambiarla nunca
+      // dejaba de pedirla.
+      if (isImpersonando()) setAuthImpersonated(data.token, data.usuario)
+      else setAuth(data.token, data.usuario)
       navigate('/dashboard', { replace: true })
     } catch (err) {
       setError(err.response?.data?.error ?? 'Error al cambiar la contraseña')

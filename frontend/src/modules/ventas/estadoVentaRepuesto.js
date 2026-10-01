@@ -21,14 +21,18 @@ export const ESTADO_LABEL = {
   entregado: { txt: 'Entregado',  cls: 'bg-primary' },
   facturado: { txt: 'Facturado',  cls: 'bg-warning text-dark' },
   cobrado:   { txt: 'Cobrado',    cls: 'bg-success' },
+  cancelado: { txt: 'Cancelado',  cls: 'bg-dark' },
 }
 
 // Orden de avance, para poder tomar "el peor" (más atrasado) entre varios ítems.
 const ORDEN = ['pendiente', 'parcial', 'retirado', 'entregado', 'facturado', 'cobrado']
 
-// Estado resumen del pedido: el más atrasado de sus ítems (no cancelados) —
-// un pedido no está "cobrado" hasta que TODOS sus ítems lo están.
+// Estado resumen del pedido: el más atrasado de sus ítems — un pedido no
+// está "cobrado" hasta que TODOS sus ítems lo están. Un pedido cancelado
+// muestra ese estado siempre, sin importar en qué quedaron sus ítems (nunca
+// se llega a cancelar uno con algo ya retirado, así que no hay ambigüedad).
 export function estadoPedido(pedido) {
+  if (pedido.estado === 'Cancelado') return 'cancelado'
   const items = (pedido.items || [])
   if (!items.length) return 'pendiente'
   return items.reduce((peor, it) => {
